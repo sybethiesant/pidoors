@@ -1,2 +1,2 @@
-# pidoorsserv
-PiDoors - Web/SQL Server
+# pidoors
+PiDoors
