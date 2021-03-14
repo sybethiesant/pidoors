@@ -1,4 +1,4 @@
-# pidoors
+# PiDoors
 PiDoors - A Wigand Access control system using Raspberri Pi.
 
 This was a private project, I Figured i'd open it up to the public and see if there is any interest. Maybe some better ways to do things. 
