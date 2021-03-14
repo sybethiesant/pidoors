@@ -1,0 +1,11 @@
+{
+  "autoConnect": true,
+  "connection": {
+    "host": "172.17.22.99",
+    "username": "pi",
+    "password": "Ms83ert6",
+    "port": "22"
+  },
+  "basePath": "/home/pi/pidoorserv/",
+  "ignore": [".git", ".remote"]
+}
