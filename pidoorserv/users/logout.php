@@ -12,6 +12,28 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+// Verify CSRF token for POST requests (recommended) or allow GET with token
+$csrf_valid = false;
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $csrf_valid = isset($_POST['csrf_token']) &&
+                  isset($_SESSION['csrf_token']) &&
+                  hash_equals($_SESSION['csrf_token'], $_POST['csrf_token']);
+} elseif (isset($_GET['token'])) {
+    // Allow GET logout with CSRF token in URL (for logout links)
+    $csrf_valid = isset($_SESSION['csrf_token']) &&
+                  hash_equals($_SESSION['csrf_token'], $_GET['token']);
+} else {
+    // No token provided - redirect to a confirmation page or allow if referer matches
+    $referer = $_SERVER['HTTP_REFERER'] ?? '';
+    $csrf_valid = !empty($referer) && strpos($referer, $config['url']) === 0;
+}
+
+if (!$csrf_valid && isset($_SESSION['user_id'])) {
+    // Invalid CSRF - redirect back with error
+    header("Location: {$config['url']}/index.php?error=Invalid logout request");
+    exit();
+}
+
 // Log logout event
 if (isset($_SESSION['user_id'])) {
     try {

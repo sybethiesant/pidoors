@@ -19,8 +19,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/pidoors
-ReadOnlyPaths=/opt/pidoors
+ReadWritePaths=/opt/pidoors/cache
+ReadOnlyPaths=/opt/pidoors/conf /opt/pidoors/pidoors.py
 
 # Allow GPIO access
 SupplementaryGroups=gpio
