@@ -1,0 +1,13 @@
+{
+    "connex1": {
+        "unlock_value": 1,
+        "open_delay": 3,
+        "latch_gpio": 18,
+        "d0": 24,
+        "d1": 23,
+        "sqladdr": "YOUR_SERVER_IP",
+        "sqluser": "pidoors",
+        "sqlpass": "YOUR_DATABASE_PASSWORD",
+        "sqldb": "access"
+    }
+}

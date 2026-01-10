@@ -34,8 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         } elseif ($file['size'] > 5 * 1024 * 1024) { // 5MB limit
             $error_message = 'File is too large. Maximum size is 5MB.';
         } else {
-            $mime = mime_content_type($file['tmp_name']);
-            if (!in_array($mime, ['text/plain', 'text/csv', 'application/csv'])) {
+            $finfo = new finfo(FILEINFO_MIME_TYPE);
+            $mime = $finfo->file($file['tmp_name']);
+            if (!in_array($mime, ['text/plain', 'text/csv', 'application/csv', 'text/x-csv'])) {
                 $error_message = 'Invalid file type. Please upload a CSV file.';
             } else {
                 // Process CSV

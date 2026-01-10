@@ -1,6 +1,6 @@
-# PiDoors - Complete Installation Guide for Beginners
+# PiDoors Installation Guide
 
-This guide will walk you through setting up the PiDoors Access Control System step-by-step, even if you've never used a Raspberry Pi before.
+Complete step-by-step instructions for setting up the PiDoors Access Control System. This guide is designed for beginners with no prior Raspberry Pi experience.
 
 ---
 
@@ -12,7 +12,9 @@ This guide will walk you through setting up the PiDoors Access Control System st
 4. [Part 3: Installing Door Controllers](#part-3-installing-door-controllers)
 5. [Part 4: First Login and Configuration](#part-4-first-login-and-configuration)
 6. [Part 5: Adding Your First Door and Card](#part-5-adding-your-first-door-and-card)
-7. [Troubleshooting](#troubleshooting)
+7. [Part 6: Advanced Features](#part-6-advanced-features)
+8. [Troubleshooting](#troubleshooting)
+9. [Maintenance](#maintenance)
 
 ---
 
@@ -21,11 +23,11 @@ This guide will walk you through setting up the PiDoors Access Control System st
 ### For the Server (Required - One Per System)
 
 **Hardware:**
-- 1× Raspberry Pi 3B+ or newer (4GB RAM recommended)
-- 1× MicroSD card (16GB minimum, 32GB recommended)
-- 1× Power supply for Raspberry Pi (official recommended)
-- 1× Ethernet cable (or WiFi setup)
-- 1× Monitor, keyboard, mouse (for initial setup only)
+- 1x Raspberry Pi 3B+ or newer (4GB RAM recommended)
+- 1x MicroSD card (16GB minimum, 32GB recommended)
+- 1x Power supply for Raspberry Pi (official recommended)
+- 1x Ethernet cable (or WiFi setup)
+- 1x Monitor, keyboard, mouse (for initial setup only)
 
 **Optional:**
 - Case for Raspberry Pi
@@ -34,13 +36,13 @@ This guide will walk you through setting up the PiDoors Access Control System st
 ### For Each Door Controller (One Per Door)
 
 **Hardware:**
-- 1× Raspberry Pi Zero W or newer per door
-- 1× MicroSD card (8GB minimum)
-- 1× Wiegand card reader (26-bit, 34-bit, or 37-bit compatible)
-- 1× 12V electric strike or magnetic lock
-- 1× Relay module (to control the lock)
-- 1× Door sensor (magnetic switch - optional but recommended)
-- 1× Exit button / REX button (optional)
+- 1x Raspberry Pi Zero W or newer per door
+- 1x MicroSD card (8GB minimum)
+- 1x Wiegand card reader (26-bit, 34-bit, or 37-bit compatible)
+- 1x 12V electric strike or magnetic lock
+- 1x Relay module (to control the lock)
+- 1x Door sensor (magnetic switch - optional but recommended)
+- 1x Exit button / REX button (optional)
 - Wiring supplies (jumper wires, terminal blocks)
 
 **Optional:**
@@ -76,7 +78,7 @@ This guide will walk you through setting up the PiDoors Access Control System st
    - Select your SD card (be careful to select the correct one!)
 
 5. **Configure Settings** (Important!)
-   - Click the gear icon ⚙️ in the bottom right
+   - Click the gear icon in the bottom right
    - Enable SSH: Check "Enable SSH" and select "Use password authentication"
    - Set username: `pi` and create a strong password
    - Configure WiFi if you're not using Ethernet (optional)
@@ -134,14 +136,14 @@ cd ~
 3. **Download PiDoors** (requires internet connection):
 
 ```bash
-git clone https://github.com/sybethiesant/pidoors.git
+git clone https://github.com/yourusername/pidoors.git
 ```
 
 If you get an error that git isn't installed:
 
 ```bash
 sudo apt-get install git -y
-git clone https://github.com/sybethiesant/pidoors.git
+git clone https://github.com/yourusername/pidoors.git
 ```
 
 4. **Go into the PiDoors folder**:
@@ -177,26 +179,17 @@ sudo ./install.sh
 
 ### Step 2.3: Configure the Application
 
-1. **Copy the example configuration**:
+1. **The installer creates the config automatically**, but if you need to modify it:
 
 ```bash
-cd ~/pidoors
-cp pidoorserv/includes/config.php.example pidoorserv/includes/config.php
+sudo nano /var/www/pidoors/includes/config.php
 ```
 
-2. **Edit the configuration file**:
+2. **Key settings to verify**:
+   - Database password matches what you set during installation
+   - URL matches your Pi's IP address
 
-```bash
-sudo nano pidoorserv/includes/config.php
-```
-
-3. **Update the following values**:
-   - Find the line with `'sqlpass' => ''`
-   - Replace with `'sqlpass' => 'your_database_password'` (the one you created earlier)
-   - Find `'url' => 'http://localhost'`
-   - Replace `localhost` with your Pi's IP address
-
-4. **Find your Pi's IP address** (open a new terminal):
+3. **Find your Pi's IP address**:
 
 ```bash
 hostname -I
@@ -204,52 +197,33 @@ hostname -I
 
 Example output: `192.168.1.100` (your IP will be different)
 
-5. **Update the URL in config.php**:
-   - Change to: `'url' => 'http://192.168.1.100'`
-
-6. **Save and exit**:
+4. **Save and exit** (if editing):
    - Press `Ctrl + X`
    - Press `Y` to confirm
    - Press `Enter` to save
 
-7. **Copy the config to the web directory**:
+### Step 2.4: Verify Installation
+
+1. **Check Nginx is running**:
 
 ```bash
-sudo cp ~/pidoors/pidoorserv/includes/config.php /var/www/pidoors/includes/config.php
+sudo systemctl status nginx
 ```
 
-### Step 2.4: Import the Database Schema
+You should see "active (running)" in green.
 
-1. **Import the database structure**:
+2. **Check PHP-FPM is running**:
 
 ```bash
-mysql -u pidoors -p access < ~/pidoors/database_migration.sql
+sudo systemctl status php*-fpm
 ```
 
-2. **Enter the PiDoors database password** when prompted
+You should see "active (running)" in green.
 
-3. **Verify it worked** (should show tables):
-
-```bash
-mysql -u pidoors -p -e "USE access; SHOW TABLES;"
-```
-
-You should see a list of tables like `cards`, `doors`, `logs`, etc.
-
-### Step 2.5: Set Permissions
-
-```bash
-sudo chown -R www-data:www-data /var/www/pidoors
-sudo chmod -R 755 /var/www/pidoors
-```
-
-### Step 2.6: Access the Web Interface
-
-1. **Open a web browser** on any computer on your network
-
-2. **Navigate to**: `http://192.168.1.100` (use your Pi's IP address)
-
-3. **You should see the PiDoors login page!**
+3. **Access the web interface**:
+   - Open a web browser on any computer on your network
+   - Navigate to: `http://192.168.1.100` (use your Pi's IP address)
+   - You should see the PiDoors login page
 
 4. **Login with**:
    - Email: The email you created during installation
@@ -284,7 +258,7 @@ sudo reboot
 
 ```bash
 cd ~
-git clone https://github.com/sybethiesant/pidoors.git
+git clone https://github.com/yourusername/pidoors.git
 cd pidoors
 ```
 
@@ -314,12 +288,12 @@ sudo shutdown -h now
 
 | Wiegand Reader | Raspberry Pi GPIO |
 |----------------|-------------------|
-| DATA0 (Green)  | GPIO 23           |
-| DATA1 (White)  | GPIO 24           |
+| DATA0 (Green)  | GPIO 24           |
+| DATA1 (White)  | GPIO 23           |
 | GND (Black)    | GND (Pin 6)       |
 | 5V+ (Red)      | 5V (Pin 2)        |
 
-**Lock Control:**
+**Lock Control (Relay):**
 
 | Component      | Raspberry Pi GPIO |
 |----------------|-------------------|
@@ -384,13 +358,9 @@ Press `Ctrl + C` to stop viewing logs.
 ### Step 4.1: Change Default Password
 
 1. **Log into the web interface** (http://your-server-ip)
-
 2. **Click your email** in the top right corner
-
 3. **Click "Profile"**
-
 4. **Change your password** to something secure
-
 5. **Click "Update Profile"**
 
 ### Step 4.2: Configure System Settings
@@ -415,9 +385,7 @@ Press `Ctrl + C` to stop viewing logs.
 ### Step 4.3: Configure Your Doors
 
 1. **Go to "Doors"** in the sidebar
-
 2. **Click "Add Door"**
-
 3. **Fill in the form**:
    - Name: The name you gave this door (e.g., "Front Entrance")
    - Location: Description or building location
@@ -457,15 +425,13 @@ Access denied: Card not in database
 ### Step 5.2: Add the Card to the System
 
 1. **In the web interface**, go to **"Cards"**
-
 2. **Click "Add Card"**
-
 3. **Fill in the form**:
    - Card ID: The number you wrote down (e.g., 12345678)
    - User ID: A unique identifier (e.g., EMP001, JOHN001)
    - First Name: Card holder's first name
    - Last Name: Card holder's last name
-   - Active: Check this box (✓)
+   - Active: Check this box
    - Access Group: Leave blank for now (full access)
    - Schedule: Leave blank for 24/7 access
    - Valid From: Leave blank or set start date
@@ -477,25 +443,20 @@ Access denied: Card not in database
 ### Step 5.3: Test the Card
 
 1. **Go to the door** and scan the card again
-
 2. **The door should unlock!**
-
 3. **Verify in the web interface**:
    - Go to "Access Logs"
    - You should see a new entry with "Granted" status in green
 
 ---
 
-## Part 6: Advanced Features (Optional)
+## Part 6: Advanced Features
 
 ### Creating Access Schedules
 
 1. **Go to "Schedules"**
-
 2. **Click "Add Schedule"**
-
 3. **Give it a name** (e.g., "Business Hours")
-
 4. **Set time windows** for each day:
    - Monday-Friday: 8:00 AM - 5:00 PM
    - Saturday-Sunday: Closed (leave blank)
@@ -510,13 +471,9 @@ Now that card only works during business hours!
 ### Creating Access Groups
 
 1. **Go to "Access Groups"**
-
 2. **Click "Add Group"**
-
 3. **Give it a name** (e.g., "Employees", "Management")
-
 4. **Select which doors** this group can access
-
 5. **Assign cards to the group**:
    - Edit a card
    - Select the group
@@ -525,14 +482,11 @@ Now that card only works during business hours!
 ### Setting Up Holidays
 
 1. **Go to "Holidays"**
-
 2. **Click "Add Holiday"**
-
 3. **Enter**:
    - Name: Holiday name
    - Date: The date
    - Access Type: "Deny All" or "Allow All"
-
 4. **Save**
 
 Cards will respect holiday settings automatically!
@@ -549,9 +503,7 @@ card_id,user_id,firstname,lastname
 ```
 
 2. **Go to "Import Cards"**
-
 3. **Upload your CSV file**
-
 4. **Click "Import Cards"**
 
 All cards will be added at once!
@@ -562,27 +514,42 @@ All cards will be added at once!
 
 ### Problem: Can't access the web interface
 
-**Solution 1: Check if Apache is running**
+**Solution 1: Check if Nginx is running**
 ```bash
-sudo systemctl status apache2
+sudo systemctl status nginx
 ```
 
 If it's not running:
 ```bash
-sudo systemctl start apache2
+sudo systemctl start nginx
 ```
 
-**Solution 2: Verify the IP address**
+**Solution 2: Check if PHP-FPM is running**
+```bash
+sudo systemctl status php*-fpm
+```
+
+If it's not running:
+```bash
+sudo systemctl start php*-fpm
+```
+
+**Solution 3: Verify the IP address**
 ```bash
 hostname -I
 ```
 
 Use the first IP address shown.
 
-**Solution 3: Check firewall**
+**Solution 4: Check firewall**
 ```bash
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
+```
+
+**Solution 5: Check Nginx error log**
+```bash
+sudo tail -50 /var/log/nginx/pidoors_error.log
 ```
 
 ### Problem: Door controller shows "offline" in web interface
@@ -609,6 +576,13 @@ Look for connection errors.
 ping -c 4 192.168.1.100
 ```
 (Replace with your server IP)
+
+**Solution 4: Check configuration file**
+```bash
+cat /opt/pidoors/conf/config.json
+```
+
+Verify the server IP and database password are correct.
 
 ### Problem: Card not working
 
@@ -637,12 +611,8 @@ Scan a card - you should see the card number appear.
 - Verify GPIO 17 connection to relay
 - Test relay manually:
 ```bash
-# Turn on (unlock)
-gpio -g mode 17 out
-gpio -g write 17 1
-
-# Wait 5 seconds, then turn off (lock)
-gpio -g write 17 0
+# Test using Python
+python3 -c "import RPi.GPIO as GPIO; GPIO.setmode(GPIO.BCM); GPIO.setup(17, GPIO.OUT); GPIO.output(17, GPIO.HIGH); import time; time.sleep(2); GPIO.output(17, GPIO.LOW); GPIO.cleanup()"
 ```
 
 **Solution 2: Check lock power**
@@ -650,7 +620,7 @@ gpio -g write 17 0
 - Check lock current draw (should be < 1A)
 
 **Solution 3: Check unlock duration**
-- Go to "Doors" → Edit your door
+- Go to "Doors" > Edit your door
 - Increase "Unlock Duration" to 10 seconds
 - Test again
 
@@ -693,25 +663,33 @@ FLUSH PRIVILEGES;
 EXIT;
 ```
 
-3. Update config.php with new password
+3. Update config.php with new password:
+```bash
+sudo nano /var/www/pidoors/includes/config.php
+```
 
 ### Getting More Help
 
 1. **Check the logs**:
    - Door controller: `sudo journalctl -u pidoors -f`
-   - Apache errors: `sudo tail -f /var/log/apache2/pidoors_error.log`
+   - Nginx errors: `sudo tail -f /var/log/nginx/pidoors_error.log`
+   - PHP errors: `sudo tail -f /var/log/nginx/pidoors_error.log`
    - MySQL errors: `sudo tail -f /var/log/mysql/error.log`
 
-2. **Check the audit log** in the web interface (Admin Tools → Audit Log)
+2. **Check the audit log** in the web interface (Admin Tools > Audit Log)
 
 3. **Restart services**:
    ```bash
-   sudo systemctl restart apache2
+   sudo systemctl restart nginx
+   sudo systemctl restart php*-fpm
    sudo systemctl restart pidoors
    sudo systemctl restart mysql
    ```
 
-4. **Check GitHub Issues**: https://github.com/sybethiesant/pidoors/issues
+4. **Test Nginx configuration**:
+   ```bash
+   sudo nginx -t
+   ```
 
 ---
 
@@ -719,7 +697,7 @@ EXIT;
 
 ### Daily Backups (Automatic)
 
-Backups run automatically at 2 AM daily to `/var/backups/pidoors/`
+Backups run automatically (if configured) to `/var/backups/pidoors/`
 
 ### Manual Backup
 
@@ -740,8 +718,39 @@ mysql -u pidoors -p access < /var/backups/pidoors/access_YYYYMMDD_HHMMSS.sql
 cd ~/pidoors
 git pull
 sudo cp -r pidoorserv/* /var/www/pidoors/
+sudo chown -R www-data:www-data /var/www/pidoors
+sudo systemctl restart nginx
+sudo systemctl restart php*-fpm
+```
+
+On door controllers:
+```bash
+cd ~/pidoors
+git pull
+sudo cp pidoors/pidoors.py /opt/pidoors/
 sudo systemctl restart pidoors
-sudo systemctl restart apache2
+```
+
+### Enable HTTPS (Recommended for Production)
+
+1. **Generate a self-signed certificate** (or use Let's Encrypt):
+```bash
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/ssl/private/pidoors.key \
+    -out /etc/ssl/certs/pidoors.crt
+```
+
+2. **Edit the Nginx configuration**:
+```bash
+sudo nano /etc/nginx/sites-available/pidoors
+```
+
+3. **Uncomment the HTTPS server block** at the bottom of the file
+
+4. **Test and reload Nginx**:
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
 ```
 
 ---
@@ -750,12 +759,13 @@ sudo systemctl restart apache2
 
 Now that your system is running:
 
-1. ✅ Add all your doors
-2. ✅ Import or add all your cards
-3. ✅ Create access schedules if needed
-4. ✅ Create access groups for different user types
-5. ✅ Set up email notifications
-6. ✅ Test the backup system
-7. ✅ Monitor the system via the dashboard
+1. Add all your doors
+2. Import or add all your cards
+3. Create access schedules if needed
+4. Create access groups for different user types
+5. Set up email notifications
+6. Test the backup system
+7. Enable HTTPS for production
+8. Monitor the system via the dashboard
 
-**Congratulations! Your PiDoors Access Control System is now operational!** 🎉
+**Your PiDoors Access Control System is now operational!**
