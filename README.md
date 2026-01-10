@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.2-green)
+![Version](https://img.shields.io/badge/version-2.2.1-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -304,6 +304,31 @@ sudo systemctl restart nginx
 sudo systemctl restart pidoors  # On door controllers
 ```
 
+### Database Migrations
+
+When upgrading, check if database migrations are required:
+
+**v2.2.1 Migration (Required if upgrading from v2.2 or earlier):**
+
+This migration converts door assignments from space-separated to comma-separated format for improved security.
+
+```bash
+# Preview changes (safe - no modifications)
+python3 migrations/migrate_doors_format.py --dry-run
+
+# Apply changes (will prompt for confirmation)
+python3 migrations/migrate_doors_format.py
+```
+
+Or via SQL:
+```bash
+# Backup first!
+mysqldump -u pidoors -p access > backup_$(date +%Y%m%d).sql
+
+# Run migration
+mysql -u pidoors -p access < migrations/migrate_doors_format.sql
+```
+
 ### View Logs
 ```bash
 # Door controller logs
@@ -400,7 +425,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.2** - Production Ready
+**Current Version: 2.2.1** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -412,6 +437,12 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.2.1 (January 2026)
+- **Security fix**: Zone matching vulnerability that could allow unauthorized access
+- **Database migration**: Door format changed from space-separated to comma-separated
+- **Cross-module consistency**: Python and PHP now use identical door format
+- **Audit**: Complete codebase security audit (see AUDIT_LOG_v5.md)
 
 ### Version 2.2 (January 2026)
 - **Multi-reader support**: OSDP, NFC PN532, NFC MFRC522
