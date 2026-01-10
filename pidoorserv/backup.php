@@ -11,7 +11,8 @@ require_admin($config);
 
 $error_message = '';
 $success_message = '';
-$backup_dir = $config['apppath'] . 'backups/';
+// Security: Store backups outside web root
+$backup_dir = '/var/backups/pidoors/';
 
 // Create backup directory if it doesn't exist
 if (!is_dir($backup_dir)) {
@@ -23,11 +24,6 @@ if (isset($_POST['create_backup']) && verify_csrf_token($_POST['csrf_token'] ?? 
     try {
         $timestamp = date('Y-m-d_His');
         $backup_file = $backup_dir . "pidoors_backup_{$timestamp}.sql";
-
-        // Get database credentials from config
-        $db_host = $config['mysql']['server'];
-        $db_user = $config['mysql']['user'];
-        $db_pass = $config['mysql']['password'];
 
         // Backup both databases
         $databases = ['users', 'access'];
@@ -96,11 +92,12 @@ if (isset($_POST['create_backup']) && verify_csrf_token($_POST['csrf_token'] ?? 
 
 // Handle backup download
 if (isset($_GET['download']) && verify_csrf_token($_GET['token'] ?? '')) {
-    $file = sanitize_string($_GET['download']);
+    // Security: Use basename to prevent path traversal
+    $file = basename(sanitize_string($_GET['download']));
     $filepath = $backup_dir . $file;
 
-    // Security check - ensure file is in backup directory
-    if (strpos(realpath($filepath), realpath($backup_dir)) === 0 && file_exists($filepath)) {
+    // Security check - ensure file exists and is a regular file
+    if (file_exists($filepath) && is_file($filepath) && !is_link($filepath)) {
         header('Content-Type: application/octet-stream');
         header('Content-Disposition: attachment; filename="' . $file . '"');
         header('Content-Length: ' . filesize($filepath));
@@ -113,11 +110,12 @@ if (isset($_GET['download']) && verify_csrf_token($_GET['token'] ?? '')) {
 
 // Handle backup deletion
 if (isset($_GET['delete']) && verify_csrf_token($_GET['token'] ?? '')) {
-    $file = sanitize_string($_GET['delete']);
+    // Security: Use basename to prevent path traversal
+    $file = basename(sanitize_string($_GET['delete']));
     $filepath = $backup_dir . $file;
 
-    // Security check
-    if (strpos(realpath($filepath), realpath($backup_dir)) === 0 && file_exists($filepath)) {
+    // Security check - ensure file exists and is a regular file
+    if (file_exists($filepath) && is_file($filepath) && !is_link($filepath)) {
         unlink($filepath);
         header("Location: {$config['url']}/backup.php?success=Backup deleted.");
         exit();

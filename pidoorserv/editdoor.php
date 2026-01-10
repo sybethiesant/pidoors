@@ -7,6 +7,7 @@ $title = 'Edit Door';
 require_once './includes/header.php';
 
 require_login($config);
+require_admin($config);
 
 $error_message = '';
 $door_name = sanitize_string($_GET['name'] ?? $_POST['original_name'] ?? '');
