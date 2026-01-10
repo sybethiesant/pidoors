@@ -44,9 +44,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error_message = 'User ID and Facility are required.';
         } else {
             try {
-                // Generate card_id if not provided
+                // Generate card_id if not provided (using cryptographically secure random)
                 if (empty($card_id)) {
-                    $card_id = sprintf("%08x", crc32($facility . $user_id . time()));
+                    $card_id = bin2hex(random_bytes(4));
                 }
 
                 $stmt = $pdo_access->prepare("

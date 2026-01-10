@@ -24,7 +24,6 @@ import threading
 import syslog
 import socket
 import os
-import hashlib
 
 # Try to import optional dependencies
 try:
@@ -36,8 +35,9 @@ except ImportError:
 
 # Configuration
 DEBUG_MODE = False
-CONF_DIR = "/home/pi/pidoors/conf/"
-CACHE_DIR = "/home/pi/pidoors/cache/"
+INSTALL_DIR = os.environ.get('PIDOORS_DIR', '/opt/pidoors')
+CONF_DIR = os.path.join(INSTALL_DIR, 'conf') + '/'
+CACHE_DIR = os.path.join(INSTALL_DIR, 'cache') + '/'
 CACHE_DURATION = 86400  # 24 hours in seconds
 HEARTBEAT_INTERVAL = 60  # seconds
 DB_RETRY_INTERVAL = 30  # seconds
@@ -55,6 +55,11 @@ local_cache = {}
 cache_last_sync = 0
 heartbeat_thread = None
 running = True
+
+# Thread locks for shared state
+state_lock = threading.Lock()  # For db_connected, last_db_attempt, cache_last_sync
+cache_lock = threading.Lock()  # For local_cache access
+card_lock = threading.Lock()   # For last_card, repeat_read_count, repeat_read_timeout
 
 
 def get_local_ip():
@@ -238,6 +243,7 @@ def sync_cache_from_server():
         debug("Database configuration incomplete")
         return
 
+    db = None
     try:
         db = pymysql.connect(
             host=sqladdr,
@@ -275,8 +281,8 @@ def sync_cache_from_server():
         cursor.execute("SELECT * FROM doors WHERE name = %s", (zone,))
         door_info = cursor.fetchone()
 
-        db.close()
-        db_connected = True
+        with state_lock:
+            db_connected = True
 
         # Build the cache
         new_cache = {
@@ -309,17 +315,26 @@ def sync_cache_from_server():
                 'valid_until': str(card['valid_until']) if card['valid_until'] else None
             }
 
-        local_cache = new_cache
+        with cache_lock:
+            local_cache = new_cache
         save_cache()
         report(f"Cache synced from server: {len(new_cache['cards'])} cards")
 
     except pymysql.Error as e:
-        db_connected = False
+        with state_lock:
+            db_connected = False
         report(f"Database sync failed: {e}")
         debug("Will use local cache for access decisions")
     except Exception as e:
-        db_connected = False
+        with state_lock:
+            db_connected = False
         report(f"Cache sync error: {e}")
+    finally:
+        if db:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 def is_cache_valid():
@@ -457,14 +472,6 @@ def unlock_briefly(gpio):
     lock_door()
 
 
-def active(gpio):
-    """Get the active (unlock) value for a GPIO"""
-    z = zone_by_pin.get(gpio)
-    if z:
-        return config[z].get("unlock_value", 1)
-    return 1
-
-
 # ============================================================
 # WIEGAND CARD READING
 # ============================================================
@@ -583,9 +590,11 @@ def lookup_card(card_id, facility, user_id, bstr):
 
     # First check: Master cards (from cache)
     if is_cache_valid():
-        master_cards = local_cache.get('master_cards', {})
-        if card_key in master_cards:
-            report(f"Master card access granted: {master_cards[card_key].get('description', 'Master')}")
+        with cache_lock:
+            master_cards = local_cache.get('master_cards', {})
+            master_card_info = master_cards.get(card_key)
+        if master_card_info:
+            report(f"Master card access granted: {master_card_info.get('description', 'Master')}")
             open_door(user_id, "Master")
             log_access(user_id, card_id, facility, True, "Master card")
             return
@@ -600,28 +609,36 @@ def lookup_card(card_id, facility, user_id, bstr):
     # Fall back to local cache
     if is_cache_valid():
         debug("Using local cache for access decision")
-        cached_card = local_cache.get('cards', {}).get(card_key)
+        with cache_lock:
+            cached_card = local_cache.get('cards', {}).get(card_key)
+            # Make a copy to avoid holding the lock during processing
+            if cached_card:
+                cached_card = dict(cached_card)
 
         if cached_card:
             # Check if card has access to this zone
             doors = cached_card.get('doors', '')
             if zone in doors or doors == '*':
-                # Check validity dates
+                # Check validity dates with error handling
                 valid_from = cached_card.get('valid_from')
                 valid_until = cached_card.get('valid_until')
 
-                if valid_from and now.date() < datetime.strptime(valid_from, '%Y-%m-%d').date():
-                    access_reason = "Card not yet valid"
-                elif valid_until and now.date() > datetime.strptime(valid_until, '%Y-%m-%d').date():
-                    access_reason = "Card expired"
-                elif check_schedule(cached_card.get('schedule_id'), now):
-                    if not is_holiday_denied(now):
-                        access_granted = True
-                        access_reason = "Cached access granted"
+                try:
+                    if valid_from and now.date() < datetime.strptime(valid_from, '%Y-%m-%d').date():
+                        access_reason = "Card not yet valid"
+                    elif valid_until and now.date() > datetime.strptime(valid_until, '%Y-%m-%d').date():
+                        access_reason = "Card expired"
+                    elif check_schedule(cached_card.get('schedule_id'), now):
+                        if not is_holiday_denied(now):
+                            access_granted = True
+                            access_reason = "Cached access granted"
+                        else:
+                            access_reason = "Access denied on holiday"
                     else:
-                        access_reason = "Access denied on holiday"
-                else:
-                    access_reason = "Outside scheduled hours"
+                        access_reason = "Outside scheduled hours"
+                except ValueError as e:
+                    debug(f"Date parsing error: {e}")
+                    access_reason = "Invalid date format in card data"
             else:
                 access_reason = "No access to this door"
         else:
@@ -646,8 +663,10 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
     global db_connected, last_db_attempt
 
     # Rate limit database connection attempts
-    if not db_connected and (time.time() - last_db_attempt) < DB_RETRY_INTERVAL:
-        return False
+    with state_lock:
+        if not db_connected and (time.time() - last_db_attempt) < DB_RETRY_INTERVAL:
+            return False
+        last_db_attempt = time.time()
 
     zone_config = config.get(zone, {})
     sqladdr = zone_config.get("sqladdr")
@@ -658,8 +677,8 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
     if not all([sqladdr, sqluser, sqlpass, sqldb]):
         return False
 
-    last_db_attempt = time.time()
-
+    db = None
+    result = False
     try:
         db = pymysql.connect(
             host=sqladdr,
@@ -669,7 +688,8 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
             connect_timeout=5
         )
         cursor = db.cursor(pymysql.cursors.DictCursor)
-        db_connected = True
+        with state_lock:
+            db_connected = True
 
         # Check for master card first
         cursor.execute("""
@@ -680,14 +700,11 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
         if cursor.fetchone():
             report("Master card access via database")
             open_door(user_id, "Master")
-
-            # Log to database
             cursor.execute("""
                 INSERT INTO logs (user_id, Date, Granted, Location, doorip)
                 VALUES (%s, %s, 1, %s, %s)
             """, (user_id, now, zone, myip))
             db.commit()
-            db.close()
             return True
 
         # Look up regular card
@@ -699,84 +716,34 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
         card = cursor.fetchone()
 
         if card:
+            granted = False
+            reason = ""
+
             if card['active'] != 1:
-                reject_card(user_id, "Card inactive")
-                cursor.execute("""
-                    INSERT INTO logs (user_id, Date, Granted, Location, doorip)
-                    VALUES (%s, %s, 0, %s, %s)
-                """, (user_id, now, zone, myip))
-                db.commit()
-                db.close()
-                return True
+                reason = "Card inactive"
+            elif zone not in card.get('doors', '') and card.get('doors', '') != '*':
+                reason = "No access to this door"
+            elif card.get('valid_from') and now.date() < card['valid_from']:
+                reason = "Card not yet valid"
+            elif card.get('valid_until') and now.date() > card['valid_until']:
+                reason = "Card expired"
+            elif card.get('schedule_id') and not check_schedule_from_db(cursor, card['schedule_id'], now):
+                reason = "Outside scheduled hours"
+            elif is_holiday_denied_db(cursor, now):
+                reason = "Access denied on holiday"
+            else:
+                granted = True
+                name = f"{card.get('firstname', '')} {card.get('lastname', '')}".strip() or user_id
+                open_door(user_id, name)
 
-            doors = card.get('doors', '')
-            if zone not in doors and doors != '*':
-                reject_card(user_id, "No access to this door")
-                cursor.execute("""
-                    INSERT INTO logs (user_id, Date, Granted, Location, doorip)
-                    VALUES (%s, %s, 0, %s, %s)
-                """, (user_id, now, zone, myip))
-                db.commit()
-                db.close()
-                return True
-
-            # Check validity dates
-            valid_from = card.get('valid_from')
-            valid_until = card.get('valid_until')
-
-            if valid_from and now.date() < valid_from:
-                reject_card(user_id, "Card not yet valid")
-                cursor.execute("""
-                    INSERT INTO logs (user_id, Date, Granted, Location, doorip)
-                    VALUES (%s, %s, 0, %s, %s)
-                """, (user_id, now, zone, myip))
-                db.commit()
-                db.close()
-                return True
-
-            if valid_until and now.date() > valid_until:
-                reject_card(user_id, "Card expired")
-                cursor.execute("""
-                    INSERT INTO logs (user_id, Date, Granted, Location, doorip)
-                    VALUES (%s, %s, 0, %s, %s)
-                """, (user_id, now, zone, myip))
-                db.commit()
-                db.close()
-                return True
-
-            # Check schedule
-            schedule_id = card.get('schedule_id')
-            if schedule_id and not check_schedule_from_db(cursor, schedule_id, now):
-                reject_card(user_id, "Outside scheduled hours")
-                cursor.execute("""
-                    INSERT INTO logs (user_id, Date, Granted, Location, doorip)
-                    VALUES (%s, %s, 0, %s, %s)
-                """, (user_id, now, zone, myip))
-                db.commit()
-                db.close()
-                return True
-
-            # Check holidays
-            if is_holiday_denied_db(cursor, now):
-                reject_card(user_id, "Access denied on holiday")
-                cursor.execute("""
-                    INSERT INTO logs (user_id, Date, Granted, Location, doorip)
-                    VALUES (%s, %s, 0, %s, %s)
-                """, (user_id, now, zone, myip))
-                db.commit()
-                db.close()
-                return True
-
-            # Access granted!
-            name = f"{card.get('firstname', '')} {card.get('lastname', '')}".strip() or user_id
-            open_door(user_id, name)
+            if not granted:
+                reject_card(user_id, reason)
 
             cursor.execute("""
                 INSERT INTO logs (user_id, Date, Granted, Location, doorip)
-                VALUES (%s, %s, 1, %s, %s)
-            """, (user_id, now, zone, myip))
+                VALUES (%s, %s, %s, %s, %s)
+            """, (user_id, now, 1 if granted else 0, zone, myip))
             db.commit()
-            db.close()
             return True
 
         else:
@@ -787,28 +754,32 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
                     INSERT INTO cards (card_id, user_id, facility, bstr, firstname, lastname, doors, active)
                     VALUES (%s, %s, %s, %s, '', '', '', 0)
                 """, (card_id, user_id, facility, bstr))
-
                 cursor.execute("""
                     INSERT INTO logs (user_id, Date, Granted, Location, doorip)
                     VALUES (%s, %s, 0, %s, %s)
                 """, (user_id, now, zone, myip))
-
                 db.commit()
             except pymysql.IntegrityError:
                 pass  # Card already exists
-
-            db.close()
             reject_card(user_id, "Unknown card")
             return True
 
     except pymysql.Error as e:
-        db_connected = False
+        with state_lock:
+            db_connected = False
         debug(f"Database error: {e}")
         return False
     except Exception as e:
-        db_connected = False
+        with state_lock:
+            db_connected = False
         debug(f"Database lookup error: {e}")
         return False
+    finally:
+        if db:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 def check_schedule(schedule_id, now):
@@ -816,11 +787,15 @@ def check_schedule(schedule_id, now):
     if not schedule_id:
         return True  # No schedule = always allowed
 
-    schedules = local_cache.get('schedules', {})
-    schedule = schedules.get(schedule_id)
+    with cache_lock:
+        schedules = local_cache.get('schedules', {})
+        schedule = schedules.get(schedule_id)
+        # Make a copy to avoid holding the lock during processing
+        if schedule:
+            schedule = dict(schedule)
 
     if not schedule:
-        return True  # Schedule not found = allow access
+        return False  # Schedule not found = deny access (fail secure)
 
     if schedule.get('is_24_7'):
         return True
@@ -839,13 +814,16 @@ def check_schedule(schedule_id, now):
     if not start_time or not end_time:
         return False  # No access on this day
 
-    # Parse time strings
-    if isinstance(start_time, str):
-        start_time = datetime.strptime(start_time, '%H:%M:%S').time()
-    if isinstance(end_time, str):
-        end_time = datetime.strptime(end_time, '%H:%M:%S').time()
-
-    return start_time <= current_time <= end_time
+    # Parse time strings with error handling
+    try:
+        if isinstance(start_time, str):
+            start_time = datetime.strptime(start_time, '%H:%M:%S').time()
+        if isinstance(end_time, str):
+            end_time = datetime.strptime(end_time, '%H:%M:%S').time()
+        return start_time <= current_time <= end_time
+    except ValueError as e:
+        debug(f"Schedule time parsing error: {e}")
+        return False  # Fail secure on parsing errors
 
 
 def check_schedule_from_db(cursor, schedule_id, now):
@@ -854,7 +832,7 @@ def check_schedule_from_db(cursor, schedule_id, now):
     schedule = cursor.fetchone()
 
     if not schedule:
-        return True
+        return False  # Schedule not found = deny access (fail secure)
 
     if schedule.get('is_24_7'):
         return True
@@ -874,7 +852,8 @@ def check_schedule_from_db(cursor, schedule_id, now):
 
 def is_holiday_denied(now):
     """Check if today is a holiday with access denied (from cache)"""
-    holidays = local_cache.get('holidays', [])
+    with cache_lock:
+        holidays = list(local_cache.get('holidays', []))
     today = now.strftime('%Y-%m-%d')
 
     for holiday in holidays:
@@ -903,18 +882,20 @@ def open_door(user_id, name):
 
     now = time.time()
 
-    # Check for repeat swipe (3 swipes within 30 seconds = toggle lock)
-    if user_id == last_card and now <= repeat_read_timeout:
-        repeat_read_count += 1
-    else:
-        repeat_read_count = 0
-        repeat_read_timeout = now + 30
+    with card_lock:
+        # Check for repeat swipe (3 swipes within 30 seconds = toggle lock)
+        if user_id == last_card and now <= repeat_read_timeout:
+            repeat_read_count += 1
+        else:
+            repeat_read_count = 0
+            repeat_read_timeout = now + 30
 
-    last_card = user_id
+        last_card = user_id
+        current_repeat_count = repeat_read_count
 
     zone_config = config.get(zone, {})
 
-    if repeat_read_count >= 2:
+    if current_repeat_count >= 2:
         # Triple swipe - toggle permanent lock/unlock
         zone_config["unlocked"] = not zone_config.get("unlocked", False)
 
@@ -937,7 +918,8 @@ def open_door(user_id, name):
 def reject_card(user_id, reason="Access denied"):
     """Handle card rejection"""
     global repeat_read_count
-    repeat_read_count = 0
+    with card_lock:
+        repeat_read_count = 0
 
     report(f"Access denied at {zone} for user {user_id}: {reason}")
 
@@ -1060,6 +1042,7 @@ def send_heartbeat():
     if not all([sqladdr, sqluser, sqlpass, sqldb]):
         return
 
+    db = None
     try:
         db = pymysql.connect(
             host=sqladdr,
@@ -1081,12 +1064,19 @@ def send_heartbeat():
         """, (myip, 1 if not config.get(zone, {}).get("unlocked", False) else 0, zone))
 
         db.commit()
-        db.close()
-        db_connected = True
+        with state_lock:
+            db_connected = True
 
     except pymysql.Error as e:
-        db_connected = False
+        with state_lock:
+            db_connected = False
         debug(f"Heartbeat failed: {e}")
+    finally:
+        if db:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 # ============================================================
@@ -1125,6 +1115,7 @@ def send_offline_status():
     if not all([sqladdr, sqluser, sqlpass, sqldb]):
         return
 
+    db = None
     try:
         db = pymysql.connect(
             host=sqladdr,
@@ -1136,9 +1127,14 @@ def send_offline_status():
         cursor = db.cursor()
         cursor.execute("UPDATE doors SET status = 'offline' WHERE name = %s", (zone,))
         db.commit()
-        db.close()
-    except:
+    except Exception:
         pass
+    finally:
+        if db:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 # ============================================================

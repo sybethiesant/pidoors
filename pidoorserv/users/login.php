@@ -98,12 +98,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
                         // Increment failed login attempts
                         $_SESSION['login_attempts']++;
 
-                        // Lock out after 5 failed attempts for 15 minutes
-                        if ($_SESSION['login_attempts'] >= 5) {
-                            $_SESSION['login_lockout_time'] = time() + (15 * 60);
-                            $error_message = 'Too many failed login attempts. Account locked for 15 minutes.';
+                        // Lock out after max_failed_attempts for lockout_duration
+                        $max_attempts = $config['max_failed_attempts'] ?? 5;
+                        $lockout_seconds = $config['lockout_duration'] ?? 300;
+                        if ($_SESSION['login_attempts'] >= $max_attempts) {
+                            $_SESSION['login_lockout_time'] = time() + $lockout_seconds;
+                            $lockout_minutes = ceil($lockout_seconds / 60);
+                            $error_message = "Too many failed login attempts. Account locked for {$lockout_minutes} minute(s).";
                         } else {
-                            $remaining_attempts = 5 - $_SESSION['login_attempts'];
+                            $remaining_attempts = $max_attempts - $_SESSION['login_attempts'];
                             $error_message = 'Invalid email or password. ' . $remaining_attempts . ' attempt(s) remaining.';
                         }
 
@@ -117,10 +120,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
                 } else {
                     // Increment failed login attempts for non-existent user
                     $_SESSION['login_attempts']++;
+                    $max_attempts = $config['max_failed_attempts'] ?? 5;
+                    $lockout_seconds = $config['lockout_duration'] ?? 300;
 
-                    if ($_SESSION['login_attempts'] >= 5) {
-                        $_SESSION['login_lockout_time'] = time() + (15 * 60);
-                        $error_message = 'Too many failed login attempts. Account locked for 15 minutes.';
+                    if ($_SESSION['login_attempts'] >= $max_attempts) {
+                        $_SESSION['login_lockout_time'] = time() + $lockout_seconds;
+                        $lockout_minutes = ceil($lockout_seconds / 60);
+                        $error_message = "Too many failed login attempts. Account locked for {$lockout_minutes} minute(s).";
                     } else {
                         $error_message = 'Invalid email or password.';
                     }

@@ -31,13 +31,6 @@ try {
         ]
     );
 
-    // Legacy mysqli connection for backward compatibility during migration
-    $dbcon = mysqli_connect($config['sqladdr'], $config['sqluser'], $config['sqlpass']);
-    if ($dbcon) {
-        mysqli_select_db($dbcon, $config['sqldb']);
-        mysqli_set_charset($dbcon, 'utf8mb4');
-    }
-
 } catch (PDOException $e) {
     error_log("Database connection failed: " . $e->getMessage());
     die("Database connection failed. Please contact the administrator.");

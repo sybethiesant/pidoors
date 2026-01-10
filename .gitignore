@@ -1,5 +1,8 @@
 # PiDoors - Files to ignore
 
+# Audit log (local only)
+AUDIT_LOG.md
+
 # Configuration files with sensitive data
 pidoorserv/includes/config.php
 pidoors/conf/config.json
