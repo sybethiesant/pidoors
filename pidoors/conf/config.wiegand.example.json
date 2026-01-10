@@ -1,0 +1,28 @@
+{
+    "_comment": "Wiegand Reader Configuration Example",
+    "_doc": "Standard GPIO-based Wiegand reader supporting 26/32/34/35/36/37/48-bit formats",
+
+    "front_door": {
+        "reader_type": "wiegand",
+
+        "_wiegand_settings": "--- Wiegand GPIO Configuration ---",
+        "d0": 24,
+        "d1": 23,
+        "wiegand_format": "auto",
+
+        "_door_settings": "--- Door Control ---",
+        "latch_gpio": 18,
+        "unlock_value": 1,
+        "open_delay": 5,
+
+        "_optional_gpio": "--- Optional GPIO (set to null to disable) ---",
+        "door_sensor_gpio": null,
+        "rex_gpio": null,
+
+        "_database": "--- Database Connection ---",
+        "sqladdr": "192.168.1.100",
+        "sqluser": "pidoors",
+        "sqlpass": "YOUR_DATABASE_PASSWORD",
+        "sqldb": "access"
+    }
+}

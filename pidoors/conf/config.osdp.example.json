@@ -1,0 +1,34 @@
+{
+    "_comment": "OSDP Reader Configuration Example",
+    "_doc": "RS-485 OSDP v2 reader with optional AES-128 Secure Channel encryption",
+
+    "secure_entrance": {
+        "reader_type": "osdp",
+
+        "_osdp_settings": "--- OSDP RS-485 Configuration ---",
+        "serial_port": "/dev/serial0",
+        "baud_rate": 115200,
+        "address": 0,
+        "poll_interval": 0.1,
+        "timeout": 0.5,
+
+        "_encryption": "--- Secure Channel (optional) ---",
+        "_encryption_note": "Base64-encoded 16-byte AES-128 key. Remove to disable encryption.",
+        "encryption_key": null,
+
+        "_door_settings": "--- Door Control ---",
+        "latch_gpio": 18,
+        "unlock_value": 1,
+        "open_delay": 5,
+
+        "_optional_gpio": "--- Optional GPIO (set to null to disable) ---",
+        "door_sensor_gpio": null,
+        "rex_gpio": null,
+
+        "_database": "--- Database Connection ---",
+        "sqladdr": "192.168.1.100",
+        "sqluser": "pidoors",
+        "sqlpass": "YOUR_DATABASE_PASSWORD",
+        "sqldb": "access"
+    }
+}

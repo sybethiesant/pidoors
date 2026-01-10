@@ -1,0 +1,38 @@
+{
+    "_comment": "PN532 NFC Reader Configuration Example",
+    "_doc": "PN532 NFC/RFID reader via I2C or SPI. Supports Mifare Classic, Ultralight, NTAG.",
+
+    "nfc_door": {
+        "reader_type": "nfc_pn532",
+
+        "_pn532_i2c": "--- I2C Configuration (recommended) ---",
+        "interface": "i2c",
+        "i2c_bus": 1,
+        "i2c_address": 36,
+
+        "_pn532_spi": "--- SPI Configuration (alternative) ---",
+        "_spi_note": "To use SPI, set interface to 'spi' and configure below",
+        "_spi_bus": 0,
+        "_spi_device": 0,
+        "_spi_speed": 1000000,
+
+        "_reader_settings": "--- Reader Behavior ---",
+        "poll_interval": 0.2,
+        "debounce_time": 2.0,
+
+        "_door_settings": "--- Door Control ---",
+        "latch_gpio": 18,
+        "unlock_value": 1,
+        "open_delay": 5,
+
+        "_optional_gpio": "--- Optional GPIO (set to null to disable) ---",
+        "door_sensor_gpio": null,
+        "rex_gpio": null,
+
+        "_database": "--- Database Connection ---",
+        "sqladdr": "192.168.1.100",
+        "sqluser": "pidoors",
+        "sqlpass": "YOUR_DATABASE_PASSWORD",
+        "sqldb": "access"
+    }
+}
