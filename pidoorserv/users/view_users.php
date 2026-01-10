@@ -1,66 +1,73 @@
+<?php
+/**
+ * View Panel Users
+ * PiDoors Access Control System
+ */
+$title = 'Panel Users';
+require_once __DIR__ . '/../includes/header.php';
 
-<?php 
-    $title = 'View Panel Users';
-    require_once '../includes/header.php'; 
+// Require admin access
+require_admin($config);
 
-
-  
-     if($_SESSION['isadmin'])  
-     {  
+// Fetch all users
+try {
+    $stmt = $pdo->query("SELECT id, user_name, user_email, admin FROM users ORDER BY user_name");
+    $users = $stmt->fetchAll();
+} catch (PDOException $e) {
+    error_log("View users error: " . $e->getMessage());
+    $users = [];
+}
 ?>
 
-      <table class="table table-striped table-sm">
-        <thead>
-          <tr>
-            <th>User Name</th>
-            <th>User E-Mail</th>
-            <th>Admin</th>
-            <th>Delete</th>
-          </tr>
-        </thead>
-        <tbody>
-        <?php  
-            include("../database/db_connection.php");  
-            mysqli_select_db($dbcon,$config['sqldb']);
-            $view_users_query="select * from users";//select query for viewing users.  
-            $run=mysqli_query($dbcon,$view_users_query);//here run the sql query.  
-      
-            while($row=mysqli_fetch_array($run))//while look to fetch the result and store in a array $row.  
-            {  
-                $user_id=$row[0];  
-                $user_name=$row[1];  
-                $user_email=$row[3];  
-                $user_isadmin=$row[4];  
-      
-            ?>  
-            <tr>  
-    <!--here showing results in the table -->  
-                <td><?php echo $user_name;  ?></td>  
-                <td><?php echo $user_email;  ?></td>  
-                <?php 
-                    if ($user_isadmin=="1") {
-                        $user_isadmin="Yes";
-                    }
-                    else {
-                        $user_isadmin="No";
-                    }
-                ?>
-                <td><?php echo $user_isadmin;  ?></td> 
-                <td><a href="delete.php?del=<?php echo $user_id ?>"><button class="btn btn-danger">Delete</button></a></td> <!--btn btn-danger is a bootstrap button to show danger-->  
-            </tr>  
-            <?php } ?>  
-        </tbody>
-      </table>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div></div>
+    <a href="adduser.php" class="btn btn-primary">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        Add User
+    </a>
+</div>
 
-      <?php
-    
-  }  
-  else{
-    header("Location: " . $config['url'] ."/users/login.php");//redirect to the login page to secure the welcome page without login access. 
-    die(); 
-  }    
-  require_once $config['apppath'] . 'includes/footer.php';
+<div class="card shadow">
+    <div class="card-body">
+        <table class="table table-striped table-hover datatable">
+            <thead class="table-dark">
+                <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th width="100">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($users as $user): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($user['user_name']); ?></td>
+                        <td><?php echo htmlspecialchars($user['user_email']); ?></td>
+                        <td>
+                            <?php if ($user['admin'] == 1): ?>
+                                <span class="badge bg-danger">Administrator</span>
+                            <?php else: ?>
+                                <span class="badge bg-secondary">User</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <a href="edituser.php?id=<?php echo (int)$user['id']; ?>" class="btn btn-sm btn-outline-primary" title="Edit">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                            </a>
+                            <?php if ($user['user_email'] !== $_SESSION['email']): ?>
+                                <a href="delete.php?id=<?php echo (int)$user['id']; ?>&token=<?php echo htmlspecialchars($csrf_token); ?>"
+                                   class="btn btn-sm btn-outline-danger"
+                                   title="Delete"
+                                   onclick="return confirmDelete('Are you sure you want to delete this user?');">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                </a>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
 
-?>
-
-
+<?php require_once $config['apppath'] . 'includes/footer.php'; ?>

@@ -1,0 +1,29 @@
+[Unit]
+Description=PiDoors Access Control Service
+After=network.target mysql.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=pidoors
+Group=pidoors
+WorkingDirectory=/opt/pidoors
+ExecStart=/usr/bin/python3 /opt/pidoors/pidoors.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pidoors
+ReadOnlyPaths=/opt/pidoors
+
+# Allow GPIO access
+SupplementaryGroups=gpio
+
+[Install]
+WantedBy=multi-user.target
