@@ -2,6 +2,7 @@
 #
 # PiDoors Access Control System - Installation Script
 # This script installs and configures PiDoors on a Raspberry Pi
+# Web Server: Nginx with PHP-FPM
 #
 
 set -e
@@ -10,10 +11,12 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${GREEN}======================================${NC}"
 echo -e "${GREEN}PiDoors Installation Script${NC}"
+echo -e "${GREEN}Version 2.1 - Nginx Edition${NC}"
 echo -e "${GREEN}======================================${NC}"
 echo
 
@@ -54,16 +57,26 @@ apt-get upgrade -y
 
 # Install common dependencies
 echo -e "\n${GREEN}[2/8] Installing common dependencies...${NC}"
-apt-get install -y git python3 python3-pip python3-dev
+apt-get install -y git python3 python3-pip python3-dev curl
 
 # Install server components
 if [ "$INSTALL_SERVER" = true ]; then
-    echo -e "\n${GREEN}[3/8] Installing web server components...${NC}"
-    apt-get install -y apache2 php php-mysql php-cli php-mbstring php-curl mariadb-server
+    echo -e "\n${GREEN}[3/8] Installing web server components (Nginx + PHP-FPM)...${NC}"
 
-    # Enable Apache modules
-    a2enmod rewrite
-    a2enmod ssl
+    # Install Nginx, PHP-FPM, and MariaDB
+    apt-get install -y nginx php-fpm php-mysql php-cli php-mbstring php-curl php-json mariadb-server
+
+    # Detect PHP version for FPM socket
+    PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;")
+    echo -e "${BLUE}Detected PHP version: ${PHP_VERSION}${NC}"
+
+    # Enable and start Nginx
+    systemctl enable nginx
+    systemctl start nginx
+
+    # Enable and start PHP-FPM
+    systemctl enable php${PHP_VERSION}-fpm
+    systemctl start php${PHP_VERSION}-fpm
 
     # Secure MariaDB installation
     echo -e "\n${YELLOW}Securing MariaDB installation...${NC}"
@@ -98,31 +111,33 @@ EOF
     chown -R www-data:www-data /var/www/pidoors
     chmod -R 755 /var/www/pidoors
 
-    # Update database connection config
-    echo -e "${YELLOW}Updating database configuration...${NC}"
-    sed -i "s/'password' => ''/'password' => '$DB_PASS'/g" /var/www/pidoors/database/db_connection.php
+    # Create configuration from example
+    if [ -f "/var/www/pidoors/includes/config.php.example" ]; then
+        cp /var/www/pidoors/includes/config.php.example /var/www/pidoors/includes/config.php
+        # Update database password in config
+        sed -i "s/'password' => ''/'password' => '$DB_PASS'/g" /var/www/pidoors/includes/config.php
+        chmod 640 /var/www/pidoors/includes/config.php
+        chown www-data:www-data /var/www/pidoors/includes/config.php
+    fi
 
-    # Create Apache virtual host
-    cat > /etc/apache2/sites-available/pidoors.conf <<VHOST
-<VirtualHost *:80>
-    ServerName pidoors.local
-    DocumentRoot /var/www/pidoors
+    # Install Nginx configuration
+    echo -e "${GREEN}Configuring Nginx...${NC}"
 
-    <Directory /var/www/pidoors>
-        Options -Indexes +FollowSymLinks
-        AllowOverride All
-        Require all granted
-    </Directory>
+    # Update PHP-FPM socket path in nginx config based on detected version
+    sed "s|unix:/var/run/php/php-fpm.sock|unix:/var/run/php/php${PHP_VERSION}-fpm.sock|g" \
+        nginx/pidoors.conf > /etc/nginx/sites-available/pidoors
 
-    ErrorLog \${APACHE_LOG_DIR}/pidoors_error.log
-    CustomLog \${APACHE_LOG_DIR}/pidoors_access.log combined
-</VirtualHost>
-VHOST
+    # Disable default site and enable PiDoors
+    rm -f /etc/nginx/sites-enabled/default
+    ln -sf /etc/nginx/sites-available/pidoors /etc/nginx/sites-enabled/pidoors
 
-    a2ensite pidoors.conf
-    systemctl reload apache2
+    # Test Nginx configuration
+    nginx -t
 
-    echo -e "${GREEN}Web interface installed at http://$(hostname -I | awk '{print $1}')/pidoors${NC}"
+    # Reload Nginx
+    systemctl reload nginx
+
+    echo -e "${GREEN}Web interface installed at http://$(hostname -I | awk '{print $1}')/${NC}"
 else
     echo -e "\n${YELLOW}[3/8] Skipping web server installation${NC}"
 fi
@@ -141,8 +156,9 @@ if [ "$INSTALL_DOOR" = true ]; then
     fi
 
     # Create installation directory
-    mkdir -p /opt/pidoors
+    mkdir -p /opt/pidoors/conf
     cp pidoors/pidoors.py /opt/pidoors/
+    cp pidoors/conf/config.json.example /opt/pidoors/conf/config.json
     chown -R pidoors:pidoors /opt/pidoors
     chmod +x /opt/pidoors/pidoors.py
 
@@ -154,10 +170,32 @@ if [ "$INSTALL_DOOR" = true ]; then
     echo
     read -p "Enter door name/location: " DOOR_NAME
 
-    # Update configuration in pidoors.py
-    sed -i "s/host='localhost'/host='$DB_HOST'/g" /opt/pidoors/pidoors.py
-    sed -i "s/password=''/password='$DB_PASS_DOOR'/g" /opt/pidoors/pidoors.py
-    sed -i "s/door_name = \"Door\"/door_name = \"$DOOR_NAME\"/g" /opt/pidoors/pidoors.py
+    # Update configuration file
+    cat > /opt/pidoors/conf/config.json <<DOORCONF
+{
+    "connex1": {
+        "unlock_value": 1,
+        "open_delay": 3,
+        "latch_gpio": 18,
+        "d0": 24,
+        "d1": 23,
+        "sqladdr": "$DB_HOST",
+        "sqluser": "pidoors",
+        "sqlpass": "$DB_PASS_DOOR",
+        "sqldb": "access"
+    }
+}
+DOORCONF
+
+    # Create zone configuration
+    cat > /opt/pidoors/conf/zone.json <<ZONECONF
+{
+    "zone": "$DOOR_NAME"
+}
+ZONECONF
+
+    chown pidoors:pidoors /opt/pidoors/conf/*.json
+    chmod 600 /opt/pidoors/conf/config.json
 
     # Install systemd service
     cp pidoors/pidoors.service /etc/systemd/system/
@@ -194,11 +232,28 @@ cat > /etc/logrotate.d/pidoors <<LOGROTATE
     notifempty
     create 0640 pidoors pidoors
 }
+
+/var/log/nginx/pidoors_*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        [ -f /var/run/nginx.pid ] && kill -USR1 \$(cat /var/run/nginx.pid)
+    endscript
+}
 LOGROTATE
 
 # Create backup script
 echo -e "\n${GREEN}[7/8] Creating backup script...${NC}"
 if [ "$INSTALL_SERVER" = true ]; then
+    mkdir -p /var/backups/pidoors
+    chown www-data:www-data /var/backups/pidoors
+    chmod 750 /var/backups/pidoors
+
     cat > /usr/local/bin/pidoors-backup.sh <<'BACKUP'
 #!/bin/bash
 # PiDoors Backup Script
@@ -209,11 +264,11 @@ DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR"
 
 # Backup databases
-mysqldump -u pidoors -p users > "$BACKUP_DIR/users_$DATE.sql"
-mysqldump -u pidoors -p access > "$BACKUP_DIR/access_$DATE.sql"
+mysqldump -u pidoors -p"$1" users > "$BACKUP_DIR/users_$DATE.sql"
+mysqldump -u pidoors -p"$1" access > "$BACKUP_DIR/access_$DATE.sql"
 
-# Backup web files
-tar -czf "$BACKUP_DIR/web_$DATE.tar.gz" /var/www/pidoors
+# Backup web files (excluding sensitive config)
+tar --exclude='config.php' -czf "$BACKUP_DIR/web_$DATE.tar.gz" /var/www/pidoors
 
 # Keep only last 30 days of backups
 find "$BACKUP_DIR" -name "*.sql" -mtime +30 -delete
@@ -224,9 +279,9 @@ BACKUP
 
     chmod +x /usr/local/bin/pidoors-backup.sh
 
-    # Add to crontab
-    (crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/pidoors-backup.sh") | crontab -
-    echo -e "${GREEN}Daily backup scheduled at 2 AM${NC}"
+    # Add to crontab (user needs to add password or use .my.cnf)
+    echo -e "${YELLOW}Note: Configure backup password in /root/.my.cnf or update crontab${NC}"
+    echo -e "${YELLOW}Example crontab entry: 0 2 * * * /usr/local/bin/pidoors-backup.sh${NC}"
 fi
 
 # Final setup
@@ -263,12 +318,16 @@ echo
 
 if [ "$INSTALL_SERVER" = true ]; then
     echo -e "Web Interface: ${GREEN}http://$(hostname -I | awk '{print $1}')/${NC}"
-    echo -e "Database: ${GREEN}MySQL/MariaDB${NC}"
-    echo -e "Backup: ${GREEN}/usr/local/bin/pidoors-backup.sh${NC}"
+    echo -e "Web Server: ${GREEN}Nginx with PHP-FPM${NC}"
+    echo -e "Database: ${GREEN}MariaDB${NC}"
+    echo -e "Backup Script: ${GREEN}/usr/local/bin/pidoors-backup.sh${NC}"
+    echo -e "Nginx Config: ${GREEN}/etc/nginx/sites-available/pidoors${NC}"
+    echo -e "Web Root: ${GREEN}/var/www/pidoors/${NC}"
 fi
 
 if [ "$INSTALL_DOOR" = true ]; then
     echo -e "Door Controller: ${GREEN}/opt/pidoors/pidoors.py${NC}"
+    echo -e "Configuration: ${GREEN}/opt/pidoors/conf/config.json${NC}"
     echo -e "Service: ${GREEN}systemctl start pidoors${NC}"
     echo -e "Logs: ${GREEN}journalctl -u pidoors -f${NC}"
 fi
@@ -281,9 +340,10 @@ if [ "$INSTALL_SERVER" = true ]; then
     echo "3. Add cards in the Cards page"
     echo "4. Set up access schedules and groups"
     echo "5. Configure email notifications in Settings"
+    echo "6. Enable HTTPS for production (see nginx/pidoors.conf)"
 fi
 if [ "$INSTALL_DOOR" = true ]; then
-    echo "1. Verify Wiegand reader connections (DATA0, DATA1)"
+    echo "1. Verify Wiegand reader connections (DATA0=GPIO24, DATA1=GPIO23)"
     echo "2. Start the service: systemctl start pidoors"
     echo "3. Monitor logs: journalctl -u pidoors -f"
 fi

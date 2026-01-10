@@ -5,9 +5,9 @@
         "latch_gpio": 18,
         "d0": 24,
         "d1": 23,
-        "sqladdr": "localhost",
+        "sqladdr": "YOUR_SERVER_IP",
         "sqluser": "pidoors",
-        "sqlpass": "",
+        "sqlpass": "YOUR_DATABASE_PASSWORD",
         "sqldb": "access"
     }
 }

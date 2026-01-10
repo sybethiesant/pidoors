@@ -1,24 +1,25 @@
 # Security Notice
 
-## Sensitive Information Removed
+## Sensitive Information Protection
 
-As of commit `78bbd8c`, the following security improvements have been made:
+As of version 2.1, the following security protections are in place:
 
-### ✅ Current Protection
-1. **config.php removed** - Now uses config.php.example template
-2. **Passwords sanitized** - No hardcoded passwords in current code
-3. **IP addresses removed** - Generic localhost/example IPs only
-4. **.gitignore updated** - Prevents future commits of sensitive files
-5. **__pycache__ removed** - Python cache files excluded
+### Current Protection
 
-### ⚠️ Important Note About Git History
+1. **config.php excluded** - Uses config.php.example template, actual config in .gitignore
+2. **config.json excluded** - Uses config.json.example template, actual config in .gitignore
+3. **Passwords sanitized** - No hardcoded passwords in current code
+4. **IP addresses removed** - Generic localhost/example IPs only
+5. **__pycache__ excluded** - Python cache files not tracked
 
-**The git history still contains sensitive information from previous commits:**
-- Database password: `p1d00r4p@ss!` (in commits b14d072 and 0ccbbbc)
-- Internal IP: `172.17.22.99` (in commits b14d072 and 0ccbbbc)
-- File paths: `/home/pi/pidoorserv/` (in commits b14d072 and 0ccbbbc)
+### Important Note About Git History
 
-### 🔒 Recommended Actions
+**The git history may contain sensitive information from previous commits:**
+- Database credentials from early development
+- Internal IP addresses
+- File paths
+
+### Recommended Actions
 
 **If this repository is or will be public:**
 
@@ -45,24 +46,71 @@ git push --force
 4. **Regenerate any exposed credentials** on your actual deployment
 5. **Use environment variables** or external config files for production
 
-### 📋 Current State
+### Current Security State
 
 **Safe for public use:**
-- ✅ All current code uses example/placeholder values
-- ✅ Configuration is template-based
-- ✅ .gitignore prevents future leaks
-- ✅ README includes setup instructions
+- All current code uses example/placeholder values
+- Configuration is template-based
+- .gitignore prevents future leaks
+- README includes setup instructions
 
 **Requires action:**
-- ⚠️ Git history contains old sensitive data (commits b14d072, 0ccbbbc)
-- ⚠️ Change production passwords if they matched the exposed ones
-- ⚠️ Consider force-push with cleaned history if repo will be public
+- Git history may contain old sensitive data
+- Change production passwords if they matched any exposed values
+- Consider force-push with cleaned history if repo will be public
 
-### 🛡️ Going Forward
+### Going Forward
 
 **All new installations must:**
-1. Copy `config.php.example` to `config.php`
-2. Edit `config.php` with their own credentials
-3. Never commit `config.php` (it's in .gitignore)
 
-**The repository is now secure for sharing**, but anyone with access to the old commits could see the historical sensitive data.
+1. Copy configuration templates:
+   ```bash
+   cp pidoorserv/includes/config.php.example pidoorserv/includes/config.php
+   cp pidoors/conf/config.json.example pidoors/conf/config.json
+   ```
+
+2. Edit configuration files with your own credentials:
+   ```bash
+   nano pidoorserv/includes/config.php
+   nano pidoors/conf/config.json
+   ```
+
+3. Secure configuration files:
+   ```bash
+   chmod 640 pidoorserv/includes/config.php
+   chmod 600 pidoors/conf/config.json
+   ```
+
+4. Never commit configuration files (they're in .gitignore)
+
+### Security Best Practices
+
+1. **Use strong, unique passwords** for database accounts
+2. **Enable HTTPS** in production (see nginx/pidoors.conf for SSL configuration)
+3. **Keep software updated** - regularly update the system and PiDoors
+4. **Monitor logs** - check audit logs and access logs regularly
+5. **Backup regularly** - automated backups are configured in /var/backups/pidoors/
+6. **Restrict network access** - use firewall rules to limit database access
+7. **Use SSH keys** instead of passwords for remote access
+
+### Reporting Security Issues
+
+Please report security vulnerabilities to the repository owner directly, not via public issues. Include:
+
+- Description of the vulnerability
+- Steps to reproduce
+- Potential impact
+- Suggested fix (if any)
+
+### Files That Should Never Be Committed
+
+The following files contain sensitive data and are excluded via .gitignore:
+
+```
+pidoorserv/includes/config.php    # Server configuration
+pidoors/conf/config.json          # Door controller configuration
+*.log                             # Log files
+*.bak                             # Backup files
+```
+
+**The repository is now secure for sharing**, but anyone with access to old commits could see historical sensitive data if git history has not been cleaned.

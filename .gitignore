@@ -2,6 +2,7 @@
 
 # Configuration files with sensitive data
 pidoorserv/includes/config.php
+pidoors/conf/config.json
 
 # Remote files
 pidoors/.remote
