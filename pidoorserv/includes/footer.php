@@ -1,27 +1,59 @@
-<footer class="pt-5 d-flex justify-content-between">
-                    <!--<span>Copyright © 2019-2020 <a href="https://themesberg.com">Themesberg</a></span>
-                    <ul class="nav m-0">
-                        <li class="nav-item">
-                          <a class="nav-link text-secondary" aria-current="page" href="#">Privacy Policy</a>
-                        </li>
-                        <li class="nav-item">
-                          <a class="nav-link text-secondary" href="#">Terms and conditions</a>
-                        </li>
-                        <li class="nav-item">
-                          <a class="nav-link text-secondary" href="#">Contact</a>
-                        </li>
-                      </ul>-->
-                </footer>
             </main>
         </div>
     </div>
-    <script src="<?php echo $config['url'];?>/js/popper.min.js" integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo" crossorigin="anonymous"></script>
-    <script src="<?php echo $config['url'];?>/js/bootstrap.min.js" integrity="sha384-oesi62hOLfzrys4LxRF63OJCXdXDipiYWBnvTl9Y9/TRlw5xlKIEHpNyvvDShgf/" crossorigin="anonymous"></script>
-    <script src="<?php echo $config['url'];?>/js/chartist.min.js"></script>
-    <script src="<?php echo $config['url'];?>/js/jquery-3.5.1.js"></script>
-    <script src="<?php echo $config['url'];?>/js/jquery.dataTables.min.js"></script>
-    <script src="<?php echo $config['url'];?>/js/dataTables.bootstrap5.min.js"></script>
-    <!-- Github buttons -->
-    <script async defer src="<?php echo $config['url'];?>/js/buttons.js"></script>
-   </body>
+
+    <footer class="footer mt-auto py-3 bg-light">
+        <div class="container text-center">
+            <span class="text-muted">PiDoors Access Control System</span>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="<?php echo htmlspecialchars($config['url']); ?>/js/jquery-3.5.1.js"></script>
+    <script src="<?php echo htmlspecialchars($config['url']); ?>/js/popper.min.js"></script>
+    <script src="<?php echo htmlspecialchars($config['url']); ?>/js/bootstrap.bundle.min.js"></script>
+    <script src="<?php echo htmlspecialchars($config['url']); ?>/js/jquery.dataTables.min.js"></script>
+    <script src="<?php echo htmlspecialchars($config['url']); ?>/js/dataTables.bootstrap5.min.js"></script>
+    <script src="<?php echo htmlspecialchars($config['url']); ?>/js/Chart.min.js"></script>
+
+    <script>
+        // Initialize all DataTables
+        $(document).ready(function() {
+            if ($.fn.DataTable) {
+                $('.datatable').DataTable({
+                    responsive: true,
+                    pageLength: 25,
+                    order: [[0, 'asc']],
+                    language: {
+                        search: "Search:",
+                        lengthMenu: "Show _MENU_ entries",
+                        info: "Showing _START_ to _END_ of _TOTAL_ entries",
+                        paginate: {
+                            first: "First",
+                            last: "Last",
+                            next: "Next",
+                            previous: "Previous"
+                        }
+                    }
+                });
+            }
+
+            // Auto-dismiss alerts after 5 seconds
+            setTimeout(function() {
+                $('.alert-dismissible').fadeOut('slow');
+            }, 5000);
+        });
+
+        // Confirm delete actions
+        function confirmDelete(message) {
+            return confirm(message || 'Are you sure you want to delete this item?');
+        }
+
+        // Format datetime for display
+        function formatDateTime(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleString();
+        }
+    </script>
+</body>
 </html>
