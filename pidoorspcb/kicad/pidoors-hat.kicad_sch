@@ -1,0 +1,85 @@
+(kicad_sch
+  (version 20231120)
+  (generator "eeschema")
+  (generator_version "8.0")
+  (uuid "e63e39d7-6ac0-4ffd-8aa3-1841a4541b55")
+  (paper "A3")
+  (title_block
+    (title "PiDoors Access Control HAT")
+    (date "2026-01-09")
+    (rev "2.0")
+    (company "PiDoors Project")
+    (comment 1 "Multi-Reader Access Control Board")
+    (comment 2 "Supports: Wiegand, OSDP, PN532, MFRC522")
+  )
+  (lib_symbols
+  )
+  (text "POWER INPUT\n12V DC, 9-24V Range"
+    (exclude_from_sim no)
+    (at 30 30 0)
+    (effects
+      (font (size 2.54 2.54))
+      (justify left)
+    )
+    (uuid "a1000001-0000-0000-0000-000000000001")
+  )
+  (text "RASPBERRY PI\nGPIO HEADER"
+    (exclude_from_sim no)
+    (at 120 30 0)
+    (effects
+      (font (size 2.54 2.54))
+      (justify left)
+    )
+    (uuid "a1000002-0000-0000-0000-000000000002")
+  )
+  (text "WIEGAND\nINTERFACE"
+    (exclude_from_sim no)
+    (at 200 30 0)
+    (effects
+      (font (size 2.54 2.54))
+      (justify left)
+    )
+    (uuid "a1000003-0000-0000-0000-000000000003")
+  )
+  (text "RS-485\nOSDP INTERFACE"
+    (exclude_from_sim no)
+    (at 200 100 0)
+    (effects
+      (font (size 2.54 2.54))
+      (justify left)
+    )
+    (uuid "a1000004-0000-0000-0000-000000000004")
+  )
+  (text "RELAY\nOUTPUT"
+    (exclude_from_sim no)
+    (at 30 140 0)
+    (effects
+      (font (size 2.54 2.54))
+      (justify left)
+    )
+    (uuid "a1000005-0000-0000-0000-000000000005")
+  )
+  (text "NFC HEADERS\nPN532/MFRC522"
+    (exclude_from_sim no)
+    (at 120 140 0)
+    (effects
+      (font (size 2.54 2.54))
+      (justify left)
+    )
+    (uuid "a1000006-0000-0000-0000-000000000006")
+  )
+  (text "ISOLATED INPUTS\nDoor Sensor, REX, Tamper"
+    (exclude_from_sim no)
+    (at 200 140 0)
+    (effects
+      (font (size 2.54 2.54))
+      (justify left)
+    )
+    (uuid "a1000007-0000-0000-0000-000000000007")
+  )
+  (sheet_instances
+    (path "/"
+      (page "1")
+    )
+  )
+)
