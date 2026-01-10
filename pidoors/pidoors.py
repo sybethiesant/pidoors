@@ -27,6 +27,7 @@ import threading
 import syslog
 import socket
 import os
+import fcntl
 
 # Try to import optional dependencies
 try:
@@ -1176,19 +1177,32 @@ def log_access(user_id, card_id, facility, granted, reason=""):
     }
 
     try:
-        logs = []
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                logs = json.load(f)
+        # Use file locking to prevent race conditions
+        with open(log_file, 'a+') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.seek(0)
+                content = f.read()
+                if content:
+                    try:
+                        logs = json.loads(content)
+                    except (json.JSONDecodeError, ValueError):
+                        debug(f"JSON corruption detected in {log_file}, resetting")
+                        logs = []
+                else:
+                    logs = []
 
-        logs.append(entry)
+                logs.append(entry)
 
-        # Keep only last 1000 entries
-        if len(logs) > 1000:
-            logs = logs[-1000:]
+                # Keep only last 1000 entries
+                if len(logs) > 1000:
+                    logs = logs[-1000:]
 
-        with open(log_file, 'w') as f:
-            json.dump(logs, f, indent=2)
+                f.seek(0)
+                f.truncate()
+                json.dump(logs, f, indent=2)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except Exception as e:
         debug(f"Error writing access log: {e}")
 
@@ -1205,19 +1219,32 @@ def log_door_event(event_type, details=""):
     }
 
     try:
-        logs = []
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                logs = json.load(f)
+        # Use file locking to prevent race conditions
+        with open(log_file, 'a+') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.seek(0)
+                content = f.read()
+                if content:
+                    try:
+                        logs = json.loads(content)
+                    except (json.JSONDecodeError, ValueError):
+                        debug(f"JSON corruption detected in {log_file}, resetting")
+                        logs = []
+                else:
+                    logs = []
 
-        logs.append(entry)
+                logs.append(entry)
 
-        # Keep only last 500 entries
-        if len(logs) > 500:
-            logs = logs[-500:]
+                # Keep only last 500 entries
+                if len(logs) > 500:
+                    logs = logs[-500:]
 
-        with open(log_file, 'w') as f:
-            json.dump(logs, f, indent=2)
+                f.seek(0)
+                f.truncate()
+                json.dump(logs, f, indent=2)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except Exception as e:
         debug(f"Error writing door event log: {e}")
 
