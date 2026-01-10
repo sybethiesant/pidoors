@@ -10,11 +10,16 @@ Complete step-by-step instructions for setting up the PiDoors Access Control Sys
 2. [Part 1: Setting Up Your Raspberry Pi](#part-1-setting-up-your-raspberry-pi)
 3. [Part 2: Installing the Server](#part-2-installing-the-server)
 4. [Part 3: Installing Door Controllers](#part-3-installing-door-controllers)
-5. [Part 4: First Login and Configuration](#part-4-first-login-and-configuration)
-6. [Part 5: Adding Your First Door and Card](#part-5-adding-your-first-door-and-card)
-7. [Part 6: Advanced Features](#part-6-advanced-features)
-8. [Troubleshooting](#troubleshooting)
-9. [Maintenance](#maintenance)
+5. [Part 4: Reader Wiring Guides](#part-4-reader-wiring-guides)
+   - [Wiegand Readers](#wiegand-readers)
+   - [OSDP RS-485 Readers](#osdp-rs-485-readers)
+   - [NFC PN532 Readers](#nfc-pn532-readers)
+   - [NFC MFRC522 Readers](#nfc-mfrc522-readers)
+6. [Part 5: First Login and Configuration](#part-5-first-login-and-configuration)
+7. [Part 6: Adding Your First Door and Card](#part-6-adding-your-first-door-and-card)
+8. [Part 7: Advanced Features](#part-7-advanced-features)
+9. [Troubleshooting](#troubleshooting)
+10. [Maintenance](#maintenance)
 
 ---
 
@@ -38,12 +43,28 @@ Complete step-by-step instructions for setting up the PiDoors Access Control Sys
 **Hardware:**
 - 1x Raspberry Pi Zero W or newer per door
 - 1x MicroSD card (8GB minimum)
-- 1x Wiegand card reader (26-bit, 34-bit, or 37-bit compatible)
+- 1x Card reader (see options below)
 - 1x 12V electric strike or magnetic lock
 - 1x Relay module (to control the lock)
 - 1x Door sensor (magnetic switch - optional but recommended)
 - 1x Exit button / REX button (optional)
 - Wiring supplies (jumper wires, terminal blocks)
+
+**Supported Card Readers (choose one):**
+
+| Reader Type | Interface | Formats | Cost | Notes |
+|-------------|-----------|---------|------|-------|
+| **Wiegand** | GPIO | 26/32/34/35/36/37/48-bit | $15-50 | Most common, easy setup |
+| **OSDP** | RS-485 | Any | $50-150 | Encrypted, commercial-grade |
+| **PN532 NFC** | I2C or SPI | Mifare, NTAG | $10-20 | Reads NFC cards/tags |
+| **MFRC522 NFC** | SPI | Mifare | $5-10 | Low-cost NFC option |
+
+**Additional Hardware for Specific Readers:**
+
+- **OSDP**: USB to RS-485 adapter or RS-485 HAT
+- **PN532 I2C**: No additional hardware (uses GPIO 2/3)
+- **PN532 SPI**: No additional hardware (uses SPI0)
+- **MFRC522**: No additional hardware (uses SPI0)
 
 **Optional:**
 - Custom PCB (files included in `pidoorspcb/` folder)
@@ -275,8 +296,46 @@ sudo ./install.sh
    - Database server IP: Enter your server Pi's IP (e.g., `192.168.1.100`)
    - Database password: Enter the PiDoors database password
    - Door name: Give this door a name (e.g., "Front Entrance", "Back Door")
+   - **Reader type**: Select your card reader type:
+     - **1) Wiegand** - Standard GPIO card readers (most common)
+     - **2) OSDP** - RS-485 encrypted readers
+     - **3) NFC PN532** - PN532 NFC reader via I2C
+     - **4) NFC MFRC522** - MFRC522 NFC reader via SPI
 
-### Step 3.3: Wire the Wiegand Reader
+### Step 3.3: Enable Required Interfaces
+
+Depending on your reader type, you may need to enable additional interfaces:
+
+**For SPI readers (PN532 SPI, MFRC522):**
+```bash
+sudo raspi-config
+# Navigate to: Interface Options > SPI > Enable
+sudo reboot
+```
+
+**For I2C readers (PN532 I2C):**
+```bash
+sudo raspi-config
+# Navigate to: Interface Options > I2C > Enable
+sudo reboot
+```
+
+**For OSDP readers (Serial/UART):**
+```bash
+sudo raspi-config
+# Navigate to: Interface Options > Serial Port
+# Login shell over serial: No
+# Serial port hardware enabled: Yes
+sudo reboot
+```
+
+### Step 3.4: Wire Your Reader
+
+See [Part 4: Reader Wiring Guides](#part-4-reader-wiring-guides) for detailed wiring instructions for your specific reader type.
+
+---
+
+## Part 4: Reader Wiring Guides
 
 **IMPORTANT: Power off the Raspberry Pi before wiring!**
 
@@ -284,52 +343,182 @@ sudo ./install.sh
 sudo shutdown -h now
 ```
 
-**Standard Wiegand Wiring:**
+### Wiegand Readers
 
-| Wiegand Reader | Raspberry Pi GPIO |
-|----------------|-------------------|
-| DATA0 (Green)  | GPIO 24           |
-| DATA1 (White)  | GPIO 23           |
-| GND (Black)    | GND (Pin 6)       |
-| 5V+ (Red)      | 5V (Pin 2)        |
+Wiegand is the most common card reader interface. Supports 26, 32, 34, 35, 36, 37, and 48-bit formats with automatic detection.
 
-**Lock Control (Relay):**
+**Wiegand Reader Wiring:**
 
-| Component      | Raspberry Pi GPIO |
-|----------------|-------------------|
-| Relay IN       | GPIO 17           |
-| Relay VCC      | 5V (Pin 4)        |
-| Relay GND      | GND (Pin 14)      |
+| Wiegand Reader | Raspberry Pi | Pin # |
+|----------------|--------------|-------|
+| DATA0 (Green)  | GPIO 24      | 18    |
+| DATA1 (White)  | GPIO 23      | 16    |
+| GND (Black)    | GND          | 6     |
+| 5V+ (Red)      | 5V           | 2     |
 
-**Optional - Door Sensor:**
+**Lock Control (Relay) - All Reader Types:**
 
-| Component      | Raspberry Pi GPIO |
-|----------------|-------------------|
-| Sensor Signal  | GPIO 27           |
-| Sensor GND     | GND               |
+| Relay Module   | Raspberry Pi | Pin # |
+|----------------|--------------|-------|
+| IN (Signal)    | GPIO 18      | 12    |
+| VCC            | 5V           | 4     |
+| GND            | GND          | 14    |
 
-**Optional - Exit Button (REX):**
+Connect your electric lock to the relay's NO (Normally Open) and COM terminals with a 12V power supply.
 
-| Component      | Raspberry Pi GPIO |
-|----------------|-------------------|
-| Button Signal  | GPIO 22           |
-| Button GND     | GND               |
-
-**GPIO Pin Reference:**
-```
-    3V3  (1) (2)  5V
-  GPIO2  (3) (4)  5V
-  GPIO3  (5) (6)  GND
-  GPIO4  (7) (8)  GPIO14
-    GND  (9) (10) GPIO15
- GPIO17 (11) (12) GPIO18
- GPIO27 (13) (14) GND
- GPIO22 (15) (16) GPIO23
-    3V3 (17) (18) GPIO24
- GPIO10 (19) (20) GND
+**Configuration file:** `/opt/pidoors/conf/config.json`
+```json
+{
+    "front_door": {
+        "reader_type": "wiegand",
+        "d0": 24,
+        "d1": 23,
+        "wiegand_format": "auto",
+        "latch_gpio": 18,
+        ...
+    }
+}
 ```
 
-### Step 3.4: Start the Door Controller
+---
+
+### OSDP RS-485 Readers
+
+OSDP (Open Supervised Device Protocol) provides encrypted communication with commercial-grade readers. Requires a USB-to-RS-485 adapter or RS-485 HAT.
+
+**USB-RS485 Adapter Wiring:**
+
+| RS-485 Adapter | OSDP Reader |
+|----------------|-------------|
+| A+ (Data+)     | A+ (Data+)  |
+| B- (Data-)     | B- (Data-)  |
+| GND            | GND         |
+
+**Note:** The reader needs its own 12V power supply. Do not power from the Pi.
+
+**Relay wiring is the same as Wiegand above.**
+
+**Configuration file:** `/opt/pidoors/conf/config.json`
+```json
+{
+    "secure_door": {
+        "reader_type": "osdp",
+        "serial_port": "/dev/ttyUSB0",
+        "baud_rate": 115200,
+        "address": 0,
+        "latch_gpio": 18,
+        ...
+    }
+}
+```
+
+**For encrypted OSDP (Secure Channel)**, add the encryption key:
+```json
+"encryption_key": "base64_encoded_16_byte_key"
+```
+
+---
+
+### NFC PN532 Readers
+
+The PN532 is a versatile NFC reader supporting Mifare Classic, Ultralight, and NTAG cards. Can use I2C or SPI interface.
+
+**PN532 I2C Wiring (Recommended):**
+
+| PN532 Module | Raspberry Pi | Pin # |
+|--------------|--------------|-------|
+| VCC          | 3.3V         | 1     |
+| GND          | GND          | 6     |
+| SDA          | GPIO 2 (SDA) | 3     |
+| SCL          | GPIO 3 (SCL) | 5     |
+
+**Important:** Set the PN532 DIP switches to I2C mode (usually both switches OFF or check your module's documentation).
+
+**Relay wiring is the same as Wiegand above.**
+
+**Configuration file:** `/opt/pidoors/conf/config.json`
+```json
+{
+    "nfc_door": {
+        "reader_type": "nfc_pn532",
+        "interface": "i2c",
+        "i2c_bus": 1,
+        "i2c_address": 36,
+        "latch_gpio": 18,
+        ...
+    }
+}
+```
+
+**PN532 SPI Wiring (Alternative):**
+
+| PN532 Module | Raspberry Pi | Pin # |
+|--------------|--------------|-------|
+| VCC          | 3.3V         | 1     |
+| GND          | GND          | 6     |
+| SCK          | GPIO 11 (SCLK) | 23  |
+| MISO         | GPIO 9 (MISO)  | 21  |
+| MOSI         | GPIO 10 (MOSI) | 19  |
+| SS           | GPIO 8 (CE0)   | 24  |
+
+---
+
+### NFC MFRC522 Readers
+
+The MFRC522 is an inexpensive NFC reader for Mifare cards. Uses SPI interface only.
+
+**MFRC522 SPI Wiring:**
+
+| MFRC522 Module | Raspberry Pi | Pin # |
+|----------------|--------------|-------|
+| VCC (3.3V)     | 3.3V         | 1     |
+| GND            | GND          | 6     |
+| RST            | GPIO 25      | 22    |
+| SCK            | GPIO 11 (SCLK) | 23  |
+| MISO           | GPIO 9 (MISO)  | 21  |
+| MOSI           | GPIO 10 (MOSI) | 19  |
+| SDA (SS)       | GPIO 8 (CE0)   | 24  |
+| IRQ            | Not connected | -    |
+
+**Relay wiring is the same as Wiegand above.**
+
+**Configuration file:** `/opt/pidoors/conf/config.json`
+```json
+{
+    "rfid_door": {
+        "reader_type": "nfc_mfrc522",
+        "spi_bus": 0,
+        "spi_device": 0,
+        "reset_pin": 25,
+        "latch_gpio": 18,
+        ...
+    }
+}
+```
+
+---
+
+### GPIO Pin Reference (All Readers)
+
+```
+    3V3  (1) (2)  5V      <- Power for readers
+  GPIO2  (3) (4)  5V      <- I2C SDA
+  GPIO3  (5) (6)  GND     <- I2C SCL
+  GPIO4  (7) (8)  GPIO14  <- UART TX (OSDP)
+    GND  (9) (10) GPIO15  <- UART RX (OSDP)
+ GPIO17 (11) (12) GPIO18  <- Lock relay
+ GPIO27 (13) (14) GND     <- Door sensor (optional)
+ GPIO22 (15) (16) GPIO23  <- Wiegand D1
+    3V3 (17) (18) GPIO24  <- Wiegand D0
+ GPIO10 (19) (20) GND     <- SPI MOSI
+  GPIO9 (21) (22) GPIO25  <- MFRC522 Reset
+ GPIO11 (23) (24) GPIO8   <- SPI SCLK / SPI CE0
+    GND (25) (26) GPIO7
+```
+
+---
+
+### Step 3.5: Start the Door Controller
 
 1. **Power on the Raspberry Pi**
 
@@ -353,9 +542,9 @@ Press `Ctrl + C` to stop viewing logs.
 
 ---
 
-## Part 4: First Login and Configuration
+## Part 5: First Login and Configuration
 
-### Step 4.1: Change Default Password
+### Step 5.1: Change Default Password
 
 1. **Log into the web interface** (http://your-server-ip)
 2. **Click your email** in the top right corner
@@ -363,7 +552,7 @@ Press `Ctrl + C` to stop viewing logs.
 4. **Change your password** to something secure
 5. **Click "Update Profile"**
 
-### Step 4.2: Configure System Settings
+### Step 5.2: Configure System Settings
 
 1. **Go to Settings** (in the sidebar, under Admin Tools)
 
@@ -382,7 +571,7 @@ Press `Ctrl + C` to stop viewing logs.
 
 4. **Click "Save Settings"**
 
-### Step 4.3: Configure Your Doors
+### Step 5.3: Configure Your Doors
 
 1. **Go to "Doors"** in the sidebar
 2. **Click "Add Door"**
@@ -402,9 +591,9 @@ Press `Ctrl + C` to stop viewing logs.
 
 ---
 
-## Part 5: Adding Your First Door and Card
+## Part 6: Adding Your First Door and Card
 
-### Step 5.1: Scan a Card to Get Its ID
+### Step 6.1: Scan a Card to Get Its ID
 
 1. **At the door controller**, scan a card on the reader
 
@@ -422,7 +611,7 @@ Access denied: Card not in database
 
 4. **Write down the card number** (e.g., 12345678)
 
-### Step 5.2: Add the Card to the System
+### Step 6.2: Add the Card to the System
 
 1. **In the web interface**, go to **"Cards"**
 2. **Click "Add Card"**
@@ -440,7 +629,7 @@ Access denied: Card not in database
 
 4. **Click "Add Card"**
 
-### Step 5.3: Test the Card
+### Step 6.3: Test the Card
 
 1. **Go to the door** and scan the card again
 2. **The door should unlock!**
@@ -450,7 +639,7 @@ Access denied: Card not in database
 
 ---
 
-## Part 6: Advanced Features
+## Part 7: Advanced Features
 
 ### Creating Access Schedules
 
@@ -604,6 +793,91 @@ Verify the server IP and database password are correct.
 sudo journalctl -u pidoors -f
 ```
 Scan a card - you should see the card number appear.
+
+### Problem: NFC reader (PN532/MFRC522) not detecting cards
+
+**Solution 1: Verify SPI/I2C is enabled**
+```bash
+# For SPI readers:
+ls /dev/spidev*
+# Should show /dev/spidev0.0
+
+# For I2C readers:
+ls /dev/i2c*
+# Should show /dev/i2c-1
+```
+
+If not present, enable via raspi-config:
+```bash
+sudo raspi-config
+# Interface Options > SPI or I2C > Enable
+sudo reboot
+```
+
+**Solution 2: Check I2C device detection (PN532 I2C)**
+```bash
+sudo apt install -y i2c-tools
+sudo i2cdetect -y 1
+```
+You should see address `24` (0x24) in the grid.
+
+**Solution 3: Check wiring connections**
+- Verify 3.3V (not 5V!) for NFC modules
+- Check all SPI/I2C connections are secure
+- For MFRC522, verify RST pin is connected to GPIO 25
+
+**Solution 4: Check PN532 DIP switches**
+- For I2C mode: Usually both switches OFF
+- For SPI mode: Usually SW1=ON, SW2=OFF
+- Consult your module's documentation
+
+**Solution 5: Test SPI communication**
+```bash
+# Check if SPI driver is loaded
+lsmod | grep spi
+```
+
+### Problem: OSDP reader not responding
+
+**Solution 1: Verify serial port**
+```bash
+# For USB adapter:
+ls /dev/ttyUSB*
+# Should show /dev/ttyUSB0
+
+# For GPIO UART:
+ls /dev/serial0
+```
+
+**Solution 2: Check RS-485 wiring**
+- Verify A+ to A+ and B- to B- connections
+- Check for proper termination (120 ohm resistor may be needed)
+- Ensure GND is connected
+
+**Solution 3: Verify UART is enabled (for GPIO serial)**
+```bash
+sudo raspi-config
+# Interface Options > Serial Port
+# Login shell: No
+# Serial hardware: Yes
+```
+
+**Solution 4: Check baud rate**
+- Most OSDP readers use 9600 or 115200 baud
+- Verify setting matches your reader
+
+**Solution 5: Test serial communication**
+```bash
+# Install screen
+sudo apt install screen
+
+# Connect (press Ctrl+A then K to exit)
+sudo screen /dev/ttyUSB0 9600
+```
+
+**Solution 6: Check OSDP address**
+- Default address is usually 0
+- Some readers use address 1 or allow configuration
 
 ### Problem: Door won't unlock even with valid card
 
