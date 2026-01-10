@@ -82,8 +82,21 @@ try {
                         <?php endif; ?>
                     </p>
                     <?php if ($door['schedule_name']): ?>
-                        <p class="mb-0"><strong>Schedule:</strong> <?php echo htmlspecialchars($door['schedule_name']); ?></p>
+                        <p class="mb-1"><strong>Schedule:</strong> <?php echo htmlspecialchars($door['schedule_name']); ?></p>
                     <?php endif; ?>
+                    <p class="mb-0">
+                        <strong>Reader:</strong>
+                        <?php
+                        $reader_type = $door['reader_type'] ?? 'wiegand';
+                        $reader_labels = [
+                            'wiegand' => 'Wiegand',
+                            'osdp' => 'OSDP',
+                            'nfc_pn532' => 'NFC PN532',
+                            'nfc_mfrc522' => 'NFC MFRC522'
+                        ];
+                        echo htmlspecialchars($reader_labels[$reader_type] ?? $reader_type);
+                        ?>
+                    </p>
                 </div>
                 <div class="card-footer d-flex justify-content-between">
                     <a href="editdoor.php?name=<?php echo urlencode($door['name']); ?>" class="btn btn-sm btn-outline-primary">Edit</a>
