@@ -457,3 +457,780 @@ class TestConfigurationLoading:
             assert result['num'] == 123
         finally:
             os.unlink(temp_path)
+
+
+class TestDebugFunctions:
+    """Tests for debug and logging functions"""
+
+    def test_debug_mode_disabled(self, capsys):
+        """Test debug output when DEBUG_MODE is disabled"""
+        import pidoors
+
+        pidoors.DEBUG_MODE = False
+        pidoors.debug("Test message")
+
+        captured = capsys.readouterr()
+        assert "Test message" not in captured.out
+
+    def test_debug_mode_enabled(self, capsys):
+        """Test debug output when DEBUG_MODE is enabled"""
+        import pidoors
+
+        pidoors.DEBUG_MODE = True
+        pidoors.debug("Test debug message")
+
+        captured = capsys.readouterr()
+        assert "Test debug message" in captured.out
+        pidoors.DEBUG_MODE = False
+
+    def test_toggle_debug(self):
+        """Test toggling debug mode"""
+        import pidoors
+
+        original = pidoors.DEBUG_MODE
+        pidoors.toggle_debug()
+        assert pidoors.DEBUG_MODE != original
+
+        pidoors.toggle_debug()
+        assert pidoors.DEBUG_MODE == original
+
+
+class TestCacheLoadSave:
+    """Tests for cache loading and saving"""
+
+    def test_load_cache_no_file(self):
+        """Test loading cache when file doesn't exist"""
+        import pidoors
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pidoors.CACHE_DIR = tmpdir
+            pidoors.zone = 'test_zone'
+            pidoors.local_cache = {'old': 'data'}
+            pidoors.cache_last_sync = 999
+
+            pidoors.load_cache()
+
+            # Should not change cache if file doesn't exist
+            assert pidoors.local_cache == {'old': 'data'}
+
+    def test_load_cache_valid_file(self):
+        """Test loading cache from valid file"""
+        import pidoors
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pidoors.CACHE_DIR = tmpdir
+            pidoors.zone = 'test_zone'
+
+            # Create cache file
+            cache_file = os.path.join(tmpdir, 'test_zone_access_cache.json')
+            cache_data = {
+                'cards': {'123,456': {'card_id': 'test'}},
+                'sync_time': time.time()
+            }
+            with open(cache_file, 'w') as f:
+                json.dump(cache_data, f)
+
+            pidoors.load_cache()
+
+            assert '123,456' in pidoors.local_cache
+
+    def test_load_cache_expired(self, capsys):
+        """Test loading expired cache"""
+        import pidoors
+
+        pidoors.DEBUG_MODE = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pidoors.CACHE_DIR = tmpdir
+            pidoors.zone = 'test_zone'
+
+            # Create expired cache file
+            cache_file = os.path.join(tmpdir, 'test_zone_access_cache.json')
+            cache_data = {
+                'cards': {'123,456': {'card_id': 'test'}},
+                'sync_time': time.time() - 100000  # >24 hours ago
+            }
+            with open(cache_file, 'w') as f:
+                json.dump(cache_data, f)
+
+            # Mock syslog to capture report
+            with patch('pidoors.syslog'):
+                pidoors.load_cache()
+
+    def test_load_cache_corrupted(self):
+        """Test loading corrupted cache file"""
+        import pidoors
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pidoors.CACHE_DIR = tmpdir
+            pidoors.zone = 'test_zone'
+
+            # Create corrupted cache file
+            cache_file = os.path.join(tmpdir, 'test_zone_access_cache.json')
+            with open(cache_file, 'w') as f:
+                f.write('not valid json {{{')
+
+            pidoors.local_cache = {}
+            pidoors.cache_last_sync = 999
+
+            with patch('pidoors.syslog'):
+                pidoors.load_cache()
+
+            # Should reset on error
+            assert pidoors.local_cache == {}
+            assert pidoors.cache_last_sync == 0
+
+    def test_save_cache(self):
+        """Test saving cache to file"""
+        import pidoors
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pidoors.CACHE_DIR = tmpdir
+            pidoors.zone = 'test_zone'
+            pidoors.local_cache = {'cards': {'123,456': {'card_id': 'test'}}}
+
+            pidoors.save_cache()
+
+            cache_file = os.path.join(tmpdir, 'test_zone_access_cache.json')
+            assert os.path.exists(cache_file)
+
+            with open(cache_file, 'r') as f:
+                saved_data = json.load(f)
+
+            assert saved_data['zone'] == 'test_zone'
+            assert 'sync_time' in saved_data
+
+
+class TestMasterCardLoadSave:
+    """Tests for master card loading and saving"""
+
+    def test_load_master_cards_no_file(self):
+        """Test loading master cards when file doesn't exist"""
+        import pidoors
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pidoors.MASTER_CARDS_FILE = os.path.join(tmpdir, 'master_cards.json')
+
+            with pidoors.master_lock:
+                pidoors.master_cards = {'old': 'data'}
+
+            with patch('pidoors.syslog'):
+                pidoors.load_master_cards()
+
+            # Should not change if file doesn't exist
+            with pidoors.master_lock:
+                assert pidoors.master_cards == {'old': 'data'}
+
+    def test_load_master_cards_valid_file(self):
+        """Test loading master cards from valid file"""
+        import pidoors
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            master_file = os.path.join(tmpdir, 'master_cards.json')
+            pidoors.MASTER_CARDS_FILE = master_file
+
+            master_data = {
+                'cards': {
+                    '999,11111': {
+                        'card_id': 'master001',
+                        'description': 'Test Master'
+                    }
+                }
+            }
+            with open(master_file, 'w') as f:
+                json.dump(master_data, f)
+
+            with patch('pidoors.syslog'):
+                pidoors.load_master_cards()
+
+            with pidoors.master_lock:
+                assert '999,11111' in pidoors.master_cards
+
+    def test_load_master_cards_corrupted(self):
+        """Test loading corrupted master cards file"""
+        import pidoors
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            master_file = os.path.join(tmpdir, 'master_cards.json')
+            pidoors.MASTER_CARDS_FILE = master_file
+
+            with open(master_file, 'w') as f:
+                f.write('invalid json')
+
+            with patch('pidoors.syslog'):
+                pidoors.load_master_cards()
+
+            with pidoors.master_lock:
+                assert pidoors.master_cards == {}
+
+    def test_save_master_cards(self):
+        """Test saving master cards to file"""
+        import pidoors
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            master_file = os.path.join(tmpdir, 'master_cards.json')
+            pidoors.MASTER_CARDS_FILE = master_file
+
+            with pidoors.master_lock:
+                pidoors.master_cards = {
+                    '999,11111': {
+                        'card_id': 'master001',
+                        'description': 'Test Master'
+                    }
+                }
+
+            pidoors.save_master_cards()
+
+            assert os.path.exists(master_file)
+            with open(master_file, 'r') as f:
+                saved_data = json.load(f)
+
+            assert '999,11111' in saved_data['cards']
+
+
+class TestLegacyWiegandValidation:
+    """Tests for legacy 26-bit and 34-bit Wiegand validation"""
+
+    def test_validate_26bit_legacy_valid(self, valid_26bit_card):
+        """Test legacy 26-bit validation with valid card"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18}}
+
+        # Mock lookup_card
+        lookup_calls = []
+        original_lookup = pidoors.lookup_card
+
+        def mock_lookup(card_id, facility, user_id, bstr):
+            lookup_calls.append((card_id, facility, user_id))
+
+        pidoors.lookup_card = mock_lookup
+
+        try:
+            # Temporarily disable format registry to test legacy
+            orig_registry = pidoors.FORMAT_REGISTRY_AVAILABLE
+            pidoors.FORMAT_REGISTRY_AVAILABLE = False
+
+            result = pidoors.validate_26bit_legacy(valid_26bit_card['bitstring'])
+            assert result == True
+            assert len(lookup_calls) == 1
+            assert lookup_calls[0][1] == valid_26bit_card['facility']
+        finally:
+            pidoors.lookup_card = original_lookup
+            pidoors.FORMAT_REGISTRY_AVAILABLE = orig_registry
+
+    def test_validate_26bit_legacy_parity_error(self, valid_26bit_card):
+        """Test legacy 26-bit validation with parity error"""
+        import pidoors
+
+        # Corrupt a data bit
+        bits = list(valid_26bit_card['bitstring'])
+        bits[5] = '1' if bits[5] == '0' else '0'
+        bad_bits = ''.join(bits)
+
+        result = pidoors.validate_26bit_legacy(bad_bits)
+        assert result == False
+
+    def test_validate_34bit_legacy_valid(self, valid_34bit_card):
+        """Test legacy 34-bit validation with valid card"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18}}
+
+        lookup_calls = []
+        original_lookup = pidoors.lookup_card
+
+        def mock_lookup(card_id, facility, user_id, bstr):
+            lookup_calls.append((card_id, facility, user_id))
+
+        pidoors.lookup_card = mock_lookup
+
+        try:
+            orig_registry = pidoors.FORMAT_REGISTRY_AVAILABLE
+            pidoors.FORMAT_REGISTRY_AVAILABLE = False
+
+            result = pidoors.validate_34bit_legacy(valid_34bit_card['bitstring'])
+            assert result == True
+            assert len(lookup_calls) == 1
+        finally:
+            pidoors.lookup_card = original_lookup
+            pidoors.FORMAT_REGISTRY_AVAILABLE = orig_registry
+
+    def test_validate_34bit_legacy_parity_error(self, valid_34bit_card):
+        """Test legacy 34-bit validation with parity error"""
+        import pidoors
+
+        # Corrupt a data bit
+        bits = list(valid_34bit_card['bitstring'])
+        bits[10] = '1' if bits[10] == '0' else '0'
+        bad_bits = ''.join(bits)
+
+        result = pidoors.validate_34bit_legacy(bad_bits)
+        assert result == False
+
+    def test_validate_bits_legacy_fallback(self):
+        """Test validate_bits falls back to legacy for unsupported lengths"""
+        import pidoors
+
+        orig_registry = pidoors.FORMAT_REGISTRY_AVAILABLE
+        pidoors.FORMAT_REGISTRY_AVAILABLE = False
+
+        try:
+            # 40-bit is unsupported in legacy mode
+            result = pidoors.validate_bits('0' * 40)
+            assert result == False
+        finally:
+            pidoors.FORMAT_REGISTRY_AVAILABLE = orig_registry
+
+
+class TestOpenDoorTripleSwipe:
+    """Tests for triple swipe door toggle functionality"""
+
+    def test_triple_swipe_unlocks_door(self):
+        """Test that triple swipe permanently unlocks door"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18, 'unlocked': False}}
+        pidoors.unlock_briefly = MagicMock()
+        pidoors.unlock_door = MagicMock()
+        pidoors.log_door_event = MagicMock()
+
+        # Reset state - need repeat_read_count = 1 so next swipe makes it 2 (triggers toggle)
+        # The logic is: >= 2 triggers toggle, so swipe 1 sets to 0, swipe 2 sets to 1, swipe 3 sets to 2
+        with pidoors.card_lock:
+            pidoors.last_card = 'user1'
+            pidoors.repeat_read_count = 1  # After two swipes
+            pidoors.repeat_read_timeout = time.time() + 30
+
+        # Mock report to avoid syslog
+        with patch('pidoors.syslog'):
+            # Third swipe - should increment to 2 and toggle lock
+            pidoors.open_door('user1', 'Test User')
+
+        # Door should now be unlocked (repeat_read_count became 2, which is >= 2)
+        assert pidoors.config['test_zone']['unlocked'] == True
+        pidoors.unlock_door.assert_called()
+
+    def test_triple_swipe_locks_door(self):
+        """Test that triple swipe on unlocked door locks it"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18, 'unlocked': True}}
+        pidoors.lock_door = MagicMock()
+        pidoors.log_door_event = MagicMock()
+
+        # Setup for third swipe
+        with pidoors.card_lock:
+            pidoors.last_card = 'user1'
+            pidoors.repeat_read_count = 2
+            pidoors.repeat_read_timeout = time.time() + 30
+
+        with patch('pidoors.syslog'):
+            pidoors.open_door('user1', 'Test User')
+
+        # Door should now be locked
+        assert pidoors.config['test_zone']['unlocked'] == False
+        pidoors.lock_door.assert_called()
+
+    def test_normal_access_when_unlocked(self):
+        """Test normal access when door is already unlocked"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18, 'unlocked': True}}
+        pidoors.unlock_briefly = MagicMock()
+
+        # Reset state for single swipe
+        with pidoors.card_lock:
+            pidoors.last_card = None
+            pidoors.repeat_read_count = 0
+            pidoors.repeat_read_timeout = 0
+
+        with patch('pidoors.syslog'):
+            pidoors.open_door('user1', 'Test User')
+
+        # unlock_briefly should NOT be called when door is already unlocked
+        pidoors.unlock_briefly.assert_not_called()
+
+
+class TestRejectCard:
+    """Tests for card rejection functionality"""
+
+    def test_reject_card_resets_repeat_count(self):
+        """Test that reject_card resets the repeat swipe counter"""
+        import pidoors
+
+        with pidoors.card_lock:
+            pidoors.repeat_read_count = 5
+
+        # Mock GPIO and syslog
+        with patch('pidoors.GPIO'), patch('pidoors.syslog'):
+            pidoors.reject_card('user123', 'Test rejection')
+
+        with pidoors.card_lock:
+            assert pidoors.repeat_read_count == 0
+
+    def test_reject_card_logs_reason(self, capsys):
+        """Test that reject_card reports the reason"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+
+        with patch('pidoors.GPIO'), patch('pidoors.syslog') as mock_syslog:
+            pidoors.reject_card('user123', 'Card expired')
+
+        # Check syslog was called with the reason
+        mock_syslog.syslog.assert_called()
+        call_args = str(mock_syslog.syslog.call_args)
+        assert 'Card expired' in call_args or 'user123' in call_args
+
+
+class TestLookupCardWithCache:
+    """Tests for lookup_card using cache"""
+
+    def test_lookup_card_cache_access_granted(self, sample_cache):
+        """Test card lookup grants access from cache"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18}}
+        pidoors.db_connected = False
+        pidoors.cache_last_sync = time.time()  # Valid cache
+        pidoors.MYSQL_AVAILABLE = False
+
+        with pidoors.cache_lock:
+            pidoors.local_cache = sample_cache
+
+        with pidoors.master_lock:
+            pidoors.master_cards = {}
+
+        open_door_calls = []
+        log_access_calls = []
+
+        def mock_open_door(user_id, name):
+            open_door_calls.append((user_id, name))
+
+        def mock_log_access(user_id, card_id, facility, granted, reason=''):
+            log_access_calls.append((user_id, card_id, facility, granted, reason))
+
+        original_open = pidoors.open_door
+        original_log = pidoors.log_access
+        pidoors.open_door = mock_open_door
+        pidoors.log_access = mock_log_access
+
+        try:
+            with patch('pidoors.syslog'):
+                pidoors.lookup_card('00abcdef', '123', '45678', '')
+
+            assert len(open_door_calls) == 1
+            assert open_door_calls[0][1] == 'John Doe'
+            assert log_access_calls[0][3] == True  # granted
+        finally:
+            pidoors.open_door = original_open
+            pidoors.log_access = original_log
+
+    def test_lookup_card_cache_no_access_to_door(self, sample_cache):
+        """Test card lookup denies access when card has no door access"""
+        import pidoors
+
+        pidoors.zone = 'other_zone'  # Different zone
+        pidoors.config = {'other_zone': {'latch_gpio': 18}}
+        pidoors.db_connected = False
+        pidoors.cache_last_sync = time.time()
+        pidoors.MYSQL_AVAILABLE = False
+
+        with pidoors.cache_lock:
+            pidoors.local_cache = sample_cache
+
+        with pidoors.master_lock:
+            pidoors.master_cards = {}
+
+        reject_calls = []
+        log_access_calls = []
+
+        def mock_reject(user_id, reason=''):
+            reject_calls.append((user_id, reason))
+
+        def mock_log_access(user_id, card_id, facility, granted, reason=''):
+            log_access_calls.append((user_id, card_id, facility, granted, reason))
+
+        original_reject = pidoors.reject_card
+        original_log = pidoors.log_access
+        pidoors.reject_card = mock_reject
+        pidoors.log_access = mock_log_access
+
+        try:
+            with patch('pidoors.syslog'):
+                pidoors.lookup_card('00abcdef', '123', '45678', '')
+
+            assert len(reject_calls) == 1
+            assert 'No access' in reject_calls[0][1]
+        finally:
+            pidoors.reject_card = original_reject
+            pidoors.log_access = original_log
+
+    def test_lookup_card_not_in_cache(self, sample_cache):
+        """Test card lookup when card is not in cache"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18}}
+        pidoors.db_connected = False
+        pidoors.cache_last_sync = time.time()
+        pidoors.MYSQL_AVAILABLE = False
+
+        with pidoors.cache_lock:
+            pidoors.local_cache = sample_cache
+
+        with pidoors.master_lock:
+            pidoors.master_cards = {}
+
+        reject_calls = []
+
+        def mock_reject(user_id, reason=''):
+            reject_calls.append((user_id, reason))
+
+        original_reject = pidoors.reject_card
+        pidoors.reject_card = mock_reject
+        pidoors.log_access = MagicMock()
+
+        try:
+            with patch('pidoors.syslog'):
+                pidoors.lookup_card('unknown', '000', '00000', '')
+
+            assert len(reject_calls) == 1
+            assert 'not in cache' in reject_calls[0][1]
+        finally:
+            pidoors.reject_card = original_reject
+
+    def test_lookup_card_expired_cache(self):
+        """Test card lookup when cache is expired"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18}}
+        pidoors.db_connected = False
+        pidoors.cache_last_sync = 0  # Expired cache
+        pidoors.MYSQL_AVAILABLE = False
+
+        with pidoors.master_lock:
+            pidoors.master_cards = {}
+
+        reject_calls = []
+
+        def mock_reject(user_id, reason=''):
+            reject_calls.append((user_id, reason))
+
+        original_reject = pidoors.reject_card
+        pidoors.reject_card = mock_reject
+        pidoors.log_access = MagicMock()
+
+        try:
+            with patch('pidoors.syslog'):
+                pidoors.lookup_card('00abcdef', '123', '45678', '')
+
+            assert len(reject_calls) == 1
+            assert 'offline' in reject_calls[0][1].lower() or 'cache' in reject_calls[0][1].lower()
+        finally:
+            pidoors.reject_card = original_reject
+
+
+class TestScheduleWithStringTimes:
+    """Tests for schedule checking with string time values"""
+
+    def test_check_schedule_string_times(self):
+        """Test schedule with string time values"""
+        import pidoors
+
+        cache_with_string_times = {
+            'schedules': {
+                3: {
+                    'id': 3,
+                    'name': 'String Times',
+                    'is_24_7': 0,
+                    'monday_start': '08:00:00',
+                    'monday_end': '18:00:00'
+                }
+            }
+        }
+
+        with pidoors.cache_lock:
+            pidoors.local_cache = cache_with_string_times
+
+        # Monday at 10:00 (within hours) - January 12, 2026 is a Monday
+        test_time = datetime(2026, 1, 12, 10, 0, 0)
+        result = pidoors.check_schedule(3, test_time)
+        assert result == True
+
+        # Monday at 20:00 (outside hours)
+        test_time = datetime(2026, 1, 12, 20, 0, 0)
+        result = pidoors.check_schedule(3, test_time)
+        assert result == False
+
+    def test_check_schedule_no_day_times(self):
+        """Test schedule when day has no times configured"""
+        import pidoors
+
+        cache_with_no_saturday = {
+            'schedules': {
+                4: {
+                    'id': 4,
+                    'name': 'Weekdays Only',
+                    'is_24_7': 0,
+                    'saturday_start': None,
+                    'saturday_end': None
+                }
+            }
+        }
+
+        with pidoors.cache_lock:
+            pidoors.local_cache = cache_with_no_saturday
+
+        # Saturday
+        test_time = datetime(2026, 1, 10, 10, 0, 0)  # A Saturday
+        result = pidoors.check_schedule(4, test_time)
+        assert result == False
+
+
+class TestCardValidityDates:
+    """Tests for card validity date checking"""
+
+    def test_card_not_yet_valid(self):
+        """Test card that is not yet valid"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18}}
+        pidoors.db_connected = False
+        pidoors.cache_last_sync = time.time()
+        pidoors.MYSQL_AVAILABLE = False
+
+        future_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+        cache_with_future_card = {
+            'cards': {
+                '123,45678': {
+                    'card_id': '00abcdef',
+                    'firstname': 'Future',
+                    'lastname': 'User',
+                    'doors': 'test_zone',
+                    'schedule_id': None,
+                    'valid_from': future_date,
+                    'valid_until': None
+                }
+            },
+            'schedules': {},
+            'holidays': []
+        }
+
+        with pidoors.cache_lock:
+            pidoors.local_cache = cache_with_future_card
+
+        with pidoors.master_lock:
+            pidoors.master_cards = {}
+
+        reject_calls = []
+
+        def mock_reject(user_id, reason=''):
+            reject_calls.append((user_id, reason))
+
+        original_reject = pidoors.reject_card
+        pidoors.reject_card = mock_reject
+        pidoors.log_access = MagicMock()
+
+        try:
+            with patch('pidoors.syslog'):
+                pidoors.lookup_card('00abcdef', '123', '45678', '')
+
+            assert len(reject_calls) == 1
+            assert 'not yet valid' in reject_calls[0][1]
+        finally:
+            pidoors.reject_card = original_reject
+
+    def test_card_expired(self):
+        """Test card that has expired"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18}}
+        pidoors.db_connected = False
+        pidoors.cache_last_sync = time.time()
+        pidoors.MYSQL_AVAILABLE = False
+
+        past_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        cache_with_expired_card = {
+            'cards': {
+                '123,45678': {
+                    'card_id': '00abcdef',
+                    'firstname': 'Expired',
+                    'lastname': 'User',
+                    'doors': 'test_zone',
+                    'schedule_id': None,
+                    'valid_from': None,
+                    'valid_until': past_date
+                }
+            },
+            'schedules': {},
+            'holidays': []
+        }
+
+        with pidoors.cache_lock:
+            pidoors.local_cache = cache_with_expired_card
+
+        with pidoors.master_lock:
+            pidoors.master_cards = {}
+
+        reject_calls = []
+
+        def mock_reject(user_id, reason=''):
+            reject_calls.append((user_id, reason))
+
+        original_reject = pidoors.reject_card
+        pidoors.reject_card = mock_reject
+        pidoors.log_access = MagicMock()
+
+        try:
+            with patch('pidoors.syslog'):
+                pidoors.lookup_card('00abcdef', '123', '45678', '')
+
+            assert len(reject_calls) == 1
+            assert 'expired' in reject_calls[0][1].lower()
+        finally:
+            pidoors.reject_card = original_reject
+
+
+class TestMasterCardAccess:
+    """Tests for master card access"""
+
+    def test_master_card_grants_access(self, sample_master_cards):
+        """Test that master card grants access"""
+        import pidoors
+
+        pidoors.zone = 'test_zone'
+        pidoors.config = {'test_zone': {'latch_gpio': 18}}
+        pidoors.db_connected = False
+        pidoors.MYSQL_AVAILABLE = False
+
+        with pidoors.master_lock:
+            pidoors.master_cards = sample_master_cards
+
+        open_door_calls = []
+
+        def mock_open_door(user_id, name):
+            open_door_calls.append((user_id, name))
+
+        original_open = pidoors.open_door
+        pidoors.open_door = mock_open_door
+        pidoors.log_access = MagicMock()
+
+        try:
+            with patch('pidoors.syslog'):
+                pidoors.lookup_card('master001', '999', '11111', '')
+
+            assert len(open_door_calls) == 1
+            assert 'Master' in open_door_calls[0][1]
+        finally:
+            pidoors.open_door = original_open
