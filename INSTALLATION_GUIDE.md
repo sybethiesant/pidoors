@@ -20,6 +20,7 @@ Complete step-by-step instructions for setting up the PiDoors Access Control Sys
 8. [Part 7: Advanced Features](#part-7-advanced-features)
 9. [Troubleshooting](#troubleshooting)
 10. [Maintenance](#maintenance)
+11. [Upgrading](#upgrading)
 
 ---
 
@@ -1002,8 +1003,70 @@ On door controllers:
 cd ~/pidoors
 git pull
 sudo cp pidoors/pidoors.py /opt/pidoors/
+sudo cp -r pidoors/readers/* /opt/pidoors/readers/
+sudo cp -r pidoors/formats/* /opt/pidoors/formats/
 sudo systemctl restart pidoors
 ```
+
+### Database Migrations
+
+When upgrading PiDoors, check if database migrations are required for your version.
+
+#### v2.2.1 Migration (Required if upgrading from v2.2 or earlier)
+
+**What changed:** Door assignments are now stored as comma-separated values instead of space-separated for improved security. This migration converts existing records.
+
+**Why it's required:** The security fix uses `FIND_IN_SET()` SQL function which requires comma-separated values. Without this migration, existing cards may lose door access.
+
+**Step 1: Backup your database first!**
+```bash
+mysqldump -u pidoors -p access > access_backup_$(date +%Y%m%d).sql
+```
+
+**Step 2: Run the migration (choose one method)**
+
+**Option A: Python script (Recommended - safer with preview)**
+```bash
+cd ~/pidoors
+
+# Preview changes first (no modifications made)
+python3 migrations/migrate_doors_format.py --dry-run
+
+# If the preview looks correct, apply changes
+python3 migrations/migrate_doors_format.py
+```
+
+The Python script will:
+- Show you exactly what will change before making changes
+- Ask for confirmation before applying
+- Can be safely run multiple times
+
+**Option B: SQL script (Direct database update)**
+```bash
+cd ~/pidoors
+mysql -u pidoors -p access < migrations/migrate_doors_format.sql
+```
+
+**Step 3: Verify the migration**
+```bash
+# Check no space-separated values remain
+mysql -u pidoors -p access -e "SELECT COUNT(*) FROM cards WHERE doors LIKE '% %' AND doors != '*';"
+# Should return 0
+```
+
+**Step 4: Restart door controllers**
+```bash
+sudo systemctl restart pidoors
+```
+
+**Example of what changes:**
+
+| Before (space-separated) | After (comma-separated) |
+|--------------------------|-------------------------|
+| `front_door back_door`   | `front_door,back_door`  |
+| `lobby entrance exit`    | `lobby,entrance,exit`   |
+| `*` (all doors)          | `*` (unchanged)         |
+| `single_door`            | `single_door` (unchanged) |
 
 ### Enable HTTPS (Recommended for Production)
 
@@ -1043,3 +1106,62 @@ Now that your system is running:
 8. Monitor the system via the dashboard
 
 **Your PiDoors Access Control System is now operational!**
+
+---
+
+## Upgrading
+
+### Upgrading to v2.2.1
+
+Version 2.2.1 includes a security fix that requires a database migration. Follow these steps:
+
+**1. Update the code on the server:**
+```bash
+cd ~/pidoors
+git pull
+sudo cp -r pidoorserv/* /var/www/pidoors/
+sudo chown -R www-data:www-data /var/www/pidoors
+sudo systemctl restart nginx
+sudo systemctl restart php*-fpm
+```
+
+**2. Run the database migration:**
+
+⚠️ **Important:** This step is required! Without it, existing cards may lose door access.
+
+```bash
+# Backup first
+mysqldump -u pidoors -p access > access_backup_$(date +%Y%m%d).sql
+
+# Preview changes
+python3 migrations/migrate_doors_format.py --dry-run
+
+# Apply changes
+python3 migrations/migrate_doors_format.py
+```
+
+See [Database Migrations](#database-migrations) for detailed instructions.
+
+**3. Update all door controllers:**
+```bash
+cd ~/pidoors
+git pull
+sudo cp pidoors/pidoors.py /opt/pidoors/
+sudo cp -r pidoors/readers/* /opt/pidoors/readers/
+sudo cp -r pidoors/formats/* /opt/pidoors/formats/
+sudo systemctl restart pidoors
+```
+
+**4. Verify everything works:**
+- Test a card at each door
+- Check the Access Logs in the web interface
+- Verify door status shows "Online"
+
+### Version History
+
+| Version | Date | Migration Required | Notes |
+|---------|------|-------------------|-------|
+| v2.2.1 | Jan 2026 | **Yes** - `migrate_doors_format.py` | Security fix for zone matching |
+| v2.2 | Jan 2026 | No | Multi-reader support |
+| v2.1 | Jan 2026 | No | Nginx migration |
+| v2.0 | Jan 2026 | Yes - `database_migration.sql` | Security overhaul |
