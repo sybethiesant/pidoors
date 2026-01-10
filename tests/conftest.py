@@ -217,7 +217,7 @@ def sample_cache():
                 'card_id': '00abcdef',
                 'firstname': 'John',
                 'lastname': 'Doe',
-                'doors': 'test_zone front_door',
+                'doors': 'test_zone,front_door',  # Comma-separated zone list
                 'schedule_id': 1,
                 'valid_from': None,
                 'valid_until': None

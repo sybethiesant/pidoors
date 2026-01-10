@@ -458,14 +458,15 @@ def sync_cache_from_server():
         cursor = db.cursor(pymysql.cursors.DictCursor)
 
         # Fetch all cards that have access to this zone
+        # Use FIND_IN_SET for proper comma-delimited matching (prevents "main" matching "maintenance")
         sql = """
             SELECT card_id, user_id, facility, bstr, firstname, lastname,
                    doors, active, group_id, schedule_id, valid_from, valid_until
             FROM cards
             WHERE active = 1
-              AND (doors LIKE %s OR doors LIKE %s OR doors = %s)
+              AND (FIND_IN_SET(%s, doors) > 0 OR doors = '*')
         """
-        cursor.execute(sql, (f"%{zone}%", f"%{zone} %", zone))
+        cursor.execute(sql, (zone,))
         cards = cursor.fetchall()
 
         # Fetch schedules
@@ -840,8 +841,10 @@ def lookup_card(card_id, facility, user_id, bstr):
 
         if cached_card:
             # Check if card has access to this zone
+            # Use proper comma-delimited matching (prevents "main" matching "maintenance")
             doors = cached_card.get('doors', '')
-            if zone in doors or doors == '*':
+            door_list = [d.strip() for d in doors.split(',') if d.strip()]
+            if zone in door_list or doors == '*':
                 # Check validity dates with error handling
                 valid_from = cached_card.get('valid_from')
                 valid_until = cached_card.get('valid_until')
@@ -942,9 +945,14 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
             granted = False
             reason = ""
 
+            # Use proper comma-delimited matching (prevents "main" matching "maintenance")
+            card_doors = card.get('doors', '')
+            card_door_list = [d.strip() for d in card_doors.split(',') if d.strip()]
+            has_door_access = zone in card_door_list or card_doors == '*'
+
             if card['active'] != 1:
                 reason = "Card inactive"
-            elif zone not in card.get('doors', '') and card.get('doors', '') != '*':
+            elif not has_door_access:
                 reason = "No access to this door"
             elif card.get('valid_from') and now.date() < card['valid_from']:
                 reason = "Card not yet valid"

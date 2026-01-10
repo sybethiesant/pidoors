@@ -90,7 +90,7 @@ try {
                         <td><?php echo htmlspecialchars($card['facility']); ?></td>
                         <td>
                             <?php
-                            $cardDoors = array_filter(explode(' ', $card['doors']));
+                            $cardDoors = array_filter(array_map('trim', explode(',', $card['doors'])));
                             if (empty($cardDoors)) {
                                 echo '<span class="text-muted">None</span>';
                             } else {
