@@ -622,7 +622,12 @@ def rex_button_pressed(channel):
     """Handle REX button press - unlock door temporarily"""
     report(f"REX button pressed at {zone}")
     log_door_event('rex_activated')
-    unlock_briefly(config[zone]["latch_gpio"])
+    zone_config = config.get(zone, {})
+    latch_gpio = zone_config.get("latch_gpio")
+    if latch_gpio:
+        unlock_briefly(latch_gpio)
+    else:
+        debug(f"REX: latch_gpio not configured for zone {zone}")
 
 
 # ============================================================
@@ -1128,7 +1133,11 @@ def open_door(user_id, name):
             report(f"{name} entered {zone} (already unlocked)")
         else:
             report(f"{name} granted access to {zone}")
-            unlock_briefly(zone_config["latch_gpio"])
+            latch_gpio = zone_config.get("latch_gpio")
+            if latch_gpio:
+                unlock_briefly(latch_gpio)
+            else:
+                debug(f"Warning: latch_gpio not configured for zone {zone}")
 
 
 def reject_card(user_id, reason="Access denied"):
@@ -1233,7 +1242,9 @@ def heartbeat_loop():
             send_heartbeat()
 
             # Sync cache every hour
-            if time.time() - cache_last_sync > 3600:
+            with state_lock:
+                last_sync = cache_last_sync
+            if time.time() - last_sync > 3600:
                 sync_cache_from_server()
 
         except Exception as e:
@@ -1310,8 +1321,8 @@ def cleanup(sig=None, frame=None):
     # Update status in database
     try:
         send_offline_status()
-    except:
-        pass
+    except Exception:
+        pass  # Ignore errors during cleanup
 
     GPIO.cleanup()
     sys.exit(0)
