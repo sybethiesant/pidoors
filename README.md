@@ -183,13 +183,28 @@ sudo systemctl start pidoors
 
 ## Configuration
 
-### Database Connection
+### Initial Setup
 
-Edit `pidoorserv/database/db_connection.php`:
-```php
-$pdo = new PDO("mysql:host=localhost;dbname=users", "pidoors", "your_password");
-$pdo_access = new PDO("mysql:host=localhost;dbname=access", "pidoors", "your_password");
+1. **Copy the example configuration file**:
+```bash
+cp pidoorserv/includes/config.php.example pidoorserv/includes/config.php
 ```
+
+2. **Edit the configuration file** `pidoorserv/includes/config.php`:
+```php
+return [
+    'sqladdr' => '127.0.0.1',
+    'sqldb' => 'users',
+    'sqldb2' => 'access',
+    'sqluser' => 'pidoors',
+    'sqlpass' => 'your_secure_password_here', // Change this!
+    'apppath' => '/var/www/pidoors/',
+    'url' => 'http://your-server-ip',
+    // ... other settings
+];
+```
+
+**Important:** Never commit `config.php` to version control. It's already in `.gitignore`.
 
 ### Door Controller
 

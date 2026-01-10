@@ -10,11 +10,11 @@ return [
     'sqldb' => 'users',
     'sqldb2' => 'access',
     'sqluser' => 'pidoors',
-    'sqlpass' => 'p1d00r4p@ss!',
+    'sqlpass' => '', // Set your database password here
 
     // Application Paths
-    'apppath' => '/home/pi/pidoorserv/',
-    'url' => 'http://172.17.22.99',
+    'apppath' => '/var/www/pidoors/',
+    'url' => 'http://localhost',
 
     // Session Configuration
     'session_timeout' => 3600, // 1 hour in seconds
