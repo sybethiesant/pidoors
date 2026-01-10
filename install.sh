@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}======================================${NC}"
 echo -e "${GREEN}PiDoors Installation Script${NC}"
-echo -e "${GREEN}Version 2.1 - Nginx Edition${NC}"
+echo -e "${GREEN}Version 2.2 - Multi-Reader Edition${NC}"
 echo -e "${GREEN}======================================${NC}"
 echo
 
@@ -147,7 +147,9 @@ if [ "$INSTALL_DOOR" = true ]; then
     echo -e "\n${GREEN}[4/8] Installing door controller components...${NC}"
 
     # Install Python dependencies
-    pip3 install mysql-connector-python RPi.GPIO
+    # Core: database and GPIO
+    # Readers: pyserial (OSDP), smbus2 (PN532 I2C), spidev (PN532/MFRC522 SPI)
+    pip3 install pymysql RPi.GPIO pyserial smbus2 spidev
 
     # Create pidoors user
     if ! id -u pidoors > /dev/null 2>&1; then
@@ -157,10 +159,24 @@ if [ "$INSTALL_DOOR" = true ]; then
 
     # Create installation directory
     mkdir -p /opt/pidoors/conf
+    mkdir -p /opt/pidoors/cache
+    mkdir -p /opt/pidoors/readers
+    mkdir -p /opt/pidoors/formats
+
+    # Copy main controller
     cp pidoors/pidoors.py /opt/pidoors/
+
+    # Copy reader modules
+    cp -r pidoors/readers/* /opt/pidoors/readers/
+    cp -r pidoors/formats/* /opt/pidoors/formats/
+
+    # Copy configuration template
     cp pidoors/conf/config.json.example /opt/pidoors/conf/config.json
+
+    # Set permissions
     chown -R pidoors:pidoors /opt/pidoors
     chmod +x /opt/pidoors/pidoors.py
+    chmod 700 /opt/pidoors/cache
 
     # Configure door controller
     echo -e "\n${YELLOW}Configuring door controller...${NC}"
@@ -170,15 +186,48 @@ if [ "$INSTALL_DOOR" = true ]; then
     echo
     read -p "Enter door name/location: " DOOR_NAME
 
+    # Select reader type
+    echo -e "\n${YELLOW}Select card reader type:${NC}"
+    echo "1) Wiegand (GPIO) - Most common"
+    echo "2) OSDP (RS-485) - Encrypted"
+    echo "3) NFC PN532 (I2C)"
+    echo "4) NFC MFRC522 (SPI)"
+    read -p "Enter choice [1-4]: " READER_TYPE
+
+    case $READER_TYPE in
+        2)
+            READER_CONFIG='"reader_type": "osdp",
+        "serial_port": "/dev/serial0",
+        "baud_rate": 115200,
+        "address": 0,'
+            ;;
+        3)
+            READER_CONFIG='"reader_type": "nfc_pn532",
+        "interface": "i2c",
+        "i2c_address": 36,
+        "i2c_bus": 1,'
+            ;;
+        4)
+            READER_CONFIG='"reader_type": "nfc_mfrc522",
+        "spi_bus": 0,
+        "spi_device": 0,
+        "reset_pin": 25,'
+            ;;
+        *)
+            READER_CONFIG='"reader_type": "wiegand",
+        "d0": 24,
+        "d1": 23,'
+            ;;
+    esac
+
     # Update configuration file
     cat > /opt/pidoors/conf/config.json <<DOORCONF
 {
-    "connex1": {
+    "$DOOR_NAME": {
+        $READER_CONFIG
         "unlock_value": 1,
         "open_delay": 3,
         "latch_gpio": 18,
-        "d0": 24,
-        "d1": 23,
         "sqladdr": "$DB_HOST",
         "sqluser": "pidoors",
         "sqlpass": "$DB_PASS_DOOR",
@@ -343,7 +392,11 @@ if [ "$INSTALL_SERVER" = true ]; then
     echo "6. Enable HTTPS for production (see nginx/pidoors.conf)"
 fi
 if [ "$INSTALL_DOOR" = true ]; then
-    echo "1. Verify Wiegand reader connections (DATA0=GPIO24, DATA1=GPIO23)"
+    echo "1. Verify reader connections:"
+    echo "   - Wiegand: DATA0=GPIO24, DATA1=GPIO23"
+    echo "   - OSDP: RS-485 adapter on /dev/serial0"
+    echo "   - PN532: I2C on bus 1, address 0x24"
+    echo "   - MFRC522: SPI bus 0, device 0, reset=GPIO25"
     echo "2. Start the service: systemctl start pidoors"
     echo "3. Monitor logs: journalctl -u pidoors -f"
 fi

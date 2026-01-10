@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.1-green)
+![Version](https://img.shields.io/badge/version-2.2-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -26,14 +26,16 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 ## Features
 
 ### Access Control
-- Wiegand 26/34/37-bit card readers
+- **Multi-format Wiegand**: 26, 32, 34, 35, 36, 37, 48-bit with auto-detection
+- **OSDP Readers**: RS-485 encrypted readers with AES-128 Secure Channel
+- **NFC/RFID**: PN532 (I2C/SPI) and MFRC522 (SPI) support
 - Time-based access schedules
 - Access groups and permissions
 - Holiday calendar support
 - Card validity date ranges
 - PIN code authentication
 - Anti-passback protection
-- Master card system
+- Persistent master cards (never expire for emergency access)
 
 ### Management
 - Modern web interface
@@ -135,10 +137,18 @@ See the [Installation Guide](INSTALLATION_GUIDE.md) for detailed step-by-step in
 |-----------|-------------|
 | Board | Raspberry Pi Zero W or newer |
 | Storage | 8GB+ microSD card |
-| Reader | Wiegand card reader (26/34/37-bit) |
+| Reader | See supported readers below |
 | Lock | 12V electric strike or magnetic lock |
 | Relay | Relay module for lock control |
 | Optional | Door sensor, REX button |
+
+**Supported Card Readers:**
+| Type | Interface | Notes |
+|------|-----------|-------|
+| Wiegand (26/32/34/35/36/37/48-bit) | GPIO | Most common, auto-detection |
+| OSDP v2 | RS-485 (UART) | Encrypted, requires USB-RS485 adapter |
+| PN532 NFC | I2C or SPI | Mifare Classic, Ultralight, NTAG |
+| MFRC522 NFC | SPI | Low-cost Mifare reader |
 
 **Total cost per door: ~$100-150**
 
@@ -339,6 +349,14 @@ pidoors/
 ├── pidoors/              # Door controller
 │   ├── pidoors.py        # Main daemon
 │   ├── pidoors.service   # Systemd service
+│   ├── readers/          # Card reader modules
+│   │   ├── base.py       # Abstract base class
+│   │   ├── wiegand.py    # Wiegand GPIO reader
+│   │   ├── osdp.py       # OSDP RS-485 reader
+│   │   ├── nfc_pn532.py  # PN532 NFC reader
+│   │   └── nfc_mfrc522.py # MFRC522 NFC reader
+│   ├── formats/          # Card format definitions
+│   │   └── wiegand_formats.py
 │   └── conf/             # Configuration
 │       └── config.json.example
 ├── nginx/                # Nginx configuration
@@ -382,11 +400,11 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.1** - Production Ready
+**Current Version: 2.2** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
-- NFC/Bluetooth support
+- Bluetooth Low Energy (BLE) readers
 - Biometric integration (fingerprint, face)
 - Cloud backup integration
 - Multi-site management dashboard
@@ -394,6 +412,14 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.2 (January 2026)
+- **Multi-reader support**: OSDP, NFC PN532, NFC MFRC522
+- **Expanded Wiegand formats**: 26, 32, 34, 35, 36, 37, 48-bit with auto-detection
+- **Persistent master cards**: Never expire locally for emergency access
+- **Reader abstraction layer**: Modular architecture for easy extension
+- **Format registry**: Custom Wiegand format definitions via JSON
+- Web UI updates for reader type selection
 
 ### Version 2.1 (January 2026)
 - Migrated from Apache to Nginx with PHP-FPM
