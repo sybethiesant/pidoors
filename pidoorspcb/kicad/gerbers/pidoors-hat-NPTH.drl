@@ -1,0 +1,26 @@
+M48
+; DRILL FILE - PiDoors HAT v2.0
+; Generated: 2026-01-10
+; Non-Plated Through Holes (NPTH)
+; Format: Excellon
+; Units: INCH
+FMAT,2
+INCH,TZ
+; Drill Tool Definitions
+; T1 = 2.7mm (M2.5 Mounting Holes)
+T1C0.1063
+%
+G90
+G05
+M72
+; Tool T1 - 2.7mm Mounting Holes
+T1
+; H1 - (3.5mm, 3.5mm)
+X01378Y01378
+; H2 - (61.5mm, 3.5mm)
+X24213Y01378
+; H3 - (3.5mm, 53mm)
+X01378Y20866
+; H4 - (61.5mm, 53mm)
+X24213Y20866
+M30
