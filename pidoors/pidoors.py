@@ -4,8 +4,11 @@ PiDoors Access Control - Door Controller
 Wiegand-based access control system for Raspberry Pi
 
 Features:
-- Wiegand 26-bit and 34-bit card reading
+- Wiegand 26, 32, 34, 35, 36, 37, 48-bit card reading
+- OSDP encrypted reader support
+- NFC/RFID reader support (PN532, MFRC522)
 - Local 24-hour cache for offline operation
+- Persistent master cards (never expire for emergency access)
 - Time-based access schedules
 - Anti-passback support
 - Door sensor monitoring
@@ -33,11 +36,21 @@ except ImportError:
     MYSQL_AVAILABLE = False
     print("Warning: pymysql not installed. Database features disabled.")
 
+# Import Wiegand format registry
+try:
+    from formats.wiegand_formats import FormatRegistry, init_registry
+    FORMAT_REGISTRY_AVAILABLE = True
+except ImportError:
+    FORMAT_REGISTRY_AVAILABLE = False
+    print("Warning: Format registry not available. Using legacy format support.")
+
 # Configuration
 DEBUG_MODE = False
 INSTALL_DIR = os.environ.get('PIDOORS_DIR', '/opt/pidoors')
 CONF_DIR = os.path.join(INSTALL_DIR, 'conf') + '/'
 CACHE_DIR = os.path.join(INSTALL_DIR, 'cache') + '/'
+MASTER_CARDS_FILE = os.path.join(CONF_DIR, 'master_cards.json')
+CUSTOM_FORMATS_FILE = os.path.join(CONF_DIR, 'formats.json')
 CACHE_DURATION = 86400  # 24 hours in seconds
 HEARTBEAT_INTERVAL = 60  # seconds
 DB_RETRY_INTERVAL = 30  # seconds
@@ -55,11 +68,14 @@ local_cache = {}
 cache_last_sync = 0
 heartbeat_thread = None
 running = True
+master_cards = {}  # Persistent master cards (never expire)
+format_registry = None  # Wiegand format registry
 
 # Thread locks for shared state
 state_lock = threading.Lock()  # For db_connected, last_db_attempt, cache_last_sync
 cache_lock = threading.Lock()  # For local_cache access
 card_lock = threading.Lock()   # For last_card, repeat_read_count, repeat_read_timeout
+master_lock = threading.Lock() # For master_cards access
 
 
 def get_local_ip():
@@ -79,7 +95,7 @@ myip = get_local_ip()
 
 def initialize():
     """Initialize the access control system"""
-    global running
+    global running, format_registry
     running = True
 
     GPIO.setmode(GPIO.BCM)
@@ -94,8 +110,18 @@ def initialize():
     # Load configurations
     read_configs()
 
-    # Load local cache
+    # Initialize format registry with optional custom formats
+    if FORMAT_REGISTRY_AVAILABLE:
+        custom_formats = CUSTOM_FORMATS_FILE if os.path.exists(CUSTOM_FORMATS_FILE) else None
+        format_registry = init_registry(custom_formats)
+        supported = format_registry.get_supported_lengths()
+        report(f"Wiegand format registry initialized: {supported}")
+    else:
+        report("Using legacy Wiegand format support (26/34-bit only)")
+
+    # Load local cache and persistent master cards
     load_cache()
+    load_master_cards()
 
     # Setup GPIO
     setup_output_GPIOs()
@@ -226,6 +252,181 @@ def save_cache():
         report(f"Error saving cache: {e}")
 
 
+# ============================================================
+# MASTER CARD MANAGEMENT (Persistent - Never Expires)
+# ============================================================
+
+def load_master_cards():
+    """
+    Load master cards from persistent storage.
+    Master cards never expire - they are used for emergency access.
+    """
+    global master_cards
+
+    try:
+        if os.path.exists(MASTER_CARDS_FILE):
+            with open(MASTER_CARDS_FILE, 'r') as f:
+                data = json.load(f)
+                with master_lock:
+                    master_cards = data.get('cards', {})
+                card_count = len(master_cards)
+                if card_count > 0:
+                    report(f"Loaded {card_count} master cards from persistent storage")
+    except Exception as e:
+        report(f"Error loading master cards: {e}")
+        with master_lock:
+            master_cards = {}
+
+
+def save_master_cards():
+    """Save master cards to persistent storage"""
+    try:
+        with master_lock:
+            data = {
+                'last_sync': datetime.now().isoformat(),
+                'cards': dict(master_cards)
+            }
+        save_json(MASTER_CARDS_FILE, data)
+        debug(f"Master cards saved: {len(master_cards)} cards")
+    except Exception as e:
+        report(f"Error saving master cards: {e}")
+
+
+def sync_master_cards_from_db(cursor):
+    """
+    Sync master cards from database.
+    Called during cache sync - updates local persistent storage.
+    Removes cards that have been deleted from the database.
+    """
+    global master_cards
+
+    try:
+        cursor.execute("SELECT card_id, user_id, facility, description, active FROM master_cards WHERE active = 1")
+        db_master_cards = cursor.fetchall()
+
+        new_master_cards = {}
+        for mc in db_master_cards:
+            key = f"{mc['facility']},{mc['user_id']}"
+            new_master_cards[key] = {
+                'card_id': mc['card_id'],
+                'user_id': mc['user_id'],
+                'facility': mc['facility'],
+                'description': mc.get('description', 'Master Card')
+            }
+
+        with master_lock:
+            # Log changes
+            old_keys = set(master_cards.keys())
+            new_keys = set(new_master_cards.keys())
+
+            added = new_keys - old_keys
+            removed = old_keys - new_keys
+
+            if added:
+                report(f"Master cards added: {len(added)}")
+            if removed:
+                report(f"Master cards revoked: {len(removed)}")
+
+            master_cards = new_master_cards
+
+        save_master_cards()
+        debug(f"Master cards synced: {len(new_master_cards)} active cards")
+
+    except Exception as e:
+        report(f"Error syncing master cards: {e}")
+
+
+def verify_master_card_in_db(cursor, facility, user_id, card_id):
+    """
+    Verify a master card is still active in the database.
+    Called when database is available during access attempt.
+    Returns True if card is still valid, False if revoked.
+    """
+    try:
+        cursor.execute("""
+            SELECT active FROM master_cards
+            WHERE user_id = %s AND card_id = %s AND facility = %s
+        """, (user_id, card_id, facility))
+        result = cursor.fetchone()
+
+        if result and result.get('active', 0) == 1:
+            return True
+
+        # Card not found or inactive - remove from local storage
+        key = f"{facility},{user_id}"
+        with master_lock:
+            if key in master_cards:
+                report(f"Master card revoked: {key}")
+                del master_cards[key]
+                save_master_cards()
+
+        return False
+
+    except Exception as e:
+        debug(f"Error verifying master card: {e}")
+        # On error, allow access (fail-open for master cards only)
+        return True
+
+
+def is_master_card(facility, user_id):
+    """Check if a card is a master card (from local persistent storage)"""
+    key = f"{facility},{user_id}"
+    with master_lock:
+        return master_cards.get(key)
+
+
+def get_master_card_info(facility, user_id):
+    """Get master card info if exists"""
+    key = f"{facility},{user_id}"
+    with master_lock:
+        if key in master_cards:
+            return dict(master_cards[key])
+    return None
+
+
+def verify_master_card_online(card_id, facility, user_id):
+    """
+    Verify master card is still active in database (when online).
+    Returns True if valid, False if revoked.
+    On database error, returns True (fail-open for emergency access).
+    """
+    global db_connected
+
+    zone_config = config.get(zone, {})
+    sqladdr = zone_config.get("sqladdr")
+    sqluser = zone_config.get("sqluser")
+    sqlpass = zone_config.get("sqlpass")
+    sqldb = zone_config.get("sqldb")
+
+    if not all([sqladdr, sqluser, sqlpass, sqldb]):
+        return True  # Can't verify, allow access
+
+    db = None
+    try:
+        db = pymysql.connect(
+            host=sqladdr,
+            user=sqluser,
+            password=sqlpass,
+            database=sqldb,
+            connect_timeout=3  # Short timeout for quick check
+        )
+        cursor = db.cursor(pymysql.cursors.DictCursor)
+
+        result = verify_master_card_in_db(cursor, facility, user_id, card_id)
+        return result
+
+    except Exception as e:
+        debug(f"Master card verification error: {e}")
+        # On error, allow access (emergency access must work)
+        return True
+    finally:
+        if db:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
 def sync_cache_from_server():
     """Sync the local cache from the database server"""
     global local_cache, cache_last_sync, db_connected
@@ -269,9 +470,8 @@ def sync_cache_from_server():
         cursor.execute("SELECT * FROM access_schedules")
         schedules = {s['id']: s for s in cursor.fetchall()}
 
-        # Fetch master cards
-        cursor.execute("SELECT * FROM master_cards WHERE active = 1")
-        master_cards = cursor.fetchall()
+        # Sync master cards to persistent storage (never expires)
+        sync_master_cards_from_db(cursor)
 
         # Fetch holidays
         cursor.execute("SELECT * FROM holidays WHERE date >= CURDATE()")
@@ -284,23 +484,14 @@ def sync_cache_from_server():
         with state_lock:
             db_connected = True
 
-        # Build the cache
+        # Build the cache (master cards are stored separately in persistent storage)
         new_cache = {
             'schedules': schedules,
             'holidays': [{'date': str(h['date']), 'name': h['name'], 'access_denied': h['access_denied']}
                         for h in holidays],
             'door_settings': door_info,
-            'master_cards': {},
             'cards': {}
         }
-
-        # Add master cards to cache
-        for mc in master_cards:
-            key = f"{mc['facility']},{mc['user_id']}"
-            new_cache['master_cards'][key] = {
-                'card_id': mc['card_id'],
-                'description': mc['description']
-            }
 
         # Add regular cards to cache
         for card in cards:
@@ -512,21 +703,38 @@ def wiegand_stream_done(reader):
 
 
 def validate_bits(bstr):
-    """Validate Wiegand bit stream and extract card data"""
+    """Validate Wiegand bit stream and extract card data using format registry"""
     bit_len = len(bstr)
 
-    # Support 26-bit and 34-bit Wiegand formats
+    # Use format registry if available
+    if FORMAT_REGISTRY_AVAILABLE and format_registry:
+        result = format_registry.validate(bstr)
+        if result:
+            card_id, facility, user_id = result
+            fmt = format_registry.get_format(bit_len)
+            debug(f"{bit_len}-bit card ({fmt.name}): facility={facility} user={user_id} card_id={card_id}")
+            lookup_card(card_id, facility, user_id, bstr)
+            return True
+        elif format_registry.get_format(bit_len):
+            # Format is supported but validation failed (parity error)
+            debug(f"Parity error in {bit_len}-bit Wiegand stream")
+            return False
+        else:
+            debug(f"Unsupported Wiegand format: {bit_len} bits")
+            return False
+
+    # Legacy fallback: Support 26-bit and 34-bit only
     if bit_len == 26:
-        return validate_26bit(bstr)
+        return validate_26bit_legacy(bstr)
     elif bit_len == 34:
-        return validate_34bit(bstr)
+        return validate_34bit_legacy(bstr)
     else:
-        debug(f"Unsupported Wiegand format: {bit_len} bits")
+        debug(f"Unsupported Wiegand format: {bit_len} bits (use format registry for more formats)")
         return False
 
 
-def validate_26bit(bstr):
-    """Validate and decode 26-bit Wiegand format"""
+def validate_26bit_legacy(bstr):
+    """Validate and decode 26-bit Wiegand format (legacy fallback)"""
     lparity = int(bstr[0])
     facility = int(bstr[1:9], 2)
     user_id = int(bstr[9:25], 2)
@@ -550,8 +758,8 @@ def validate_26bit(bstr):
     return True
 
 
-def validate_34bit(bstr):
-    """Validate and decode 34-bit Wiegand format"""
+def validate_34bit_legacy(bstr):
+    """Validate and decode 34-bit Wiegand format (legacy fallback)"""
     lparity = int(bstr[0])
     facility = int(bstr[1:17], 2)
     user_id = int(bstr[17:33], 2)
@@ -588,16 +796,24 @@ def lookup_card(card_id, facility, user_id, bstr):
 
     debug(f"Looking up card: {card_key}")
 
-    # First check: Master cards (from cache)
-    if is_cache_valid():
-        with cache_lock:
-            master_cards = local_cache.get('master_cards', {})
-            master_card_info = master_cards.get(card_key)
-        if master_card_info:
-            report(f"Master card access granted: {master_card_info.get('description', 'Master')}")
-            open_door(user_id, "Master")
-            log_access(user_id, card_id, facility, True, "Master card")
-            return
+    # First check: Master cards (from persistent storage - never expires)
+    master_info = get_master_card_info(facility, user_id)
+    if master_info:
+        # Master card found in local storage
+        # If database is available, verify it's still active
+        if MYSQL_AVAILABLE and db_connected:
+            if not verify_master_card_online(card_id, facility, user_id):
+                # Master card was revoked - deny access
+                reject_card(user_id, "Master card revoked")
+                log_access(user_id, card_id, facility, False, "Master card revoked")
+                return
+
+        # Grant master card access
+        description = master_info.get('description', 'Master')
+        report(f"Master card access granted: {description}")
+        open_door(user_id, "Master")
+        log_access(user_id, card_id, facility, True, "Master card")
+        return
 
     # Try database lookup first (if available)
     access_granted = False

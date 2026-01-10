@@ -43,14 +43,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $description = sanitize_string($_POST['description'] ?? '');
         $schedule_id = validate_int($_POST['schedule_id'] ?? 0) ?: null;
         $unlock_duration = validate_int($_POST['unlock_duration'] ?? 5, 1, 60) ?: 5;
+        $reader_type = sanitize_string($_POST['reader_type'] ?? 'wiegand');
+
+        // Validate reader_type
+        $valid_reader_types = ['wiegand', 'osdp', 'nfc_pn532', 'nfc_mfrc522'];
+        if (!in_array($reader_type, $valid_reader_types)) {
+            $reader_type = 'wiegand';
+        }
 
         try {
             $stmt = $pdo_access->prepare("
                 UPDATE doors SET location = ?, doornum = ?, description = ?,
-                    schedule_id = ?, unlock_duration = ?
+                    schedule_id = ?, unlock_duration = ?, reader_type = ?
                 WHERE name = ?
             ");
-            $stmt->execute([$location, $doornum, $description, $schedule_id, $unlock_duration, $door_name]);
+            $stmt->execute([$location, $doornum, $description, $schedule_id, $unlock_duration, $reader_type, $door_name]);
 
             header("Location: {$config['url']}/doors.php?success=Door updated successfully.");
             exit();
@@ -116,6 +123,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <label for="unlock_duration" class="form-label">Unlock Duration (seconds)</label>
                         <input type="number" class="form-control" id="unlock_duration" name="unlock_duration"
                                min="1" max="60" value="<?php echo htmlspecialchars($door['unlock_duration'] ?? 5); ?>">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="reader_type" class="form-label">Reader Type</label>
+                        <select class="form-select" id="reader_type" name="reader_type">
+                            <option value="wiegand" <?php echo ($door['reader_type'] ?? 'wiegand') === 'wiegand' ? 'selected' : ''; ?>>
+                                Wiegand (26/32/34/35/36/37/48-bit)
+                            </option>
+                            <option value="osdp" <?php echo ($door['reader_type'] ?? '') === 'osdp' ? 'selected' : ''; ?>>
+                                OSDP (RS-485 Encrypted)
+                            </option>
+                            <option value="nfc_pn532" <?php echo ($door['reader_type'] ?? '') === 'nfc_pn532' ? 'selected' : ''; ?>>
+                                NFC PN532 (I2C/SPI)
+                            </option>
+                            <option value="nfc_mfrc522" <?php echo ($door['reader_type'] ?? '') === 'nfc_mfrc522' ? 'selected' : ''; ?>>
+                                NFC MFRC522 (SPI)
+                            </option>
+                        </select>
+                        <div class="form-text">Select the type of card reader connected to this door's controller.</div>
                     </div>
 
                     <?php if ($door['status'] || $door['ip_address'] || $door['last_seen']): ?>

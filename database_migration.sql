@@ -303,6 +303,24 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- Add reader_type column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'reader_type');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `reader_type` enum(\'wiegand\',\'osdp\',\'nfc_pn532\',\'nfc_mfrc522\') DEFAULT \'wiegand\' AFTER `lockdown_mode`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- --------------------------------------------------------
+-- Add card_type column to cards table
+-- --------------------------------------------------------
+
+-- Add card_type column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'card_type');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `card_type` enum(\'wiegand\',\'nfc\') DEFAULT \'wiegand\' AFTER `bstr`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- --------------------------------------------------------
 -- Door Groups Table
 -- Links doors to access groups
