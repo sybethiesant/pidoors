@@ -1,0 +1,52 @@
+Designator,Quantity,Value,Footprint,LCSC Part Number,Description
+J1,1,Raspberry_Pi_2_3,PinSocket_2x20_P2.54mm_Vertical,C50982,40-pin Female Header
+J2,1,Barrel_Jack,BarrelJack_CUI_PJ-002A,C381116,DC Power Jack 5.5x2.1mm
+J3,1,Wiegand,TerminalBlock_1x04_P5.08mm,C8465,4-pos Screw Terminal
+J4,1,RS485,TerminalBlock_1x04_P5.08mm,C8465,4-pos Screw Terminal
+J5,1,PN532_I2C,PinHeader_1x06_P2.54mm,C124378,6-pin Male Header
+J6,1,NFC_SPI,PinHeader_1x08_P2.54mm,C124385,8-pin Male Header
+J7,1,Relay_Out,TerminalBlock_1x03_P5.08mm,C8463,3-pos Screw Terminal
+J8,1,Door_Sensor,TerminalBlock_1x02_P5.08mm,C8458,2-pos Screw Terminal
+J9,1,REX_Button,TerminalBlock_1x02_P5.08mm,C8458,2-pos Screw Terminal
+J10,1,Tamper,PinHeader_1x02_P2.54mm,C124375,2-pin Male Header
+J11,1,Buzzer,TerminalBlock_1x02_P5.08mm,C8458,2-pos Screw Terminal
+U1,1,OKI-78SR-5/1.5,Converter_DCDC_OKI-78SR,C88461,DC-DC 5V 1.5A
+U2,1,LD1117S33,SOT-223-3,C6186,3.3V LDO Regulator
+U3,1,MAX13487E,SOIC-8,C130258,RS-485 Transceiver Auto-Dir
+U4,1,TXB0102,SOT-23-6,C53434,2-Bit Level Shifter
+U5,1,PC817,DIP-4,C66944,Optocoupler
+Q1,1,MMBT2222A,SOT-23,C8512,NPN Transistor
+K1,1,G5LE-14-DC12,Relay_SPDT_Omron,C89693,12V SPDT Relay 10A
+F1,1,1.1A,Fuse_1812,C369159,Polyfuse PPTC 1.1A
+D1,1,SMBJ24A,D_SMB,C123799,TVS 24V 600W
+D2,1,PESD5V0S1BL,D_SOD-323,C82466,TVS 5V ESD
+D3,1,PESD5V0S1BL,D_SOD-323,C82466,TVS 5V ESD
+D4,1,SM712,SOT-23,C7519,TVS RS-485 Asymmetric
+D5,1,SM712,SOT-23,C7519,TVS RS-485 Asymmetric
+D6,1,1N4148W,D_SOD-123,C81598,Switching Diode
+D7,1,SS34,D_SMA,C8678,Schottky 40V 3A
+D8,1,LED_Green,LED_0805,C2297,Green LED 0805
+D9,1,LED_Green,LED_0805,C2297,Green LED 0805
+D10,1,LED_Red,LED_0805,C84256,Red LED 0805
+D11,1,LED_Yellow,LED_0805,C2296,Yellow LED 0805
+C1,1,100uF/35V,CP_Radial_D8.0mm,C86461,Electrolytic Cap
+C2,1,100uF/10V,CP_Radial_D6.3mm,C72499,Electrolytic Cap
+C3,1,10uF,C_0805,C15850,Ceramic Cap 25V
+C4,1,10uF,C_0805,C15850,Ceramic Cap 25V
+C5,1,10uF,C_0805,C15850,Ceramic Cap 25V
+C6,1,10uF,C_0805,C15850,Ceramic Cap 25V
+C7,1,100nF,C_0603,C14663,Ceramic Cap 50V
+C8,1,100nF,C_0603,C14663,Ceramic Cap 50V
+R1,1,10k,R_0603,C25804,Resistor 1%
+R2,1,10k,R_0603,C25804,Resistor 1%
+R3,1,100,R_0603,C22775,Resistor 1%
+R4,1,100,R_0603,C22775,Resistor 1%
+R5,1,1k,R_0603,C21190,Resistor 1%
+R6,1,1k,R_0603,C21190,Resistor 1%
+R7,1,10k,R_0603,C25804,Resistor 1%
+R8,1,10k,R_0603,C25804,Resistor 1%
+R9,1,10k,R_0603,C25804,Resistor 1%
+R10,1,1k,R_0603,C21190,Resistor 1%
+R11,1,330,R_0603,C23138,Resistor 1%
+R12,1,220,R_0603,C22962,Resistor 1%
+R13,1,330,R_0603,C23138,Resistor 1%
