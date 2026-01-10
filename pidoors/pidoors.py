@@ -77,6 +77,7 @@ state_lock = threading.Lock()  # For db_connected, last_db_attempt, cache_last_s
 cache_lock = threading.Lock()  # For local_cache access
 card_lock = threading.Lock()   # For last_card, repeat_read_count, repeat_read_timeout
 master_lock = threading.Lock() # For master_cards access
+wiegand_lock = threading.Lock() # For legacy Wiegand stream access
 
 
 def get_local_ip():
@@ -681,30 +682,30 @@ def data_pulse(channel):
 
     reader = config[reader_name]
 
-    if channel == reader["d0"]:
-        reader["stream"] += "0"
-    elif channel == reader["d1"]:
-        reader["stream"] += "1"
+    with wiegand_lock:
+        if channel == reader["d0"]:
+            reader["stream"] += "0"
+        elif channel == reader["d1"]:
+            reader["stream"] += "1"
 
-    kick_timer(reader)
-
-
-def kick_timer(reader):
-    """Start/restart the Wiegand stream timeout timer"""
-    if reader["timer"] is None:
-        reader["timer"] = threading.Timer(0.2, wiegand_stream_done, args=[reader])
-        reader["timer"].start()
+        # Start timer if not already running
+        if reader["timer"] is None:
+            reader["timer"] = threading.Timer(0.2, wiegand_stream_done, args=[reader])
+            reader["timer"].start()
 
 
 def wiegand_stream_done(reader):
     """Process completed Wiegand stream"""
-    if reader["stream"] == "":
-        return
+    with wiegand_lock:
+        if reader["stream"] == "":
+            reader["timer"] = None
+            return
 
-    bitstring = reader["stream"]
-    reader["stream"] = ""
-    reader["timer"] = None
+        bitstring = reader["stream"]
+        reader["stream"] = ""
+        reader["timer"] = None
 
+    # Process outside the lock
     validate_bits(bitstring)
 
 
