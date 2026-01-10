@@ -14,8 +14,20 @@ if (is_logged_in()) {
 
 $error_message = '';
 
+// Initialize login attempts tracking
+if (!isset($_SESSION['login_attempts'])) {
+    $_SESSION['login_attempts'] = 0;
+    $_SESSION['login_lockout_time'] = 0;
+}
+
+// Check if account is locked out
+if ($_SESSION['login_lockout_time'] > time()) {
+    $remaining = ceil(($_SESSION['login_lockout_time'] - time()) / 60);
+    $error_message = "Too many failed login attempts. Please try again in {$remaining} minute(s).";
+}
+
 // Process login form
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
     // Verify CSRF token
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         $error_message = 'Invalid security token. Please try again.';
@@ -52,6 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     if ($password_valid) {
+                        // Reset login attempts on successful login
+                        $_SESSION['login_attempts'] = 0;
+                        $_SESSION['login_lockout_time'] = 0;
+
                         // Upgrade password hash if using legacy MD5
                         if ($needs_upgrade) {
                             $new_hash = hash_password($password);
@@ -79,7 +95,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         header("Location: {$config['url']}/index.php");
                         exit();
                     } else {
-                        $error_message = 'Invalid email or password.';
+                        // Increment failed login attempts
+                        $_SESSION['login_attempts']++;
+
+                        // Lock out after 5 failed attempts for 15 minutes
+                        if ($_SESSION['login_attempts'] >= 5) {
+                            $_SESSION['login_lockout_time'] = time() + (15 * 60);
+                            $error_message = 'Too many failed login attempts. Account locked for 15 minutes.';
+                        } else {
+                            $remaining_attempts = 5 - $_SESSION['login_attempts'];
+                            $error_message = 'Invalid email or password. ' . $remaining_attempts . ' attempt(s) remaining.';
+                        }
+
                         // Log failed login attempt
                         try {
                             log_security_event($pdo, 'login_failed', null, "Failed login attempt for: $email");
@@ -88,7 +115,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
                 } else {
-                    $error_message = 'Invalid email or password.';
+                    // Increment failed login attempts for non-existent user
+                    $_SESSION['login_attempts']++;
+
+                    if ($_SESSION['login_attempts'] >= 5) {
+                        $_SESSION['login_lockout_time'] = time() + (15 * 60);
+                        $error_message = 'Too many failed login attempts. Account locked for 15 minutes.';
+                    } else {
+                        $error_message = 'Invalid email or password.';
+                    }
                 }
             } catch (PDOException $e) {
                 error_log("Login error: " . $e->getMessage());

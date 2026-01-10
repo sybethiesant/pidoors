@@ -7,6 +7,7 @@ $title = 'Add Door';
 require_once './includes/header.php';
 
 require_login($config);
+require_admin($config);
 
 $error_message = '';
 
