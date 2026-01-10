@@ -1,3 +1,31 @@
+# PiDoors - Files to ignore
 
+# Configuration files with sensitive data
+pidoorserv/includes/config.php
+
+# Remote files
 pidoors/.remote
 pidoorserv/.remote
+
+# Cache files
+pidoors/cache/
+pidoors/__pycache__/
+*.pyc
+*.pyo
+
+# Log files
+*.log
+
+# Backup files
+*.bak
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
