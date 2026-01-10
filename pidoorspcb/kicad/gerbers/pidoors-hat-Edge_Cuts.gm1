@@ -1,0 +1,40 @@
+G04 PiDoors HAT v2.0 - Board Outline (Edge Cuts)*
+G04 Generated: 2026-01-10*
+G04 Board Size: 65mm x 56.5mm*
+G04 Raspberry Pi HAT Standard Form Factor*
+%FSLAX46Y46*%
+%MOIN*%
+%TF.GenerationSoftware,PiDoors,PCBGenerator,2.0*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Profile,NP*%
+%TF.FilePolarity,Positive*%
+G04 Aperture Definitions*
+%ADD10C,0.006*%
+G04*
+G04 Board Outline - Rectangle*
+G04 Dimensions: 65mm x 56.5mm*
+G04 Origin: (0,0) at bottom-left corner*
+D10*
+G04 Start at origin, draw clockwise*
+X0Y0D02*
+X2559055Y0D01*
+G04 Bottom edge: (0,0) to (65mm,0)*
+X2559055Y2224409D01*
+G04 Right edge: (65mm,0) to (65mm,56.5mm)*
+X0Y2224409D01*
+G04 Top edge: (65mm,56.5mm) to (0,56.5mm)*
+X0Y0D01*
+G04 Left edge: (0,56.5mm) to (0,0)*
+G04*
+G04 Mounting Holes (NPTH)*
+G04 Hole diameter: 2.7mm for M2.5 screws*
+G04 Standard Pi HAT mounting positions*
+G04*
+G04 H1: (3.5mm, 3.5mm)*
+G04 H2: (61.5mm, 3.5mm)*
+G04 H3: (3.5mm, 53mm)*
+G04 H4: (61.5mm, 53mm)*
+G04*
+G04 Note: Mounting holes defined in drill file*
+G04*
+M02*

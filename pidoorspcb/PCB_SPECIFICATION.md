@@ -186,7 +186,7 @@ These pins have dedicated functions and should not be remapped:
 | GPIO 27 | 27 | 13 | Door Sensor Input | Yes |
 | GPIO 17 | 17 | 11 | REX Button Input | Yes |
 | GPIO 22 | 22 | 15 | Status LED (Denied) | Yes |
-| GPIO 5 | 5 | 29 | Status LED (Granted) | Yes |
+| GPIO 25 | 25 | 22 | Status LED (Granted) | Yes |
 | GPIO 6 | 6 | 31 | Tamper Detect Input | Yes |
 | GPIO 12 | 12 | 32 | Buzzer Output | Optional |
 
@@ -549,7 +549,7 @@ Standard Raspberry Pi 40-pin header. Use low-profile socket if height is critica
 | LED | Color | GPIO | Function |
 |-----|-------|------|----------|
 | D3 | Green | - | Power Good (5V rail) |
-| D4 | Green | GPIO 5 | Access Granted |
+| D4 | Green | GPIO 25 | Access Granted |
 | D5 | Red | GPIO 22 | Access Denied / Error |
 | D6 | Yellow | GPIO 12 | Activity / Card Read |
 

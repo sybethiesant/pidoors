@@ -227,7 +227,7 @@ nano pidoors/conf/config.json
 
 | Relay Module | Raspberry Pi |
 |--------------|--------------|
-| IN           | GPIO 17      |
+| IN           | GPIO 18      |
 | VCC          | 5V (Pin 4)   |
 | GND          | GND (Pin 14) |
 
@@ -240,7 +240,7 @@ Connect lock to relay NO/COM terminals with 12V power supply.
   GPIO3  (5)  (6)  GND
   GPIO4  (7)  (8)  GPIO14
     GND  (9)  (10) GPIO15
- GPIO17 (11) (12) GPIO18    <- Relay (GPIO17)
+ GPIO17 (11) (12) GPIO18    <- Relay (GPIO18)
  GPIO27 (13) (14) GND
  GPIO22 (15) (16) GPIO23    <- DATA1 (GPIO23)
     3V3 (17) (18) GPIO24    <- DATA0 (GPIO24)

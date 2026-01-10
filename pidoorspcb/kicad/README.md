@@ -1,30 +1,34 @@
 # PiDoors HAT KiCad Project
 
-KiCad 7/8 project files for the PiDoors Access Control HAT.
+KiCad 8 project files for the PiDoors Access Control HAT.
 
 ## Project Files
 
-| File | Description |
-|------|-------------|
-| `pidoors-hat.kicad_pro` | KiCad project file |
-| `pidoors-hat.kicad_sch` | Schematic (placeholder - needs symbols) |
-| `pidoors-hat.kicad_pcb` | PCB layout with board outline and mounting holes |
-| `pidoors-hat.net` | Complete netlist with all components and connections |
+| File | Description | Status |
+|------|-------------|--------|
+| `pidoors-hat.kicad_pro` | KiCad project file | Complete |
+| `pidoors-hat.kicad_sch` | Schematic with all components | Complete |
+| `pidoors-hat.kicad_pcb` | PCB layout (needs routing) | Outline Only |
+| `pidoors-hat.net` | Complete netlist | Complete |
+| `pidoors-hat-bom.csv` | Bill of Materials with LCSC parts | Complete |
+| `pidoors-hat-cpl.csv` | Component Placement List | Complete |
 
 ## Current Status
 
 This project provides:
-- Complete netlist with 50+ components and all connections
+- **Complete schematic** with all 50+ components placed
+- **Complete netlist** with all connections defined
 - Pi HAT board outline (65mm x 56.5mm)
 - Mounting hole positions (M2.5)
-- Net definitions for all signals
+- BOM with LCSC part numbers for JLCPCB assembly
 
-**To complete the design, you need to:**
-1. Import the netlist into KiCad or use it as reference
-2. Add component footprints
-3. Place components
-4. Route traces (or use auto-router)
-5. Generate Gerber files
+**To complete the design for manufacturing:**
+1. Open in KiCad 8: `kicad pidoors-hat.kicad_pro`
+2. Update PCB from Schematic (Tools menu)
+3. Place component footprints per the placement guide
+4. Route traces
+5. Run DRC (Design Rule Check)
+6. Generate Gerber files
 
 ## Quick Start - Complete the Design
 

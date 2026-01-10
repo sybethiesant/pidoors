@@ -1,0 +1,50 @@
+G04 PiDoors HAT v2.0 - Bottom Silkscreen*
+G04 Generated: 2026-01-10*
+G04 Board Size: 65mm x 56.5mm*
+%FSLAX46Y46*%
+%MOIN*%
+%TF.GenerationSoftware,PiDoors,PCBGenerator,2.0*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Legend,Bot*%
+%TF.FilePolarity,Positive*%
+G04 Aperture Definitions*
+%ADD10C,0.005*%
+%ADD11C,0.006*%
+G04*
+G04 Project URL Text*
+D11*
+G04 "github.com/pidoors" at (32.5mm, 54mm) - mirrored*
+X1279528Y2125984D02*
+X1279528Y2125984D01*
+G04*
+G04 Version and Date*
+G04 "v2.0 2026-01" at (32.5mm, 52mm) - mirrored*
+X1279528Y2047244D02*
+X1279528Y2047244D01*
+G04*
+G04 Pi HAT Designation*
+G04 "Raspberry Pi HAT" at center bottom - mirrored*
+X1279528Y1968504D02*
+X1279528Y1968504D01*
+G04*
+G04 Mounting Hole Labels (mirrored)*
+D10*
+X137795Y177165D02*
+X137795Y177165D01*
+G04 H1*
+X2421260Y177165D02*
+X2421260Y177165D01*
+G04 H2*
+X137795Y2007874D02*
+X137795Y2007874D01*
+G04 H3*
+X2421260Y2007874D02*
+X2421260Y2007874D01*
+G04 H4*
+G04*
+G04 GND Plane Indicator*
+G04 "GND" text in center of ground plane*
+X1279528Y1181102D02*
+X1279528Y1181102D01*
+G04*
+M02*
