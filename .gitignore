@@ -17,6 +17,12 @@ pidoors/__pycache__/
 *.pyc
 *.pyo
 
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
 # Log files
 *.log
 
