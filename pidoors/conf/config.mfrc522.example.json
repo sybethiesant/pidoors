@@ -1,0 +1,35 @@
+{
+    "_comment": "MFRC522 NFC Reader Configuration Example",
+    "_doc": "Low-cost MFRC522 NFC/RFID reader via SPI. Supports Mifare Classic cards.",
+    "_note": "Requires SPI enabled: sudo raspi-config -> Interface Options -> SPI -> Enable",
+
+    "rfid_door": {
+        "reader_type": "nfc_mfrc522",
+
+        "_mfrc522_spi": "--- SPI Configuration ---",
+        "spi_bus": 0,
+        "spi_device": 0,
+        "spi_speed": 1000000,
+        "reset_pin": 25,
+
+        "_reader_settings": "--- Reader Behavior ---",
+        "poll_interval": 0.2,
+        "debounce_time": 2.0,
+        "antenna_gain": 4,
+
+        "_door_settings": "--- Door Control ---",
+        "latch_gpio": 18,
+        "unlock_value": 1,
+        "open_delay": 5,
+
+        "_optional_gpio": "--- Optional GPIO (set to null to disable) ---",
+        "door_sensor_gpio": null,
+        "rex_gpio": null,
+
+        "_database": "--- Database Connection ---",
+        "sqladdr": "192.168.1.100",
+        "sqluser": "pidoors",
+        "sqlpass": "YOUR_DATABASE_PASSWORD",
+        "sqldb": "access"
+    }
+}

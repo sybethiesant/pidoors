@@ -1,0 +1,33 @@
+{
+    "_comment": "Custom Wiegand Format Definitions",
+    "_doc": "Define custom Wiegand formats beyond the standard 26/32/34/35/36/37/48-bit",
+
+    "formats": [
+        {
+            "_example": "Custom 40-bit format",
+            "bit_length": 40,
+            "name": "Custom 40-bit",
+            "facility_start": 1,
+            "facility_end": 16,
+            "user_id_start": 17,
+            "user_id_end": 38,
+            "parity_even_bits": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+            "parity_odd_bits": [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38],
+            "parity_even_pos": 0,
+            "parity_odd_pos": 39,
+            "has_parity": true,
+            "description": "Custom 40-bit format with 16-bit facility and 22-bit user ID"
+        },
+        {
+            "_example": "Raw 32-bit no parity",
+            "bit_length": 32,
+            "name": "Raw 32-bit",
+            "facility_start": 0,
+            "facility_end": 7,
+            "user_id_start": 8,
+            "user_id_end": 31,
+            "has_parity": false,
+            "description": "Raw 32-bit format without parity. 8-bit facility, 24-bit user ID"
+        }
+    ]
+}

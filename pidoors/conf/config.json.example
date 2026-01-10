@@ -1,10 +1,19 @@
 {
-    "connex1": {
-        "unlock_value": 1,
-        "open_delay": 3,
-        "latch_gpio": 18,
+    "_comment": "PiDoors Door Controller Configuration",
+    "_doc": "See config.*.example.json files for reader-specific examples",
+    "_reader_types": "wiegand, osdp, nfc_pn532, nfc_mfrc522",
+
+    "front_door": {
+        "reader_type": "wiegand",
+
         "d0": 24,
         "d1": 23,
+        "wiegand_format": "auto",
+
+        "latch_gpio": 18,
+        "unlock_value": 1,
+        "open_delay": 5,
+
         "sqladdr": "YOUR_SERVER_IP",
         "sqluser": "pidoors",
         "sqlpass": "YOUR_DATABASE_PASSWORD",
