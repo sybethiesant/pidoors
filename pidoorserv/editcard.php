@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $firstname = sanitize_string($_POST['firstname'] ?? '');
         $lastname = sanitize_string($_POST['lastname'] ?? '');
         $selected_doors = $_POST['doors'] ?? [];
-        $doors_str = implode(' ', array_map('sanitize_string', $selected_doors));
+        $doors_str = implode(',', array_map('sanitize_string', $selected_doors));
         $schedule_id = validate_int($_POST['schedule_id'] ?? 0) ?: null;
         $group_id = validate_int($_POST['group_id'] ?? 0) ?: null;
         $valid_from = $_POST['valid_from'] ?? null;
@@ -79,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$card_doors = array_filter(explode(' ', $card['doors']));
+$card_doors = array_filter(array_map('trim', explode(',', $card['doors'])));
 ?>
 
 <div class="row justify-content-center">

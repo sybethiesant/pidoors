@@ -33,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $user_id = sanitize_string($_POST['user_id'] ?? '');
         $facility = sanitize_string($_POST['facility'] ?? '');
         $selected_doors = $_POST['doors'] ?? [];
-        $doors_str = implode(' ', array_map('sanitize_string', $selected_doors));
+        $doors_str = implode(',', array_map('sanitize_string', $selected_doors));
         $schedule_id = validate_int($_POST['schedule_id'] ?? 0) ?: null;
         $group_id = validate_int($_POST['group_id'] ?? 0) ?: null;
         $valid_from = $_POST['valid_from'] ?? null;
