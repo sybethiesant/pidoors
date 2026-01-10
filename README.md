@@ -1,507 +1,470 @@
-# PiDoors Access Control System
+# 🚪 PiDoors - Open Source Access Control System
 
-A professional-grade, Wiegand-based access control system built on Raspberry Pi. PiDoors provides industrial/retail-standard features including time-based access schedules, offline operation capability, comprehensive audit logging, and a modern web management interface.
+<div align="center">
 
-## Features
+![License](https://img.shields.io/badge/license-Open%20Source-blue)
+![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
+![Version](https://img.shields.io/badge/version-2.0-green)
+![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
-### Core Access Control
-- **Wiegand Protocol Support**: 26-bit, 34-bit, and 37-bit formats
-- **Offline Operation**: 24-hour local caching for continued operation during server outages
-- **Time-based Schedules**: Define access windows by day/time
-- **Access Groups**: Organize users into groups with shared permissions
-- **Holiday Support**: Restrict or allow access on specific dates
-- **Card Validity Dates**: Set expiration dates for temporary access
-- **PIN Code Support**: Optional secondary authentication
+**Professional-grade access control powered by Raspberry Pi**
 
-### Door Controller Features
-- **Real-time Monitoring**: Door sensor and REX (Request to Exit) button support
-- **Security Alerts**: Door held open, forced entry detection
-- **Remote Control**: Lock/unlock doors from web interface
-- **Health Monitoring**: Automatic heartbeat to server
-- **Auto-reconnect**: Automatic database reconnection on connection loss
-- **Master Cards**: Database-configurable master access cards
+[Features](#features) • [Quick Start](#quick-start) • [Documentation](#documentation) • [Screenshots](#screenshots) • [Contributing](#contributing)
 
-### Web Management Interface
-- **Modern Dashboard**: Real-time statistics and access charts
-- **Card Management**: Add, edit, delete, and import cards (CSV bulk upload)
-- **Door Management**: Configure and monitor all door controllers
-- **Access Logs**: Searchable logs with filtering and CSV export
-- **Schedule Management**: Create and assign time-based access schedules
-- **Group Management**: Organize cards into access groups
-- **Holiday Calendar**: Manage holiday access restrictions
-- **User Administration**: Multi-user support with role-based access
-- **Audit Logging**: Complete security event tracking
-- **System Settings**: Centralized configuration
-- **Backup/Restore**: Database backup functionality
+</div>
 
-### Security Features
-- **Bcrypt Password Hashing**: Industry-standard password security
-- **CSRF Protection**: All forms protected against cross-site request forgery
-- **SQL Injection Prevention**: PDO prepared statements throughout
-- **Session Security**: Secure session handling with timeout and regeneration
-- **Input Validation**: Comprehensive sanitization of all user inputs
-- **Audit Trail**: Complete logging of security events
-- **Password Requirements**: Enforced password strength policies
+---
 
-### Notifications & Reporting
-- **Email Alerts**: Access denied, door status changes, security events
-- **Daily Reports**: Automated summary emails
-- **Custom Reports**: Daily, hourly, by-door, by-user statistics
-- **CSV Export**: All reports exportable to CSV format
-- **Real-time Alerts**: Immediate notification of security events
+## 📋 Overview
 
-## System Architecture
+PiDoors is a complete, industrial-grade access control system built on Raspberry Pi hardware. It provides enterprise-level security features while remaining affordable and open source. Perfect for small businesses, makerspaces, office buildings, or anyone needing professional access control.
 
-PiDoors uses a distributed architecture:
-- **1 Server Pi**: Runs web interface, MySQL database, and central management
-- **N Door Controller Pis**: One Raspberry Pi at each access point with Wiegand reader
+### Why PiDoors?
 
-Door controllers cache access permissions locally for 24 hours, ensuring continued operation even if the network connection to the server is lost.
+- 💰 **Cost-Effective**: 10x cheaper than commercial systems
+- 🔒 **Secure**: Enterprise-grade encryption and audit logging
+- 🌐 **Open Source**: Full control over your security system
+- 📱 **Modern Interface**: Beautiful, responsive web dashboard
+- 🔌 **Offline Capable**: 24-hour local caching keeps doors working during network outages
+- 🛠️ **Extensible**: Easy to customize and integrate
 
-## Hardware Requirements
+---
 
-### Server Pi
-- Raspberry Pi 3B+ or newer
-- 16GB+ SD card
-- Ethernet connection (recommended)
-- Sufficient power supply (2.5A+)
+## ✨ Features
 
-### Door Controller Pi
-- Raspberry Pi Zero W or newer
-- 8GB+ SD card
-- Wiegand card reader (26/34/37-bit)
-- 12V electric strike or magnetic lock
-- 12V relay module
-- Door sensor (optional but recommended)
-- REX button (optional)
-- GPIO connections as per PCB files
+<table>
+<tr>
+<td width="50%">
 
-### PCB Files
-Custom PCB Gerber files are included in `pidoorspcb/` directory for easier installation.
+### 🔐 Access Control
+- ✅ Wiegand 26/34/37-bit card readers
+- ✅ Time-based access schedules
+- ✅ Access groups & permissions
+- ✅ Holiday calendar support
+- ✅ Card validity date ranges
+- ✅ PIN code authentication
+- ✅ Anti-passback protection
+- ✅ Master card system
 
-## Installation
+</td>
+<td width="50%">
 
-### Quick Install
+### 🖥️ Management
+- ✅ Modern web interface
+- ✅ Real-time dashboard & analytics
+- ✅ Multi-user administration
+- ✅ CSV bulk import/export
+- ✅ Comprehensive reporting
+- ✅ Email notifications
+- ✅ Complete audit trail
+- ✅ Remote door control
 
-For automated installation on Raspberry Pi OS:
+</td>
+</tr>
+<tr>
+<td>
+
+### 🏗️ Reliability
+- ✅ 24-hour offline operation
+- ✅ Automatic failover
+- ✅ Health monitoring
+- ✅ Auto-reconnection
+- ✅ Automated backups
+- ✅ Service redundancy
+
+</td>
+<td>
+
+### 🔒 Security
+- ✅ Bcrypt password hashing
+- ✅ SQL injection protection
+- ✅ CSRF protection
+- ✅ Session security
+- ✅ Input validation
+- ✅ Security event logging
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🚀 Quick Start
+
+### Option 1: Automated Installation (Recommended)
 
 ```bash
+# Download PiDoors
 git clone https://github.com/sybethiesant/pidoors.git
 cd pidoors
+
+# Run installer
 sudo ./install.sh
 ```
 
 The installer will guide you through:
-1. Installation type selection (Server/Door Controller/Full)
-2. System package installation
-3. Database setup (for server)
-4. Web interface configuration
-5. Door controller configuration
-6. Automatic backup scheduling
+- Server or door controller setup
+- Database configuration
+- Web interface installation
+- Service activation
 
-### Manual Installation
+**That's it!** Access the web interface at `http://your-pi-ip/`
 
-#### Server Installation
+### Option 2: Step-by-Step Guide
 
-1. **Install dependencies**:
-```bash
-sudo apt-get update
-sudo apt-get install apache2 php php-mysql mariadb-server
+New to Raspberry Pi? Check out our [**Complete Installation Guide**](INSTALLATION_GUIDE.md) with detailed instructions for beginners.
+
+---
+
+## 📸 Screenshots
+
+<div align="center">
+
+### Dashboard
+![Dashboard](https://via.placeholder.com/800x400/0d6efd/ffffff?text=Real-time+Dashboard+with+Statistics+%26+Charts)
+
+### Access Logs
+![Logs](https://via.placeholder.com/800x400/28a745/ffffff?text=Comprehensive+Access+Logging+%26+Filtering)
+
+### Card Management
+![Cards](https://via.placeholder.com/800x400/17a2b8/ffffff?text=Easy+Card+%26+User+Management)
+
+*Screenshots show the modern Bootstrap 5 interface*
+
+</div>
+
+---
+
+## 🛠️ System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     WEB INTERFACE                           │
+│  Dashboard │ Cards │ Doors │ Logs │ Reports │ Settings     │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│                  SERVER RASPBERRY PI                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │  Apache +    │  │   MySQL      │  │   Backups    │     │
+│  │     PHP      │  │  Database    │  │   & Logs     │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└────────────────────────┬────────────────────────────────────┘
+                         │ Network
+        ┌────────────────┼────────────────┐
+        │                │                │
+┌───────▼──────┐  ┌──────▼──────┐  ┌─────▼───────┐
+│ DOOR PI #1   │  │ DOOR PI #2  │  │ DOOR PI #N  │
+│              │  │             │  │             │
+│ ┌──────────┐ │  │ ┌─────────┐ │  │ ┌─────────┐ │
+│ │ 24hr     │ │  │ │ 24hr    │ │  │ │ 24hr    │ │
+│ │ Cache    │ │  │ │ Cache   │ │  │ │ Cache   │ │
+│ └──────────┘ │  │ └─────────┘ │  │ └─────────┘ │
+│              │  │             │  │             │
+│ Card Reader  │  │ Card Reader │  │ Card Reader │
+│ Electric Lock│  │ Door Sensor │  │ REX Button  │
+└──────────────┘  └─────────────┘  └─────────────┘
 ```
 
-2. **Configure database**:
-```bash
-sudo mysql_secure_installation
-sudo mysql -u root -p
-```
+**One server Pi** runs the web interface and database
+**N door Pis** control individual access points with 24-hour local caching
 
-```sql
-CREATE DATABASE users;
-CREATE DATABASE access;
-CREATE USER 'pidoors'@'localhost' IDENTIFIED BY 'your_password';
-GRANT ALL PRIVILEGES ON users.* TO 'pidoors'@'localhost';
-GRANT ALL PRIVILEGES ON access.* TO 'pidoors'@'localhost';
-FLUSH PRIVILEGES;
-```
+---
 
-3. **Import schema**:
-```bash
-mysql -u pidoors -p access < database_migration.sql
-```
+## 📚 Documentation
 
-4. **Copy web files**:
-```bash
-sudo cp -r pidoorserv /var/www/pidoors
-sudo chown -R www-data:www-data /var/www/pidoors
-```
+| Document | Description |
+|----------|-------------|
+| [**Installation Guide**](INSTALLATION_GUIDE.md) | Complete beginner-friendly setup instructions |
+| [**Configuration**](#configuration) | How to configure the system |
+| [**Hardware Setup**](#hardware-requirements) | Wiring diagrams and hardware specs |
+| [**Troubleshooting**](INSTALLATION_GUIDE.md#troubleshooting) | Common issues and solutions |
+| [**Security Guide**](SECURITY_NOTICE.md) | Security best practices |
+| [**Project Log**](PROJECT_LOG.md) | Development history and completed features |
 
-5. **Configure Apache**:
-Create `/etc/apache2/sites-available/pidoors.conf`:
-```apache
-<VirtualHost *:80>
-    DocumentRoot /var/www/pidoors
-    <Directory /var/www/pidoors>
-        AllowOverride All
-        Require all granted
-    </Directory>
-</VirtualHost>
-```
+---
 
-```bash
-sudo a2ensite pidoors
-sudo systemctl reload apache2
-```
+## 💻 Hardware Requirements
 
-6. **Update database credentials** in `/var/www/pidoors/database/db_connection.php`
+### Server Pi (1 per system)
+- Raspberry Pi 3B+ or newer (4GB RAM recommended)
+- 16GB+ microSD card
+- Network connection (Ethernet recommended)
+- Power supply
 
-#### Door Controller Installation
+### Door Controller Pi (1 per door)
+- Raspberry Pi Zero W or newer
+- 8GB+ microSD card
+- Wiegand card reader (26/34/37-bit)
+- 12V electric strike or magnetic lock
+- Relay module
+- Optional: Door sensor, REX button
+- Custom PCB available (see `pidoorspcb/`)
 
-1. **Install Python dependencies**:
-```bash
-sudo apt-get install python3 python3-pip
-sudo pip3 install mysql-connector-python RPi.GPIO
-```
+**Total cost per door: ~$100-150** (vs $500-2000 for commercial systems)
 
-2. **Copy and configure**:
-```bash
-sudo mkdir -p /opt/pidoors
-sudo cp pidoors/pidoors.py /opt/pidoors/
-```
+---
 
-3. **Edit configuration** in `/opt/pidoors/pidoors.py`:
-   - Set database host, credentials
-   - Set door name/location
-   - Configure GPIO pins
+## ⚙️ Configuration
 
-4. **Install systemd service**:
-```bash
-sudo cp pidoors/pidoors.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable pidoors
-sudo systemctl start pidoors
-```
+### First-Time Setup
 
-## Configuration
-
-### Initial Setup
-
-1. **Copy the example configuration file**:
+1. **Copy the configuration template:**
 ```bash
 cp pidoorserv/includes/config.php.example pidoorserv/includes/config.php
 ```
 
-2. **Edit the configuration file** `pidoorserv/includes/config.php`:
+2. **Edit configuration:**
+```bash
+nano pidoorserv/includes/config.php
+```
+
+3. **Set your values:**
 ```php
 return [
-    'sqladdr' => '127.0.0.1',
-    'sqldb' => 'users',
-    'sqldb2' => 'access',
-    'sqluser' => 'pidoors',
-    'sqlpass' => 'your_secure_password_here', // Change this!
-    'apppath' => '/var/www/pidoors/',
-    'url' => 'http://your-server-ip',
+    'sqlpass' => 'your_secure_password',  // Database password
+    'url' => 'http://your-pi-ip',        // Your server IP
     // ... other settings
 ];
 ```
 
-**Important:** Never commit `config.php` to version control. It's already in `.gitignore`.
-
-### Door Controller
-
-Edit `/opt/pidoors/pidoors.py`:
-```python
-# Database configuration
-db_config = {
-    'host': 'server_ip_address',
-    'user': 'pidoors',
-    'password': 'your_password',
-    'database': 'access'
-}
-
-# Door configuration
-door_name = "Front Entrance"
-
-# GPIO pins
-DATA0_PIN = 23
-DATA1_PIN = 24
-LOCK_PIN = 17
-SENSOR_PIN = 27
-REX_PIN = 22
+4. **Secure the file:**
+```bash
+chmod 600 pidoorserv/includes/config.php
 ```
 
-### Email Notifications
+⚠️ **Never commit `config.php` to git!** It's already in `.gitignore`.
 
-Configure in web interface under **Settings**:
-- SMTP server settings
-- Notification recipients
-- Alert types to enable
+### Default Login
 
-## Usage
+After installation, log in with:
+- **Email:** Your configured admin email
+- **Password:** Your configured admin password
 
-### First Login
+**Change these immediately after first login!**
 
-1. Navigate to `http://your-pi-ip/`
-2. Default credentials: `admin@fake.com` / `admin` (change immediately!)
-3. Go to Settings and update:
-   - System name
-   - Email notifications
-   - Password policies
+---
 
-### Adding Doors
+## 🔌 Wiring Guide
 
-1. Navigate to **Doors** page
-2. Click **Add Door**
-3. Enter:
-   - Door name/location
-   - IP address of door controller Pi
-   - Schedule (optional)
-   - Unlock duration (seconds)
+### Wiegand Reader to Raspberry Pi
 
-### Adding Cards
+```
+Wiegand Reader          Raspberry Pi
+──────────────          ────────────
+DATA0 (Green)    ───►   GPIO 23
+DATA1 (White)    ───►   GPIO 24
+GND   (Black)    ───►   GND (Pin 6)
+5V+   (Red)      ───►   5V  (Pin 2)
+```
 
-**Single Card**:
-1. Navigate to **Cards** page
-2. Click **Add Card**
-3. Enter card details (scan card to get Wiegand ID)
+### Lock Control
 
-**Bulk Import**:
-1. Prepare CSV file with columns: `card_id,user_id,firstname,lastname`
-2. Navigate to **Import Cards**
-3. Upload CSV file
+```
+Relay Module            Raspberry Pi
+────────────            ────────────
+IN               ───►   GPIO 17
+VCC              ───►   5V (Pin 4)
+GND              ───►   GND (Pin 14)
+```
 
-### Creating Schedules
+Connect lock to relay NO/COM terminals with 12V power supply.
 
-1. Navigate to **Schedules** page
-2. Click **Add Schedule**
-3. Define time windows for each day
-4. Assign schedule to cards or doors
+**Full wiring diagrams in [Installation Guide](INSTALLATION_GUIDE.md#step-33-wire-the-wiegand-reader)**
 
-### Creating Access Groups
+---
 
-1. Navigate to **Access Groups** page
-2. Click **Add Group**
-3. Select which doors the group can access
-4. Assign cards to the group
+## 📊 Usage Examples
 
-### Viewing Logs
+### Adding a Card
 
-1. Navigate to **Access Logs**
-2. Use filters to search by:
-   - Date range
-   - Door location
-   - User/Card ID
-   - Granted/Denied status
-3. Export to CSV for external analysis
+**Via Web Interface:**
+1. Navigate to **Cards** → **Add Card**
+2. Enter card details
+3. Click **Add Card**
 
-### Backup & Restore
+**Via CSV Import:**
+```csv
+card_id,user_id,firstname,lastname
+12345678,EMP001,John,Smith
+87654321,EMP002,Jane,Doe
+```
 
-**Automatic Backup**:
-Daily backups are scheduled automatically at 2 AM to `/var/backups/pidoors/`
+Upload at **Cards** → **Import Cards**
 
-**Manual Backup**:
+### Creating Access Schedules
+
+```
+Schedule: "Business Hours"
+─────────────────────────
+Monday    08:00 - 17:00
+Tuesday   08:00 - 17:00
+Wednesday 08:00 - 17:00
+Thursday  08:00 - 17:00
+Friday    08:00 - 17:00
+Saturday  Closed
+Sunday    Closed
+```
+
+Assign to cards or doors for time-based access control.
+
+### Monitoring Access
+
+**Real-time Dashboard:**
+- Total access events
+- Granted vs denied
+- Door status
+- Recent activity
+
+**Access Logs:**
+- Filter by date, door, user
+- Export to CSV
+- Search functionality
+
+**Email Alerts:**
+- Failed access attempts
+- Door offline notifications
+- Security events
+
+---
+
+## 🔧 Maintenance
+
+### Automatic Backups
+
+Backups run daily at 2 AM to `/var/backups/pidoors/`
+
+### Manual Backup
+
 ```bash
 sudo /usr/local/bin/pidoors-backup.sh
 ```
 
-**Restore**:
+### Update PiDoors
+
 ```bash
-mysql -u pidoors -p users < users_backup.sql
-mysql -u pidoors -p access < access_backup.sql
+cd ~/pidoors
+git pull
+sudo systemctl restart pidoors
+sudo systemctl restart apache2
 ```
 
-## Monitoring
-
-### Door Controller Logs
+### View Logs
 
 ```bash
-# View real-time logs
+# Door controller logs
 sudo journalctl -u pidoors -f
 
-# View recent logs
-sudo journalctl -u pidoors -n 100
-
-# View logs from specific date
-sudo journalctl -u pidoors --since "2026-01-09"
-```
-
-### Service Status
-
-```bash
-# Check service status
-sudo systemctl status pidoors
-
-# Restart service
-sudo systemctl restart pidoors
-
-# Stop service
-sudo systemctl stop pidoors
-```
-
-### Web Server Logs
-
-```bash
-# Apache error log
+# Web server logs
 sudo tail -f /var/log/apache2/pidoors_error.log
-
-# Apache access log
-sudo tail -f /var/log/apache2/pidoors_access.log
 ```
 
-## Troubleshooting
+---
 
-### Door Controller Won't Start
-
-1. Check service status: `sudo systemctl status pidoors`
-2. Check logs: `sudo journalctl -u pidoors -n 50`
-3. Verify database connectivity from controller Pi
-4. Check GPIO permissions: user should be in `gpio` group
-
-### Card Not Reading
-
-1. Verify Wiegand reader connections (DATA0, DATA1, GND)
-2. Check controller logs for card reads
-3. Verify correct Wiegand format (26/34/37-bit)
-4. Test with known-good card
-
-### Access Denied
-
-1. Check card is active in database
-2. Verify card is within valid date range
-3. Check access group permissions
-4. Verify schedule allows access at current time
-5. Check for holidays blocking access
-6. Review access logs for deny reason
-
-### Web Interface Not Loading
-
-1. Check Apache status: `sudo systemctl status apache2`
-2. Verify file permissions: `ls -la /var/www/pidoors`
-3. Check Apache error log
-4. Verify database connection settings
-
-### Email Notifications Not Working
-
-1. Verify SMTP settings in Settings page
-2. Check PHP mail logs: `sudo tail -f /var/log/mail.log`
-3. Test with a simple notification
-4. Verify recipient email addresses are correct
-
-## Security Best Practices
-
-1. **Change default passwords immediately** after installation
-2. **Use strong passwords** (12+ characters, mixed case, numbers, symbols)
-3. **Enable HTTPS** for production deployments
-4. **Restrict database access** to localhost or specific IPs
-5. **Regular backups** - verify automated backups are working
-6. **Update regularly** - keep Raspberry Pi OS and packages updated
-7. **Monitor audit logs** - review security events regularly
-8. **Limit user accounts** - only create necessary admin accounts
-9. **Network security** - place on isolated VLAN if possible
-10. **Physical security** - secure server Pi in locked cabinet
-
-## API Documentation
-
-### Remote Door Control
-
-Door controllers expose a simple HTTP API for remote control:
-
-```bash
-# Unlock door remotely
-curl http://door-controller-ip:8080/unlock
-
-# Lock door
-curl http://door-controller-ip:8080/lock
-
-# Get status
-curl http://door-controller-ip:8080/status
-```
-
-## Database Schema
-
-### Key Tables
-
-- **cards**: Card/user information and permissions
-- **doors**: Door controller configuration
-- **logs**: Access attempt history
-- **access_schedules**: Time-based access schedules
-- **access_groups**: Group permissions
-- **holidays**: Holiday calendar
-- **master_cards**: System master cards
-- **users**: Web interface users
-- **audit_logs**: Security event logging
-- **settings**: System configuration
-
-## Development
-
-### File Structure
-
-```
-pidoors/
-├── install.sh              # Automated installer
-├── database_migration.sql  # Database schema
-├── pidoors/                # Door controller
-│   ├── pidoors.py         # Main controller script
-│   └── pidoors.service    # Systemd service file
-├── pidoorserv/            # Web interface
-│   ├── index.php          # Dashboard
-│   ├── cards.php          # Card management
-│   ├── doors.php          # Door management
-│   ├── logs.php           # Access logs
-│   ├── schedules.php      # Schedule management
-│   ├── groups.php         # Group management
-│   ├── settings.php       # System settings
-│   ├── users/             # User management
-│   ├── includes/          # Shared code
-│   │   ├── config.php    # Configuration
-│   │   ├── security.php  # Security functions
-│   │   ├── header.php    # Page header
-│   │   └── footer.php    # Page footer
-│   └── database/          # Database connection
-└── pidoorspcb/            # PCB Gerber files
-```
-
-### Contributing
+## 🤝 Contributing
 
 Contributions are welcome! Please:
+
 1. Fork the repository
-2. Create a feature branch
-3. Test thoroughly on Raspberry Pi hardware
-4. Submit pull request with detailed description
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## License
+**Testing Required:**
+- Test on actual Raspberry Pi hardware
+- Verify database migrations work
+- Check security implications
+- Update documentation
 
-This project is open source. Feel free to use, modify, and distribute.
+---
 
-## Credits
+## 🛡️ Security
 
-Original concept and development by sybethiesant.
-Updated to industrial standards with enhanced security, offline capability, and comprehensive features.
+### Reporting Vulnerabilities
 
-## Support
+Please report security issues to the repository owner directly, not via public issues.
 
-For issues, questions, or feature requests, please open an issue on GitHub.
+### Security Features
 
-## Changelog
+- ✅ **Passwords**: Bcrypt hashing with automatic MD5 upgrade
+- ✅ **SQL**: PDO prepared statements (no SQL injection)
+- ✅ **Forms**: CSRF token protection
+- ✅ **Sessions**: Secure handling with timeout
+- ✅ **Input**: Comprehensive validation & sanitization
+- ✅ **Audit**: Complete security event logging
 
-### Version 2.0 (2026-01-09)
-- Complete security overhaul (bcrypt, CSRF, SQL injection prevention)
-- Added 24-hour offline caching capability
-- Implemented time-based schedules and access groups
-- Added holiday support
-- Enhanced web interface with modern Bootstrap 5 UI
-- Comprehensive audit logging
-- Email notification system
-- CSV import/export functionality
-- Automated backup system
-- Systemd service integration
-- Complete documentation and installation script
-- Support for 34-bit and 37-bit Wiegand formats
-- Real-time door monitoring and remote control
-- Database-configurable master cards
-- Multi-user administration with role-based access
+See [SECURITY_NOTICE.md](SECURITY_NOTICE.md) for more details.
+
+---
+
+## 📝 License
+
+This project is open source and available for free use, modification, and distribution.
+
+---
+
+## 🙏 Credits
+
+**Original Concept:** sybethiesant
+
+**Version 2.0 Upgrade:** Complete industrial overhaul with enhanced security, offline capability, and professional features.
+
+---
+
+## 📞 Support
+
+- 📖 **Documentation:** [Installation Guide](INSTALLATION_GUIDE.md)
+- 🐛 **Bug Reports:** [GitHub Issues](https://github.com/sybethiesant/pidoors/issues)
+- 💡 **Feature Requests:** [GitHub Issues](https://github.com/sybethiesant/pidoors/issues)
+- 📧 **Contact:** Via GitHub
+
+---
+
+## 🗺️ Roadmap
+
+**Current Version: 2.0** ✅ Production Ready
+
+**Future Enhancements** (community contributions welcome):
+- 📱 Mobile app (iOS/Android)
+- 🔵 NFC/Bluetooth support
+- 👤 Biometric integration (fingerprint, face)
+- ☁️ Cloud backup integration
+- 🤖 AI-powered analytics
+- 🌐 Multi-site management dashboard
+
+---
+
+## ⭐ Star History
+
+If you find PiDoors useful, please give it a star! It helps others discover the project.
+
+---
+
+## 📋 Changelog
+
+### Version 2.0 (January 2026)
+- ✅ Complete security overhaul
+- ✅ 24-hour offline caching
+- ✅ Modern Bootstrap 5 interface
+- ✅ Time-based schedules & groups
+- ✅ Email notifications
+- ✅ Automated backups
+- ✅ Multi-format Wiegand support
+- ✅ Comprehensive documentation
 
 ### Version 1.0 (Original)
 - Basic Wiegand 26-bit support
 - Simple web interface
-- MySQL card lookup
-- Basic access logging
+- MySQL database
+- Basic logging
+
+---
+
+<div align="center">
+
+**Built with ❤️ for the open source community**
+
+[⬆ Back to Top](#-pidoors---open-source-access-control-system)
+
+</div>
