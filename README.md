@@ -68,28 +68,141 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 
 ## Quick Start
 
+### Prerequisites
+
+- Raspberry Pi 3B+ or newer (Pi 4 recommended for server)
+- Raspberry Pi OS (Debian-based, 64-bit recommended)
+- Internet connection for initial setup
+- For door controllers: card reader hardware and relay module
+
 ### Automated Installation (Recommended)
 
 ```bash
 # Download PiDoors
-git clone https://github.com/yourusername/pidoors.git
+git clone https://github.com/sybethiesant/pidoors.git
 cd pidoors
 
-# Run installer
+# Run installer as root
 sudo ./install.sh
 ```
 
-The installer will guide you through:
-- Server or door controller setup
-- Database configuration
-- Web interface installation
-- Service activation
+The installer presents three installation modes:
 
-Access the web interface at `http://your-pi-ip/`
+| Mode | Use Case |
+|------|----------|
+| **1) Server** | Web interface + MariaDB database (run on your central Pi) |
+| **2) Door Controller** | GPIO + card reader daemon (run on each door Pi) |
+| **3) Full** | Both server and controller on one Pi (small deployments) |
+
+#### What the installer does
+
+1. Updates system packages
+2. Installs dependencies (Nginx, PHP-FPM, MariaDB, Python libraries)
+3. Creates the `users` and `access` databases with all required tables
+4. Imports the full database schema (base tables + migration extensions)
+5. Deploys the web interface to `/var/www/pidoors/`
+6. Configures Nginx with security headers
+7. Prompts you to create an admin account (email + password)
+8. Sets up log rotation and backup scripts
+
+#### After installation
+
+1. Open `http://your-pi-ip/` in a browser
+2. Log in with the admin email and password you set during install
+3. Navigate to **Doors** to register your door controllers
+4. Navigate to **Cards** to add access cards
+5. Set up **Schedules** and **Access Groups** as needed
 
 ### Manual Installation
 
-See the [Installation Guide](INSTALLATION_GUIDE.md) for detailed step-by-step instructions.
+If you prefer to install manually or need to troubleshoot:
+
+#### 1. Install system packages
+```bash
+sudo apt-get update && sudo apt-get install -y \
+  nginx php-fpm php-mysql php-cli php-mbstring mariadb-server \
+  python3 python3-pip git
+```
+
+#### 2. Create databases
+```bash
+sudo mysql_secure_installation
+
+sudo mysql -u root -p <<'SQL'
+CREATE DATABASE IF NOT EXISTS users;
+CREATE DATABASE IF NOT EXISTS access;
+CREATE USER IF NOT EXISTS 'pidoors'@'localhost' IDENTIFIED BY 'YOUR_PASSWORD';
+GRANT ALL PRIVILEGES ON users.* TO 'pidoors'@'localhost';
+GRANT ALL PRIVILEGES ON access.* TO 'pidoors'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+```
+
+#### 3. Import schemas
+```bash
+# Import the access database schema (creates all tables including base tables)
+sudo mysql -u root -p access < database_migration.sql
+
+# Create the users table (in the users database)
+sudo mysql -u root -p users <<'SQL'
+CREATE TABLE IF NOT EXISTS `users` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_name` varchar(100) NOT NULL,
+  `user_email` varchar(255) NOT NULL,
+  `user_pass` varchar(255) NOT NULL,
+  `admin` tinyint(1) NOT NULL DEFAULT 0,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `last_login` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `user_email` (`user_email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `audit_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `event_type` varchar(50) NOT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  `details` text,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `event_type` (`event_type`),
+  KEY `user_id` (`user_id`),
+  KEY `created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+SQL
+```
+
+#### 4. Create your admin user
+```bash
+# Generate a bcrypt hash for your password
+HASH=$(php -r "echo password_hash('YOUR_PASSWORD', PASSWORD_BCRYPT);")
+
+sudo mysql -u root -p users -e \
+  "INSERT INTO users (user_name, user_email, user_pass, admin, active) \
+   VALUES ('Admin', 'admin@example.com', '$HASH', 1, 1);"
+```
+
+#### 5. Deploy the web interface
+```bash
+sudo mkdir -p /var/www/pidoors
+sudo cp -r pidoorserv/* /var/www/pidoors/
+sudo cp /var/www/pidoors/includes/config.php.example /var/www/pidoors/includes/config.php
+sudo nano /var/www/pidoors/includes/config.php   # Set your database password
+sudo chown -R www-data:www-data /var/www/pidoors
+sudo chmod 640 /var/www/pidoors/includes/config.php
+```
+
+#### 6. Configure Nginx
+```bash
+sudo cp nginx/pidoors.conf /etc/nginx/sites-available/pidoors
+sudo ln -sf /etc/nginx/sites-available/pidoors /etc/nginx/sites-enabled/pidoors
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+See the [Installation Guide](INSTALLATION_GUIDE.md) for additional details.
 
 ---
 
@@ -171,11 +284,11 @@ nano pidoorserv/includes/config.php
 3. Set your values:
 ```php
 return [
-    'db' => [
-        'host' => 'localhost',
-        'username' => 'pidoors',
-        'password' => 'your_secure_password',
-    ],
+    'sqladdr' => '127.0.0.1',
+    'sqldb' => 'users',
+    'sqldb2' => 'access',
+    'sqluser' => 'pidoors',
+    'sqlpass' => 'your_secure_password',
     'url' => 'http://your-pi-ip',
     // ... other settings
 ];
@@ -438,6 +551,15 @@ Contributions welcome! Please:
 
 ## Changelog
 
+### Version 2.2.2 (February 2026)
+- **Fix**: Fresh install fails with `Table 'access.cards' doesn't exist` (Issue #2)
+- **Fix**: Missing `users` table schema — users database was created empty
+- **Fix**: Column name mismatches in edituser.php and profile.php (`is_admin`/`is_active`/`email`)
+- **Fix**: Config key mismatches — PHP referenced nested keys that don't exist
+- **Security**: Removed hardcoded MD5 password salt from source code
+- **Security**: Renamed tracked config.php to config.php.example
+- **Docs**: Expanded README with complete manual installation instructions
+
 ### Version 2.2.1 (January 2026)
 - **Security fix**: Zone matching vulnerability that could allow unauthorized access
 - **Database migration**: Door format changed from space-separated to comma-separated
@@ -483,8 +605,8 @@ This project is open source and available for free use, modification, and distri
 ## Support
 
 - **Documentation**: [Installation Guide](INSTALLATION_GUIDE.md)
-- **Bug Reports**: [GitHub Issues](https://github.com/yourusername/pidoors/issues)
-- **Feature Requests**: [GitHub Issues](https://github.com/yourusername/pidoors/issues)
+- **Bug Reports**: [GitHub Issues](https://github.com/sybethiesant/pidoors/issues)
+- **Feature Requests**: [GitHub Issues](https://github.com/sybethiesant/pidoors/issues)
 
 ---
 

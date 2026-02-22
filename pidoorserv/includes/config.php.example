@@ -25,6 +25,10 @@ return [
     'password_require_mixed_case' => true,
     'password_require_numbers' => true,
 
+    // Legacy MD5 password salt (for migrating old installations)
+    // Set this to your original salt if upgrading from a pre-bcrypt version
+    'legacy_password_salt' => '',
+
     // Access Control Settings
     'default_unlock_duration' => 5, // seconds
     'max_failed_attempts' => 5,

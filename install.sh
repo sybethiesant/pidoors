@@ -98,9 +98,40 @@ GRANT ALL PRIVILEGES ON access.* TO 'pidoors'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-    # Import database schema
+    # Create users table schema
+    echo -e "${GREEN}Creating users table...${NC}"
+    mysql -u root -p"$MYSQL_ROOT_PASS" users <<EOF
+CREATE TABLE IF NOT EXISTS \`users\` (
+  \`id\` int(11) NOT NULL AUTO_INCREMENT,
+  \`user_name\` varchar(100) NOT NULL,
+  \`user_email\` varchar(255) NOT NULL,
+  \`user_pass\` varchar(255) NOT NULL,
+  \`admin\` tinyint(1) NOT NULL DEFAULT 0,
+  \`active\` tinyint(1) NOT NULL DEFAULT 1,
+  \`created_at\` datetime DEFAULT CURRENT_TIMESTAMP,
+  \`last_login\` datetime DEFAULT NULL,
+  PRIMARY KEY (\`id\`),
+  UNIQUE KEY \`user_email\` (\`user_email\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS \`audit_logs\` (
+  \`id\` int(11) NOT NULL AUTO_INCREMENT,
+  \`event_type\` varchar(50) NOT NULL,
+  \`user_id\` int(11) DEFAULT NULL,
+  \`ip_address\` varchar(45) DEFAULT NULL,
+  \`user_agent\` varchar(255) DEFAULT NULL,
+  \`details\` text,
+  \`created_at\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (\`id\`),
+  KEY \`event_type\` (\`event_type\`),
+  KEY \`user_id\` (\`user_id\`),
+  KEY \`created_at\` (\`created_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+EOF
+
+    # Import access database schema
     if [ -f "database_migration.sql" ]; then
-        echo -e "${GREEN}Importing database schema...${NC}"
+        echo -e "${GREEN}Importing access database schema...${NC}"
         mysql -u root -p"$MYSQL_ROOT_PASS" access < database_migration.sql
     fi
 
@@ -349,7 +380,7 @@ if [ "$INSTALL_SERVER" = true ]; then
         HASHED_PASS=$(php -r "echo password_hash('$ADMIN_PASS', PASSWORD_BCRYPT);")
 
         mysql -u pidoors -p"$DB_PASS" users <<EOF
-INSERT INTO users (user_name, user_email, user_pass, user_admin, active)
+INSERT INTO users (user_name, user_email, user_pass, admin, active)
 VALUES ('Admin', '$ADMIN_EMAIL', '$HASHED_PASS', 1, 1)
 ON DUPLICATE KEY UPDATE user_pass='$HASHED_PASS';
 EOF

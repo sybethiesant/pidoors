@@ -44,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $new_password = $_POST['new_password'] ?? '';
 
         // Prevent removing own admin rights
-        if ($user_id == $_SESSION['user_id'] && !$is_admin && $user['is_admin']) {
+        if ($user_id == $_SESSION['user_id'] && !$is_admin && $user['admin']) {
             $error_message = 'You cannot remove your own administrator privileges.';
         } elseif (!$email) {
             $error_message = 'Valid email address is required.';
@@ -58,13 +58,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $error_message = $password_validation;
                     } else {
                         $password_hash = hash_password($new_password);
-                        $stmt = $pdo->prepare("UPDATE users SET email = ?, is_admin = ?, is_active = ?, user_pass = ? WHERE id = ?");
+                        $stmt = $pdo->prepare("UPDATE users SET user_email = ?, admin = ?, active = ?, user_pass = ? WHERE id = ?");
                         $stmt->execute([$email, $is_admin, $is_active, $password_hash, $user_id]);
 
                         log_security_event($pdo, 'user_modified', $_SESSION['user_id'], "User {$user['user_name']} updated with password reset");
                     }
                 } else {
-                    $stmt = $pdo->prepare("UPDATE users SET email = ?, is_admin = ?, is_active = ? WHERE id = ?");
+                    $stmt = $pdo->prepare("UPDATE users SET user_email = ?, admin = ?, active = ? WHERE id = ?");
                     $stmt->execute([$email, $is_admin, $is_active, $user_id]);
 
                     log_security_event($pdo, 'user_modified', $_SESSION['user_id'], "User {$user['user_name']} updated");
@@ -107,19 +107,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="mb-3">
                         <label for="email" class="form-label">Email Address <span class="text-danger">*</span></label>
                         <input type="email" class="form-control" id="email" name="email" required
-                               value="<?php echo htmlspecialchars($user['email'] ?? ''); ?>">
+                               value="<?php echo htmlspecialchars($user['user_email'] ?? ''); ?>">
                     </div>
 
                     <div class="mb-3">
                         <label for="new_password" class="form-label">New Password</label>
                         <input type="password" class="form-control" id="new_password" name="new_password"
-                               minlength="<?php echo $config['password']['min_length']; ?>">
+                               minlength="<?php echo $config['password_min_length']; ?>">
                         <div class="form-text">Leave blank to keep current password.</div>
                     </div>
 
                     <div class="mb-3 form-check">
                         <input type="checkbox" class="form-check-input" id="is_admin" name="is_admin"
-                               <?php echo $user['is_admin'] ? 'checked' : ''; ?>
+                               <?php echo $user['admin'] ? 'checked' : ''; ?>
                                <?php echo $user_id == $_SESSION['user_id'] ? 'disabled' : ''; ?>>
                         <label class="form-check-label" for="is_admin">Administrator</label>
                         <?php if ($user_id == $_SESSION['user_id']): ?>
@@ -129,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div class="mb-3 form-check">
                         <input type="checkbox" class="form-check-input" id="is_active" name="is_active"
-                               <?php echo ($user['is_active'] ?? 1) ? 'checked' : ''; ?>
+                               <?php echo ($user['active'] ?? 1) ? 'checked' : ''; ?>
                                <?php echo $user_id == $_SESSION['user_id'] ? 'disabled' : ''; ?>>
                         <label class="form-check-label" for="is_active">Active</label>
                         <?php if ($user_id == $_SESSION['user_id']): ?>

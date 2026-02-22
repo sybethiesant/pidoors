@@ -6,6 +6,47 @@ SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 SET time_zone = "+00:00";
 
 -- --------------------------------------------------------
+-- Base Tables
+-- These are the core tables required by PiDoors.
+-- On fresh installs they are created here; on upgrades
+-- the IF NOT EXISTS clause keeps existing data intact.
+-- --------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `cards` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `card_id` varchar(32) NOT NULL,
+  `user_id` varchar(32) NOT NULL,
+  `facility` varchar(16) NOT NULL,
+  `bstr` varchar(255) DEFAULT NULL,
+  `firstname` varchar(100) DEFAULT NULL,
+  `lastname` varchar(100) DEFAULT NULL,
+  `doors` text,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_card` (`card_id`, `facility`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `doors` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(20) NOT NULL,
+  `location` varchar(100) DEFAULT NULL,
+  `doornum` int(11) DEFAULT NULL,
+  `description` text,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` varchar(32) NOT NULL,
+  `Date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `Granted` tinyint(1) NOT NULL DEFAULT 0,
+  `Location` varchar(20) DEFAULT NULL,
+  `doorip` varchar(45) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
 -- Access Groups Table
 -- Groups cards together for easier permission management
 -- --------------------------------------------------------

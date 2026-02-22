@@ -42,9 +42,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error_message = 'Valid email address is required.';
             } else {
                 try {
-                    $stmt = $pdo->prepare("UPDATE users SET email = ? WHERE id = ?");
+                    $stmt = $pdo->prepare("UPDATE users SET user_email = ? WHERE id = ?");
                     $stmt->execute([$email, $user_id]);
-                    $user['email'] = $email;
+                    $user['user_email'] = $email;
                     $success_message = 'Profile updated successfully.';
 
                     log_security_event($pdo, 'profile_update', $user_id, 'Email updated');
@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error_message = 'New passwords do not match.';
             } elseif (!verify_password($current_password, $user['user_pass'])) {
                 // Also check legacy MD5
-                $legacy_hash = md5($config['password']['salt'] . $current_password);
+                $legacy_hash = md5(($config['legacy_password_salt'] ?? '') . $current_password);
                 if ($user['user_pass'] !== $legacy_hash) {
                     $error_message = 'Current password is incorrect.';
                 }
@@ -137,13 +137,13 @@ try {
                     <div class="mb-3">
                         <label for="email" class="form-label">Email Address</label>
                         <input type="email" class="form-control" id="email" name="email"
-                               value="<?php echo htmlspecialchars($user['email'] ?? ''); ?>" required>
+                               value="<?php echo htmlspecialchars($user['user_email'] ?? ''); ?>" required>
                     </div>
 
                     <div class="mb-3">
                         <label class="form-label">Role</label>
                         <input type="text" class="form-control"
-                               value="<?php echo $user['is_admin'] ? 'Administrator' : 'User'; ?>" disabled>
+                               value="<?php echo $user['admin'] ? 'Administrator' : 'User'; ?>" disabled>
                     </div>
 
                     <div class="mb-3">
@@ -176,12 +176,11 @@ try {
                     <div class="mb-3">
                         <label for="new_password" class="form-label">New Password</label>
                         <input type="password" class="form-control" id="new_password" name="new_password" required
-                               minlength="<?php echo $config['password']['min_length']; ?>">
+                               minlength="<?php echo $config['password_min_length']; ?>">
                         <div class="form-text">
-                            Minimum <?php echo $config['password']['min_length']; ?> characters.
-                            <?php if ($config['password']['require_mixed_case']): ?>Must include upper and lowercase.<?php endif; ?>
-                            <?php if ($config['password']['require_numbers']): ?>Must include numbers.<?php endif; ?>
-                            <?php if ($config['password']['require_special']): ?>Must include special characters.<?php endif; ?>
+                            Minimum <?php echo $config['password_min_length']; ?> characters.
+                            <?php if ($config['password_require_mixed_case']): ?>Must include upper and lowercase.<?php endif; ?>
+                            <?php if ($config['password_require_numbers']): ?>Must include numbers.<?php endif; ?>
                         </div>
                     </div>
 
