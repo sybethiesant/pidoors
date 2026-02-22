@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
                     // Check if this is a legacy MD5 hash (32 hex chars)
                     if (strlen($user['user_pass']) === 32 && ctype_xdigit($user['user_pass'])) {
                         // Legacy MD5 verification (with salt)
-                        $legacy_hash = md5('pid00rsmd5saltedsalter' . $password);
+                        $legacy_hash = md5(($config['legacy_password_salt'] ?? '') . $password);
                         if (hash_equals($user['user_pass'], $legacy_hash)) {
                             $password_valid = true;
                             $needs_upgrade = true;
