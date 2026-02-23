@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.2.1-green)
+![Version](https://img.shields.io/badge/version-2.2.3-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -538,7 +538,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.2.1** - Production Ready
+**Current Version: 2.2.3** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -550,6 +550,13 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.2.3 (February 2026)
+- **Fix**: Python pip install fails on Raspberry Pi OS Bookworm (PEP 668)
+- **Fix**: Config password never set during install (sed matched wrong key)
+- **Fix**: Web interface URL not set to server IP during install
+- Uses Python virtual environment at `/opt/pidoors/venv/` for door controller
+- Service file updated to use venv Python
 
 ### Version 2.2.2 (February 2026)
 - **Fix**: Fresh install fails with `Table 'access.cards' doesn't exist` (Issue #2)
