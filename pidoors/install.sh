@@ -495,20 +495,48 @@ if [ "$INSTALL_DOOR" = true ]; then
         ok "pidoors user exists"
     fi
 
-    # Find source files
-    if [ -d "$SCRIPT_DIR/pidoors/pidoors" ]; then
-        DOOR_SRC="$SCRIPT_DIR/pidoors/pidoors"
-    elif [ -d "$SCRIPT_DIR/pidoors" ]; then
-        DOOR_SRC="$SCRIPT_DIR/pidoors"
+    # Clone or update from git repo for easy future updates via git pull
+    REPO_URL="https://github.com/sybethiesant/pidoors.git"
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        info "Updating existing git repo..."
+        git -C "$INSTALL_DIR" fetch origin
+        git -C "$INSTALL_DIR" checkout origin/main -- pidoors/pidoors.py pidoors/readers pidoors/formats 2>/dev/null || true
+        cp "$INSTALL_DIR/pidoors/pidoors.py" "$INSTALL_DIR/pidoors.py"
+        [ -d "$INSTALL_DIR/pidoors/readers" ] && cp -r "$INSTALL_DIR/pidoors/readers/"* "$INSTALL_DIR/readers/" 2>/dev/null || true
+        [ -d "$INSTALL_DIR/pidoors/formats" ] && cp -r "$INSTALL_DIR/pidoors/formats/"* "$INSTALL_DIR/formats/" 2>/dev/null || true
+        rm -rf "$INSTALL_DIR/pidoors"
+        ok "Controller files updated from git"
     else
-        fail "Cannot find pidoors source directory"
-        exit 1
-    fi
+        # Fresh install: clone into temp dir, copy source files, init local repo
+        TMPCLONE="$(mktemp -d)"
+        git clone --depth 1 "$REPO_URL" "$TMPCLONE" -q
+        if [ -d "$TMPCLONE/pidoors" ]; then
+            cp "$TMPCLONE/pidoors/pidoors.py" "$INSTALL_DIR/"
+            [ -d "$TMPCLONE/pidoors/readers" ] && cp -r "$TMPCLONE/pidoors/readers/"* "$INSTALL_DIR/readers/" 2>/dev/null || true
+            [ -d "$TMPCLONE/pidoors/formats" ] && cp -r "$TMPCLONE/pidoors/formats/"* "$INSTALL_DIR/formats/" 2>/dev/null || true
+        else
+            # Fallback to local source files
+            if [ -d "$SCRIPT_DIR/pidoors/pidoors" ]; then
+                DOOR_SRC="$SCRIPT_DIR/pidoors/pidoors"
+            elif [ -d "$SCRIPT_DIR/pidoors" ]; then
+                DOOR_SRC="$SCRIPT_DIR/pidoors"
+            else
+                fail "Cannot find pidoors source directory"
+                rm -rf "$TMPCLONE"
+                exit 1
+            fi
+            cp "$DOOR_SRC/pidoors.py" "$INSTALL_DIR/"
+            [ -d "$DOOR_SRC/readers" ] && cp -r "$DOOR_SRC/readers/"* "$INSTALL_DIR/readers/" 2>/dev/null || true
+            [ -d "$DOOR_SRC/formats" ] && cp -r "$DOOR_SRC/formats/"* "$INSTALL_DIR/formats/" 2>/dev/null || true
+        fi
+        rm -rf "$TMPCLONE"
 
-    cp "$DOOR_SRC/pidoors.py" "$INSTALL_DIR/"
-    [ -d "$DOOR_SRC/readers" ] && cp -r "$DOOR_SRC/readers/"* "$INSTALL_DIR/readers/" 2>/dev/null || true
-    [ -d "$DOOR_SRC/formats" ] && cp -r "$DOOR_SRC/formats/"* "$INSTALL_DIR/formats/" 2>/dev/null || true
-    ok "Controller files copied"
+        # Init git repo in install dir for future git pull updates
+        git init -q "$INSTALL_DIR"
+        git -C "$INSTALL_DIR" remote add origin "$REPO_URL"
+        git config --global --add safe.directory "$INSTALL_DIR"
+        ok "Controller files installed (git repo initialized for updates)"
+    fi
 
     # Write config.json
     cat > "$INSTALL_DIR/conf/config.json" <<EOF
