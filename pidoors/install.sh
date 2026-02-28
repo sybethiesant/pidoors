@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}======================================${NC}"
 echo -e "${GREEN}PiDoors Installation Script${NC}"
-echo -e "${GREEN}Version 2.2.3 - Multi-Reader Edition${NC}"
+echo -e "${GREEN}Version 2.2.4 - Multi-Reader Edition${NC}"
 echo -e "${GREEN}======================================${NC}"
 echo
 
@@ -139,6 +139,17 @@ EOF
     echo -e "\n${GREEN}Installing web interface...${NC}"
     mkdir -p /var/www/pidoors
     cp -r pidoorserv/* /var/www/pidoors/
+
+    # Download vendor assets (Bootstrap, jQuery, DataTables, Chart.js)
+    echo -e "${GREEN}Downloading front-end libraries...${NC}"
+    WEBROOT="/var/www/pidoors"
+    curl -sL "https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta1/dist/css/bootstrap.min.css" -o "$WEBROOT/css/bootstrap.min.css"
+    curl -sL "https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" -o "$WEBROOT/css/dataTables.bootstrap5.min.css"
+    curl -sL "https://code.jquery.com/jquery-3.5.1.min.js" -o "$WEBROOT/js/jquery-3.5.1.js"
+    curl -sL "https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta1/dist/js/bootstrap.bundle.min.js" -o "$WEBROOT/js/bootstrap.bundle.min.js"
+    curl -sL "https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js" -o "$WEBROOT/js/jquery.dataTables.min.js"
+    curl -sL "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" -o "$WEBROOT/js/Chart.min.js"
+
     chown -R www-data:www-data /var/www/pidoors
     chmod -R 755 /var/www/pidoors
 

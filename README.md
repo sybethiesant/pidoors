@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.2.3-green)
+![Version](https://img.shields.io/badge/version-2.2.4-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -538,7 +538,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.2.3** - Production Ready
+**Current Version: 2.2.4** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -550,6 +550,11 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.2.4 (February 2026)
+- **Fix**: Web interface has no styling — vendor CSS/JS files (Bootstrap, jQuery, DataTables, Chart.js) were 0 bytes in the repository
+- Populated all vendor library files in the repo so they work out of the box
+- Installer now downloads fresh vendor assets during install as a safety net
 
 ### Version 2.2.3 (February 2026)
 - **Fix**: Python pip install fails on Raspberry Pi OS Bookworm (PEP 668)
