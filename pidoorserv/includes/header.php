@@ -145,12 +145,6 @@ $csrf_token = generate_csrf_token();
                                     </a>
                                 </li>
                                 <li class="nav-item">
-                                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'adduser.php' ? 'active' : ''; ?>" href="<?php echo htmlspecialchars($config['url']); ?>/users/adduser.php">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
-                                        Add Users
-                                    </a>
-                                </li>
-                                <li class="nav-item">
                                     <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'audit.php' ? 'active' : ''; ?>" href="<?php echo htmlspecialchars($config['url']); ?>/audit.php">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
                                         Audit Log

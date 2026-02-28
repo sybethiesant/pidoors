@@ -36,6 +36,7 @@ if (isset($_GET['delete']) && isset($_GET['token'])) {
 // Handle add/edit
 $editing = null;
 $error_message = '';
+$show_modal = false;
 
 if (isset($_GET['edit'])) {
     $edit_id = validate_int($_GET['edit']);
@@ -43,6 +44,7 @@ if (isset($_GET['edit'])) {
         $stmt = $pdo_access->prepare("SELECT * FROM access_groups WHERE id = ?");
         $stmt->execute([$edit_id]);
         $editing = $stmt->fetch();
+        if ($editing) $show_modal = true;
     }
 }
 
@@ -53,11 +55,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = validate_int($_POST['id'] ?? 0);
         $name = sanitize_string($_POST['name'] ?? '');
         $description = sanitize_string($_POST['description'] ?? '');
-        $doors = $_POST['doors'] ?? [];
+        $post_doors = $_POST['doors'] ?? [];
 
         // Validate doors array
         $valid_doors = [];
-        foreach ($doors as $door) {
+        foreach ($post_doors as $door) {
             $door = sanitize_string($door);
             if (!empty($door)) {
                 $valid_doors[] = $door;
@@ -92,6 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+    $show_modal = true;
 }
 
 // Fetch groups with member count
@@ -111,67 +114,74 @@ try {
 }
 ?>
 
-<div class="row">
-    <div class="col-lg-8">
-        <div class="card shadow-sm mb-4">
-            <div class="card-header">
-                <h5 class="mb-0">Access Groups</h5>
-            </div>
-            <div class="card-body p-0">
-                <table class="table table-striped mb-0">
-                    <thead class="table-dark">
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div><span class="text-muted"><?php echo count($groups); ?> groups</span></div>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#groupModal">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        Add Group
+    </button>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Doors</th>
+                        <th>Members</th>
+                        <th width="120">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($groups as $group): ?>
+                        <?php $group_doors = json_decode($group['doors'] ?? '[]', true) ?: []; ?>
                         <tr>
-                            <th>Name</th>
-                            <th>Description</th>
-                            <th>Doors</th>
-                            <th>Members</th>
-                            <th>Actions</th>
+                            <td><strong><?php echo htmlspecialchars($group['name']); ?></strong></td>
+                            <td><?php echo htmlspecialchars($group['description'] ?? ''); ?></td>
+                            <td>
+                                <?php if (empty($group_doors)): ?>
+                                    <span class="text-muted">All doors</span>
+                                <?php else: ?>
+                                    <?php foreach ($group_doors as $door): ?>
+                                        <span class="badge bg-secondary me-1"><?php echo htmlspecialchars($door); ?></span>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </td>
+                            <td><span class="badge bg-info"><?php echo $group['member_count']; ?></span></td>
+                            <td>
+                                <a href="?edit=<?php echo $group['id']; ?>" class="btn btn-sm btn-outline-primary">Edit</a>
+                                <a href="?delete=<?php echo $group['id']; ?>&token=<?php echo htmlspecialchars($csrf_token); ?>"
+                                   class="btn btn-sm btn-outline-danger"
+                                   onclick="return confirmDelete('Delete this group?');">Delete</a>
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($groups as $group): ?>
-                            <?php $group_doors = json_decode($group['doors'] ?? '[]', true) ?: []; ?>
-                            <tr>
-                                <td><strong><?php echo htmlspecialchars($group['name']); ?></strong></td>
-                                <td><?php echo htmlspecialchars($group['description'] ?? ''); ?></td>
-                                <td>
-                                    <?php if (empty($group_doors)): ?>
-                                        <span class="text-muted">All doors</span>
-                                    <?php else: ?>
-                                        <?php foreach ($group_doors as $door): ?>
-                                            <span class="badge bg-secondary me-1"><?php echo htmlspecialchars($door); ?></span>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </td>
-                                <td><span class="badge bg-info"><?php echo $group['member_count']; ?></span></td>
-                                <td>
-                                    <a href="?edit=<?php echo $group['id']; ?>" class="btn btn-sm btn-outline-primary">Edit</a>
-                                    <a href="?delete=<?php echo $group['id']; ?>&token=<?php echo htmlspecialchars($csrf_token); ?>"
-                                       class="btn btn-sm btn-outline-danger"
-                                       onclick="return confirmDelete('Delete this group?');">Delete</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                        <?php if (empty($groups)): ?>
-                            <tr><td colspan="5" class="text-muted text-center">No access groups defined.</td></tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
+                    <?php endforeach; ?>
+                    <?php if (empty($groups)): ?>
+                        <tr><td colspan="5" class="text-muted text-center">No access groups defined.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
         </div>
     </div>
+</div>
 
-    <div class="col-lg-4">
-        <div class="card shadow-sm">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0"><?php echo $editing ? 'Edit Group' : 'Add Group'; ?></h5>
+<!-- Add/Edit Group Modal -->
+<div class="modal fade" id="groupModal" tabindex="-1" aria-labelledby="groupModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="groupModalLabel"><?php echo $editing ? 'Edit Group' : 'Add Group'; ?></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="card-body">
-                <?php if ($error_message): ?>
-                    <div class="alert alert-danger"><?php echo htmlspecialchars($error_message); ?></div>
-                <?php endif; ?>
+            <form method="post">
+                <div class="modal-body">
+                    <?php if ($error_message): ?>
+                        <div class="alert alert-danger"><?php echo htmlspecialchars($error_message); ?></div>
+                    <?php endif; ?>
 
-                <form method="post">
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="id" value="<?php echo $editing['id'] ?? ''; ?>">
 
@@ -210,19 +220,22 @@ try {
                             <div class="text-muted">No doors configured.</div>
                         <?php endif; ?>
                     </div>
-
-                    <div class="d-flex justify-content-between mt-3">
-                        <?php if ($editing): ?>
-                            <a href="groups.php" class="btn btn-secondary">Cancel</a>
-                        <?php else: ?>
-                            <div></div>
-                        <?php endif; ?>
-                        <button type="submit" class="btn btn-primary"><?php echo $editing ? 'Update' : 'Add'; ?></button>
-                    </div>
-                </form>
-            </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><?php echo $editing ? 'Update' : 'Add Group'; ?></button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
+
+<?php if ($show_modal): ?>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        new bootstrap.Modal(document.getElementById('groupModal')).show();
+    });
+</script>
+<?php endif; ?>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>

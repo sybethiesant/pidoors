@@ -1316,6 +1316,9 @@ def send_heartbeat():
         )
         cursor = db.cursor()
 
+        locked_status = 1 if not zone_config.get("unlocked", False) else 0
+        reader = zone_config.get("reader_type", "wiegand")
+
         # Update door status
         cursor.execute("""
             UPDATE doors
@@ -1324,7 +1327,15 @@ def send_heartbeat():
                 ip_address = %s,
                 locked = %s
             WHERE name = %s
-        """, (myip, 1 if not config.get(zone, {}).get("unlocked", False) else 0, zone))
+        """, (myip, locked_status, zone))
+
+        # Auto-register door if it doesn't exist yet
+        if cursor.rowcount == 0:
+            cursor.execute("""
+                INSERT INTO doors (name, ip_address, status, last_seen, locked, reader_type)
+                VALUES (%s, %s, 'online', NOW(), %s, %s)
+            """, (zone, myip, locked_status, reader))
+            report(f"Door '{zone}' auto-registered in database")
 
         db.commit()
         with state_lock:
