@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.2.4-green)
+![Version](https://img.shields.io/badge/version-2.3.0-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -39,13 +39,16 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 
 ### Management
 - Modern web interface
+- Login by username or email
 - Real-time dashboard with analytics
-- Multi-user administration
-- CSV bulk import/export
+- Multi-user administration with extended profiles (name, department, company, etc.)
+- Extended cardholder details (email, phone, department, employee ID, company, title)
+- CSV bulk import/export with all cardholder fields
 - Comprehensive reporting
 - Email notifications
 - Complete audit trail
 - Remote door control
+- Door auto-registration from client heartbeat
 
 ### Reliability
 - 24-hour offline operation
@@ -102,13 +105,13 @@ The installer presents three installation modes:
 4. Imports the full database schema (base tables + migration extensions)
 5. Deploys the web interface to `/var/www/pidoors/`
 6. Configures Nginx with security headers
-7. Prompts you to create an admin account (email + password)
+7. Prompts you to create an admin account (username, email + password)
 8. Sets up log rotation and backup scripts
 
 #### After installation
 
 1. Open `http://your-pi-ip/` in a browser
-2. Log in with the admin email and password you set during install
+2. Log in with your username or email and the password you set during install
 3. Navigate to **Doors** to register your door controllers
 4. Navigate to **Cards** to add access cards
 5. Set up **Schedules** and **Access Groups** as needed
@@ -140,39 +143,11 @@ SQL
 
 #### 3. Import schemas
 ```bash
-# Import the access database schema (creates all tables including base tables)
+# Import the full schema (handles both access and users databases)
 sudo mysql -u root -p access < database_migration.sql
-
-# Create the users table (in the users database)
-sudo mysql -u root -p users <<'SQL'
-CREATE TABLE IF NOT EXISTS `users` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_name` varchar(100) NOT NULL,
-  `user_email` varchar(255) NOT NULL,
-  `user_pass` varchar(255) NOT NULL,
-  `admin` tinyint(1) NOT NULL DEFAULT 0,
-  `active` tinyint(1) NOT NULL DEFAULT 1,
-  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `last_login` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `user_email` (`user_email`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS `audit_logs` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `event_type` varchar(50) NOT NULL,
-  `user_id` int(11) DEFAULT NULL,
-  `ip_address` varchar(45) DEFAULT NULL,
-  `user_agent` varchar(255) DEFAULT NULL,
-  `details` text,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `event_type` (`event_type`),
-  KEY `user_id` (`user_id`),
-  KEY `created_at` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-SQL
 ```
+
+The migration script creates all tables, adds extended columns, and handles both the `access` and `users` databases. It is safe to re-run on existing installations.
 
 #### 4. Create your admin user
 ```bash
@@ -375,12 +350,12 @@ Full wiring diagrams available in [Installation Guide](INSTALLATION_GUIDE.md#wir
 
 **Via CSV Import:**
 ```csv
-card_id,user_id,firstname,lastname
-12345678,EMP001,John,Smith
-87654321,EMP002,Jane,Doe
+card_id,user_id,firstname,lastname,email,department
+12345678,EMP001,John,Smith,john@example.com,Engineering
+87654321,EMP002,Jane,Doe,jane@example.com,Marketing
 ```
 
-Upload at **Cards** > **Import Cards**
+Upload at **Cards** > **Import CSV**. Optional columns: `email`, `phone`, `department`, `employee_id`, `company`, `title`, `notes`, `group_id`, `schedule_id`, `valid_from`, `valid_until`, `pin_code`.
 
 ### Creating Access Schedules
 
@@ -419,27 +394,26 @@ sudo systemctl restart pidoors  # On door controllers
 
 ### Database Migrations
 
-When upgrading, check if database migrations are required:
+When upgrading, run the migration script to add any new columns:
+
+```bash
+# Backup first
+mysqldump -u pidoors -p access > backup_access_$(date +%Y%m%d).sql
+mysqldump -u pidoors -p users > backup_users_$(date +%Y%m%d).sql
+
+# Run migration (safe to re-run, uses IF NOT EXISTS checks)
+mysql -u root -p access < database_migration.sql
+```
+
+The migration script handles both the `access` and `users` databases automatically.
 
 **v2.2.1 Migration (Required if upgrading from v2.2 or earlier):**
 
-This migration converts door assignments from space-separated to comma-separated format for improved security.
+This migration converts door assignments from space-separated to comma-separated format:
 
 ```bash
-# Preview changes (safe - no modifications)
-python3 migrations/migrate_doors_format.py --dry-run
-
-# Apply changes (will prompt for confirmation)
-python3 migrations/migrate_doors_format.py
-```
-
-Or via SQL:
-```bash
-# Backup first!
-mysqldump -u pidoors -p access > backup_$(date +%Y%m%d).sql
-
-# Run migration
-mysql -u pidoors -p access < migrations/migrate_doors_format.sql
+python3 migrations/migrate_doors_format.py --dry-run   # Preview
+python3 migrations/migrate_doors_format.py              # Apply
 ```
 
 ### View Logs
@@ -538,7 +512,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.2.4** - Production Ready
+**Current Version: 2.3.0** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -550,6 +524,25 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.3.0 (February 2026)
+- **Login by username or email** — was email-only before
+- **Extended user profiles** — first/last name, phone, department, employee ID, company, job title, notes
+- **Extended cardholder fields** — email, phone, department, employee ID, company, title, notes on cards
+- **Door name normalization** — web UI normalizes names to lowercase with underscores to match client convention
+- **CSV import updated** — supports all new optional cardholder columns
+- **Database migration** — `database_migration.sql` now handles both `users` and `access` databases
+- Added UNIQUE index on `user_name` for safe username-based login
+
+### Version 2.2.6 (February 2026)
+- All add/edit forms converted to Bootstrap modals (cards, doors, groups, schedules, holidays, users)
+- Door auto-registration via client heartbeat
+- Comprehensive guided install script with validation and verification
+
+### Version 2.2.5 (February 2026)
+- **Fix**: Sidebar/content CSS overlap on responsive layouts
+- **Fix**: DataTables column count error on logs page
+- Rewrote sidebar/content layout for proper scaling
 
 ### Version 2.2.4 (February 2026)
 - **Fix**: Web interface has no styling — vendor CSS/JS files (Bootstrap, jQuery, DataTables, Chart.js) were 0 bytes in the repository
