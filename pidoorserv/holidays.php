@@ -28,6 +28,7 @@ if (isset($_GET['delete']) && isset($_GET['token'])) {
 // Handle add/edit
 $editing = null;
 $error_message = '';
+$show_modal = false;
 
 if (isset($_GET['edit'])) {
     $edit_id = validate_int($_GET['edit']);
@@ -35,6 +36,7 @@ if (isset($_GET['edit'])) {
         $stmt = $pdo_access->prepare("SELECT * FROM holidays WHERE id = ?");
         $stmt->execute([$edit_id]);
         $editing = $stmt->fetch();
+        if ($editing) $show_modal = true;
     }
 }
 
@@ -73,6 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+    $show_modal = true;
 }
 
 // Fetch holidays
@@ -83,78 +86,100 @@ try {
 }
 ?>
 
-<div class="row">
-    <div class="col-lg-8">
-        <div class="card shadow-sm mb-4">
-            <div class="card-header">
-                <h5 class="mb-0">Holidays</h5>
-            </div>
-            <div class="card-body p-0">
-                <table class="table table-striped mb-0">
-                    <thead class="table-dark">
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div><span class="text-muted"><?php echo count($holidays); ?> holidays</span></div>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#holidayModal">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        Add Holiday
+    </button>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-striped mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Date</th>
+                        <th>Name</th>
+                        <th>Recurring</th>
+                        <th>Access</th>
+                        <th width="120">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($holidays as $holiday): ?>
                         <tr>
-                            <th>Date</th>
-                            <th>Name</th>
-                            <th>Recurring</th>
-                            <th>Access</th>
-                            <th>Actions</th>
+                            <td>
+                                <?php
+                                $date = new DateTime($holiday['date']);
+                                echo $date->format('M j, Y');
+                                if ($holiday['recurring']) {
+                                    echo ' <small class="text-muted">(yearly)</small>';
+                                }
+                                ?>
+                            </td>
+                            <td><strong><?php echo htmlspecialchars($holiday['name']); ?></strong></td>
+                            <td>
+                                <?php if ($holiday['recurring']): ?>
+                                    <span class="badge bg-info">Yearly</span>
+                                <?php else: ?>
+                                    <span class="badge bg-secondary">One-time</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ($holiday['no_access']): ?>
+                                    <span class="badge bg-danger">No Access</span>
+                                <?php else: ?>
+                                    <span class="badge bg-success">Normal Access</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <a href="?edit=<?php echo $holiday['id']; ?>" class="btn btn-sm btn-outline-primary">Edit</a>
+                                <a href="?delete=<?php echo $holiday['id']; ?>&token=<?php echo htmlspecialchars($csrf_token); ?>"
+                                   class="btn btn-sm btn-outline-danger"
+                                   onclick="return confirmDelete('Delete this holiday?');">Delete</a>
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($holidays as $holiday): ?>
-                            <tr>
-                                <td>
-                                    <?php
-                                    $date = new DateTime($holiday['date']);
-                                    echo $date->format('M j, Y');
-                                    if ($holiday['recurring']) {
-                                        echo ' <small class="text-muted">(yearly)</small>';
-                                    }
-                                    ?>
-                                </td>
-                                <td><strong><?php echo htmlspecialchars($holiday['name']); ?></strong></td>
-                                <td>
-                                    <?php if ($holiday['recurring']): ?>
-                                        <span class="badge bg-info">Yearly</span>
-                                    <?php else: ?>
-                                        <span class="badge bg-secondary">One-time</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <?php if ($holiday['no_access']): ?>
-                                        <span class="badge bg-danger">No Access</span>
-                                    <?php else: ?>
-                                        <span class="badge bg-success">Normal Access</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <a href="?edit=<?php echo $holiday['id']; ?>" class="btn btn-sm btn-outline-primary">Edit</a>
-                                    <a href="?delete=<?php echo $holiday['id']; ?>&token=<?php echo htmlspecialchars($csrf_token); ?>"
-                                       class="btn btn-sm btn-outline-danger"
-                                       onclick="return confirmDelete('Delete this holiday?');">Delete</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                        <?php if (empty($holidays)): ?>
-                            <tr><td colspan="5" class="text-muted text-center">No holidays defined.</td></tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
+                    <?php endforeach; ?>
+                    <?php if (empty($holidays)): ?>
+                        <tr><td colspan="5" class="text-muted text-center">No holidays defined.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
         </div>
     </div>
+</div>
 
-    <div class="col-lg-4">
-        <div class="card shadow-sm">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0"><?php echo $editing ? 'Edit Holiday' : 'Add Holiday'; ?></h5>
+<div class="card shadow-sm mt-4">
+    <div class="card-header">
+        <h6 class="mb-0">About Holidays</h6>
+    </div>
+    <div class="card-body">
+        <p class="small mb-2">Holidays affect access control in the following ways:</p>
+        <ul class="small mb-0">
+            <li><strong>No Access</strong>: Blocks all scheduled access on the holiday.</li>
+            <li><strong>Normal Access</strong>: Access continues as per normal schedules.</li>
+            <li><strong>24/7 schedules</strong> are not affected by holidays.</li>
+            <li><strong>Master cards</strong> always have access regardless of holidays.</li>
+        </ul>
+    </div>
+</div>
+
+<!-- Add/Edit Holiday Modal -->
+<div class="modal fade" id="holidayModal" tabindex="-1" aria-labelledby="holidayModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="holidayModalLabel"><?php echo $editing ? 'Edit Holiday' : 'Add Holiday'; ?></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="card-body">
-                <?php if ($error_message): ?>
-                    <div class="alert alert-danger"><?php echo htmlspecialchars($error_message); ?></div>
-                <?php endif; ?>
+            <form method="post">
+                <div class="modal-body">
+                    <?php if ($error_message): ?>
+                        <div class="alert alert-danger"><?php echo htmlspecialchars($error_message); ?></div>
+                    <?php endif; ?>
 
-                <form method="post">
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="id" value="<?php echo $editing['id'] ?? ''; ?>">
 
@@ -178,40 +203,28 @@ try {
                         <div class="form-text">If checked, this holiday will repeat annually on the same month/day.</div>
                     </div>
 
-                    <div class="mb-3 form-check">
+                    <div class="form-check">
                         <input type="checkbox" class="form-check-input" id="no_access" name="no_access"
                                <?php echo ($editing['no_access'] ?? 1) ? 'checked' : ''; ?>>
                         <label class="form-check-label" for="no_access">No Access on this day</label>
                         <div class="form-text">If checked, scheduled access will be denied on this day.</div>
                     </div>
-
-                    <div class="d-flex justify-content-between mt-3">
-                        <?php if ($editing): ?>
-                            <a href="holidays.php" class="btn btn-secondary">Cancel</a>
-                        <?php else: ?>
-                            <div></div>
-                        <?php endif; ?>
-                        <button type="submit" class="btn btn-primary"><?php echo $editing ? 'Update' : 'Add'; ?></button>
-                    </div>
-                </form>
-            </div>
-        </div>
-
-        <div class="card shadow-sm mt-4">
-            <div class="card-header">
-                <h6 class="mb-0">About Holidays</h6>
-            </div>
-            <div class="card-body">
-                <p class="small mb-2">Holidays affect access control in the following ways:</p>
-                <ul class="small mb-0">
-                    <li><strong>No Access</strong>: Blocks all scheduled access on the holiday.</li>
-                    <li><strong>Normal Access</strong>: Access continues as per normal schedules.</li>
-                    <li><strong>24/7 schedules</strong> are not affected by holidays.</li>
-                    <li><strong>Master cards</strong> always have access regardless of holidays.</li>
-                </ul>
-            </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><?php echo $editing ? 'Update' : 'Add Holiday'; ?></button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
+
+<?php if ($show_modal): ?>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        new bootstrap.Modal(document.getElementById('holidayModal')).show();
+    });
+</script>
+<?php endif; ?>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>

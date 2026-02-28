@@ -157,9 +157,6 @@ try {
                             </td>
                         </tr>
                     <?php endforeach; ?>
-                    <?php if (empty($logs)): ?>
-                        <tr><td colspan="6" class="text-center text-muted">No access logs found.</td></tr>
-                    <?php endif; ?>
                 </tbody>
             </table>
         </div>

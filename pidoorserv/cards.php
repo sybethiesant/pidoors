@@ -9,6 +9,9 @@ require_once './includes/header.php';
 // Require login
 require_login($config);
 
+$error_message = '';
+$show_modal = false;
+
 // Handle delete action
 if (isset($_GET['delete']) && isset($_GET['token'])) {
     if (verify_csrf_token($_GET['token'])) {
@@ -24,6 +27,68 @@ if (isset($_GET['delete']) && isset($_GET['token'])) {
     }
 }
 
+// Fetch doors, schedules, and groups for the add card modal
+try {
+    $all_doors = $pdo_access->query("SELECT name FROM doors ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
+    $all_schedules = $pdo_access->query("SELECT id, name FROM access_schedules ORDER BY name")->fetchAll();
+    $all_groups = $pdo_access->query("SELECT id, name FROM access_groups ORDER BY name")->fetchAll();
+} catch (PDOException $e) {
+    $all_doors = [];
+    $all_schedules = [];
+    $all_groups = [];
+}
+
+// Handle add card form
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
+        $error_message = 'Invalid security token.';
+    } else {
+        $firstname = sanitize_string($_POST['firstname'] ?? '');
+        $lastname = sanitize_string($_POST['lastname'] ?? '');
+        $card_id = sanitize_string($_POST['card_id'] ?? '');
+        $user_id = sanitize_string($_POST['user_id'] ?? '');
+        $facility = sanitize_string($_POST['facility'] ?? '');
+        $selected_doors = $_POST['doors'] ?? [];
+        $doors_str = implode(',', array_map('sanitize_string', $selected_doors));
+        $schedule_id = validate_int($_POST['schedule_id'] ?? 0) ?: null;
+        $group_id = validate_int($_POST['group_id'] ?? 0) ?: null;
+        $valid_from = $_POST['valid_from'] ?? null;
+        $valid_until = $_POST['valid_until'] ?? null;
+        $active = isset($_POST['active']) ? 1 : 0;
+
+        if (empty($user_id) || empty($facility)) {
+            $error_message = 'User ID and Facility are required.';
+        } else {
+            try {
+                if (empty($card_id)) {
+                    $card_id = bin2hex(random_bytes(4));
+                }
+
+                $stmt = $pdo_access->prepare("
+                    INSERT INTO cards (card_id, user_id, facility, bstr, firstname, lastname, doors, active, group_id, schedule_id, valid_from, valid_until)
+                    VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                $stmt->execute([
+                    $card_id, $user_id, $facility, $firstname, $lastname,
+                    $doors_str, $active, $group_id, $schedule_id,
+                    $valid_from ?: null, $valid_until ?: null
+                ]);
+
+                header("Location: {$config['url']}/cards.php?success=Card added successfully.");
+                exit();
+            } catch (PDOException $e) {
+                if ($e->getCode() == 23000) {
+                    $error_message = 'A card with this ID already exists.';
+                } else {
+                    error_log("Add card error: " . $e->getMessage());
+                    $error_message = 'Failed to add card. Please try again.';
+                }
+            }
+        }
+    }
+    $show_modal = true;
+}
+
 // Fetch all cards with schedule info
 try {
     $stmt = $pdo_access->query("
@@ -34,14 +99,9 @@ try {
         ORDER BY c.lastname, c.firstname
     ");
     $cards = $stmt->fetchAll();
-
-    // Fetch doors for reference
-    $stmt = $pdo_access->query("SELECT name FROM doors ORDER BY name");
-    $doors = $stmt->fetchAll(PDO::FETCH_COLUMN);
 } catch (PDOException $e) {
     error_log("Cards fetch error: " . $e->getMessage());
     $cards = [];
-    $doors = [];
 }
 ?>
 
@@ -50,10 +110,10 @@ try {
         <span class="text-muted"><?php echo count($cards); ?> total cards</span>
     </div>
     <div>
-        <a href="addcard.php" class="btn btn-primary">
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCardModal">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             Add Card
-        </a>
+        </button>
         <a href="importcards.php" class="btn btn-outline-secondary">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
             Import CSV
@@ -141,5 +201,134 @@ try {
         </table>
     </div>
 </div>
+
+<!-- Add Card Modal -->
+<div class="modal fade" id="addCardModal" tabindex="-1" aria-labelledby="addCardModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="addCardModalLabel">Add New Access Card</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post">
+                <div class="modal-body">
+                    <?php if ($error_message): ?>
+                        <div class="alert alert-danger"><?php echo htmlspecialchars($error_message); ?></div>
+                    <?php endif; ?>
+
+                    <?php echo csrf_field(); ?>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="firstname" class="form-label">First Name</label>
+                            <input type="text" class="form-control" id="firstname" name="firstname"
+                                   value="<?php echo htmlspecialchars($_POST['firstname'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="lastname" class="form-label">Last Name</label>
+                            <input type="text" class="form-control" id="lastname" name="lastname"
+                                   value="<?php echo htmlspecialchars($_POST['lastname'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="user_id" class="form-label">User ID <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="user_id" name="user_id" required
+                                   value="<?php echo htmlspecialchars($_POST['user_id'] ?? ''); ?>"
+                                   placeholder="Card number from reader">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="facility" class="form-label">Facility Code <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="facility" name="facility" required
+                                   value="<?php echo htmlspecialchars($_POST['facility'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="card_id" class="form-label">Card ID (auto if blank)</label>
+                            <input type="text" class="form-control" id="card_id" name="card_id"
+                                   value="<?php echo htmlspecialchars($_POST['card_id'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Door Access</label>
+                        <div class="row">
+                            <?php foreach ($all_doors as $door): ?>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="doors[]"
+                                               value="<?php echo htmlspecialchars($door); ?>"
+                                               id="door_<?php echo htmlspecialchars($door); ?>">
+                                        <label class="form-check-label" for="door_<?php echo htmlspecialchars($door); ?>">
+                                            <?php echo htmlspecialchars($door); ?>
+                                        </label>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                            <?php if (empty($all_doors)): ?>
+                                <div class="col-12 text-muted">No doors configured. Add doors first.</div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="schedule_id" class="form-label">Access Schedule</label>
+                            <select class="form-select" id="schedule_id" name="schedule_id">
+                                <option value="">No restriction (24/7)</option>
+                                <?php foreach ($all_schedules as $schedule): ?>
+                                    <option value="<?php echo $schedule['id']; ?>">
+                                        <?php echo htmlspecialchars($schedule['name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="group_id" class="form-label">Access Group</label>
+                            <select class="form-select" id="group_id" name="group_id">
+                                <option value="">None</option>
+                                <?php foreach ($all_groups as $group): ?>
+                                    <option value="<?php echo $group['id']; ?>">
+                                        <?php echo htmlspecialchars($group['name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="valid_from" class="form-label">Valid From</label>
+                            <input type="date" class="form-control" id="valid_from" name="valid_from"
+                                   value="<?php echo htmlspecialchars($_POST['valid_from'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="valid_until" class="form-label">Valid Until</label>
+                            <input type="date" class="form-control" id="valid_until" name="valid_until"
+                                   value="<?php echo htmlspecialchars($_POST['valid_until'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="active" name="active" value="1" checked>
+                        <label class="form-check-label" for="active">Active</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Card</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<?php if ($show_modal): ?>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        new bootstrap.Modal(document.getElementById('addCardModal')).show();
+    });
+</script>
+<?php endif; ?>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>
