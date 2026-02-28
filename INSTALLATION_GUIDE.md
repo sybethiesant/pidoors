@@ -194,8 +194,8 @@ sudo ./install.sh
    - When prompted for MySQL root password, create a strong password and **write it down**
    - When prompted for PiDoors database password, create another strong password and **write it down**
    - When asked to create a default admin user, choose **y** (yes)
-   - Enter your email address (this will be your login username)
-   - Create a strong password for the admin account and **write it down**
+   - Enter a username, email address, and strong password for the admin account — **write these down**
+   - You can log in with either the username or email
 
 4. **Wait for completion**. You'll see a success message with the web interface URL.
 
@@ -248,7 +248,7 @@ You should see "active (running)" in green.
    - You should see the PiDoors login page
 
 4. **Login with**:
-   - Email: The email you created during installation
+   - Username or Email: Either the username or email you set during installation
    - Password: The admin password you created
 
 **If you can't access the page**, see [Troubleshooting](#troubleshooting) section.
@@ -547,10 +547,10 @@ Press `Ctrl + C` to stop viewing logs.
 
 ### Step 5.1: Change Default Password
 
-1. **Log into the web interface** (http://your-server-ip)
-2. **Click your email** in the top right corner
+1. **Log into the web interface** (http://your-server-ip) using your username or email
+2. **Click your name** in the top right corner
 3. **Click "Profile"**
-4. **Change your password** to something secure
+4. **Update your profile details** (name, phone, department, etc.) and **change your password**
 5. **Click "Update Profile"**
 
 ### Step 5.2: Configure System Settings
@@ -574,13 +574,19 @@ Press `Ctrl + C` to stop viewing logs.
 
 ### Step 5.3: Configure Your Doors
 
+Doors can be added two ways:
+
+**Automatic:** When a door controller starts and sends its first heartbeat, it auto-registers in the database. You'll see it appear on the Doors page.
+
+**Manual (via web UI):**
+
 1. **Go to "Doors"** in the sidebar
 2. **Click "Add Door"**
 3. **Fill in the form**:
-   - Name: The name you gave this door (e.g., "Front Entrance")
+   - Name: A lowercase name with underscores (e.g., "front_door", "back_gate") — the form normalizes this automatically
    - Location: Description or building location
-   - IP Address: The IP address of the door controller Pi
    - Unlock Duration: How long to unlock (5 seconds is typical)
+   - Reader Type: Select your card reader type
    - Schedule: Leave blank for 24/7 access (you can create schedules later)
 
 4. **Click "Add Door"**
@@ -588,7 +594,7 @@ Press `Ctrl + C` to stop viewing logs.
 5. **Verify the door status**:
    - Go back to "Doors"
    - You should see your door listed
-   - Status should turn green ("Online") within a minute
+   - Status should turn green ("Online") once the controller connects
 
 ---
 
@@ -619,14 +625,14 @@ Access denied: Card not in database
 3. **Fill in the form**:
    - Card ID: The number you wrote down (e.g., 12345678)
    - User ID: A unique identifier (e.g., EMP001, JOHN001)
-   - First Name: Card holder's first name
-   - Last Name: Card holder's last name
-   - Active: Check this box
+   - Facility Code: The facility code from the reader
+   - First Name / Last Name: Card holder's name
+   - Door Access: Select which doors this card can open
    - Access Group: Leave blank for now (full access)
    - Schedule: Leave blank for 24/7 access
-   - Valid From: Leave blank or set start date
-   - Valid Until: Leave blank for no expiration
-   - PIN Code: Optional 4-6 digit code
+   - Valid From / Valid Until: Leave blank for no date restrictions
+   - Active: Check this box
+   - **Cardholder Details (optional):** Email, phone, department, employee ID, company, title, notes — for corporate record-keeping
 
 4. **Click "Add Card"**
 
@@ -686,13 +692,15 @@ Cards will respect holiday settings automatically!
 1. **Create a CSV file** with this format:
 
 ```csv
-card_id,user_id,firstname,lastname
-12345678,EMP001,John,Smith
-23456789,EMP002,Jane,Doe
-34567890,EMP003,Bob,Wilson
+card_id,user_id,firstname,lastname,email,department
+12345678,EMP001,John,Smith,john@example.com,Engineering
+23456789,EMP002,Jane,Doe,jane@example.com,Marketing
+34567890,EMP003,Bob,Wilson,bob@example.com,Operations
 ```
 
-2. **Go to "Import Cards"**
+Only `card_id` and `user_id` are required. Optional columns: `firstname`, `lastname`, `email`, `phone`, `department`, `employee_id`, `company`, `title`, `notes`, `group_id`, `schedule_id`, `valid_from`, `valid_until`, `pin_code`.
+
+2. **Go to "Import CSV"** (from the Cards page)
 3. **Upload your CSV file**
 4. **Click "Import Cards"**
 
@@ -913,7 +921,7 @@ mysql -u pidoors -p
 In MySQL:
 ```sql
 USE users;
-UPDATE users SET user_pass = 'paste_hash_here' WHERE user_email = 'your@email.com';
+UPDATE users SET user_pass = 'paste_hash_here' WHERE user_email = 'your@email.com' OR user_name = 'yourusername';
 EXIT;
 ```
 
@@ -1010,7 +1018,18 @@ sudo systemctl restart pidoors
 
 ### Database Migrations
 
-When upgrading PiDoors, check if database migrations are required for your version.
+When upgrading PiDoors, always run the migration script to ensure your database has all required columns:
+
+```bash
+# Backup first
+mysqldump -u pidoors -p access > access_backup_$(date +%Y%m%d).sql
+mysqldump -u pidoors -p users > users_backup_$(date +%Y%m%d).sql
+
+# Run migration (safe to re-run, uses IF NOT EXISTS checks)
+mysql -u root -p access < database_migration.sql
+```
+
+The migration script handles both the `access` and `users` databases. It adds any missing columns (extended user profiles, cardholder fields, indexes) without affecting existing data.
 
 #### v2.2.1 Migration (Required if upgrading from v2.2 or earlier)
 
@@ -1111,9 +1130,9 @@ Now that your system is running:
 
 ## Upgrading
 
-### Upgrading to v2.2.1
+### Upgrading to v2.3.0
 
-Version 2.2.1 includes a security fix that requires a database migration. Follow these steps:
+Version 2.3.0 adds extended user/cardholder fields, username login, and door name normalization.
 
 **1. Update the code on the server:**
 ```bash
@@ -1126,21 +1145,14 @@ sudo systemctl restart php*-fpm
 ```
 
 **2. Run the database migration:**
-
-⚠️ **Important:** This step is required! Without it, existing cards may lose door access.
-
 ```bash
 # Backup first
 mysqldump -u pidoors -p access > access_backup_$(date +%Y%m%d).sql
+mysqldump -u pidoors -p users > users_backup_$(date +%Y%m%d).sql
 
-# Preview changes
-python3 migrations/migrate_doors_format.py --dry-run
-
-# Apply changes
-python3 migrations/migrate_doors_format.py
+# Run migration (adds new columns to both databases)
+mysql -u root -p access < database_migration.sql
 ```
-
-See [Database Migrations](#database-migrations) for detailed instructions.
 
 **3. Update all door controllers:**
 ```bash
@@ -1152,15 +1164,39 @@ sudo cp -r pidoors/formats/* /opt/pidoors/formats/
 sudo systemctl restart pidoors
 ```
 
-**4. Verify everything works:**
-- Test a card at each door
-- Check the Access Logs in the web interface
-- Verify door status shows "Online"
+**4. Verify:**
+- Log in with your username (not just email)
+- Check that user profile pages show new fields
+- Check that card edit pages show new cardholder detail fields
+
+### Upgrading to v2.2.1
+
+Version 2.2.1 includes a security fix that requires a door format migration.
+
+```bash
+cd ~/pidoors
+git pull
+sudo cp -r pidoorserv/* /var/www/pidoors/
+sudo chown -R www-data:www-data /var/www/pidoors
+
+# Run door format migration
+mysqldump -u pidoors -p access > access_backup_$(date +%Y%m%d).sql
+python3 migrations/migrate_doors_format.py --dry-run
+python3 migrations/migrate_doors_format.py
+
+sudo systemctl restart nginx && sudo systemctl restart php*-fpm
+```
 
 ### Version History
 
 | Version | Date | Migration Required | Notes |
 |---------|------|-------------------|-------|
+| v2.3.0 | Feb 2026 | **Yes** - `database_migration.sql` | Extended fields, username login, door normalization |
+| v2.2.6 | Feb 2026 | No | Modal forms, door auto-registration, install script rewrite |
+| v2.2.5 | Feb 2026 | No | Layout fixes, DataTables fix |
+| v2.2.4 | Feb 2026 | No | Vendor asset fix |
+| v2.2.3 | Feb 2026 | No | Bookworm venv fix |
+| v2.2.2 | Feb 2026 | No | Fresh install fix |
 | v2.2.1 | Jan 2026 | **Yes** - `migrate_doors_format.py` | Security fix for zone matching |
 | v2.2 | Jan 2026 | No | Multi-reader support |
 | v2.1 | Jan 2026 | No | Nginx migration |
