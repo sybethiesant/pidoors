@@ -484,7 +484,24 @@ if [ "$INSTALL_DOOR" = true ]; then
     python3 -m venv "$INSTALL_DIR/venv" --system-site-packages
     "$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q
     "$INSTALL_DIR/venv/bin/pip" install pymysql pyserial smbus2 spidev -q 2>/dev/null || true
-    "$INSTALL_DIR/venv/bin/pip" install RPi.GPIO -q 2>/dev/null || warn "RPi.GPIO not available (non-Pi system?)"
+
+    # On Bookworm+ (Debian 12+), RPi.GPIO is broken for edge detection.
+    # Use rpi-lgpio (drop-in replacement) from system packages instead.
+    DEBIAN_VERSION=$(cat /etc/debian_version 2>/dev/null | cut -d. -f1)
+    if [ -n "$DEBIAN_VERSION" ] && [ "$DEBIAN_VERSION" -ge 12 ] 2>/dev/null; then
+        # Remove RPi.GPIO from venv if present so system rpi-lgpio takes over
+        "$INSTALL_DIR/venv/bin/pip" uninstall RPi.GPIO -y -q 2>/dev/null || true
+        # Ensure rpi-lgpio is installed at system level
+        if ! python3 -c "import RPi.GPIO" 2>/dev/null; then
+            apt-get install -y -qq python3-rpi-lgpio > /dev/null 2>&1 || \
+            apt-get install -y -qq python3-rpi.gpio > /dev/null 2>&1 || \
+            warn "Could not install GPIO library - install rpi-lgpio manually"
+        fi
+        ok "GPIO library: rpi-lgpio (Debian $DEBIAN_VERSION)"
+    else
+        "$INSTALL_DIR/venv/bin/pip" install RPi.GPIO -q 2>/dev/null || warn "RPi.GPIO not available (non-Pi system?)"
+        ok "GPIO library: RPi.GPIO"
+    fi
     ok "Python environment ready"
 
     # Create user

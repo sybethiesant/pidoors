@@ -101,8 +101,6 @@ def initialize():
     running = True
 
     GPIO.setmode(GPIO.BCM)
-    GPIO.cleanup()
-    GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
     syslog.openlog("accesscontrol", syslog.LOG_PID, syslog.LOG_AUTH)
 
