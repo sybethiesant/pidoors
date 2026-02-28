@@ -27,14 +27,12 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 
 ### Access Control
 - **Multi-format Wiegand**: 26, 32, 34, 35, 36, 37, 48-bit with auto-detection
-- **OSDP Readers**: RS-485 encrypted readers with AES-128 Secure Channel
-- **NFC/RFID**: PN532 (I2C/SPI) and MFRC522 (SPI) support
+- **OSDP Readers**: RS-485 encrypted readers (planned — reader module included, not yet integrated)
+- **NFC/RFID**: PN532 and MFRC522 support (planned — reader modules included, not yet integrated)
 - Time-based access schedules
 - Access groups and permissions
 - Holiday calendar support
 - Card validity date ranges
-- PIN code authentication
-- Anti-passback protection
 - Persistent master cards (never expire for emergency access)
 - **Master card toggle** in web UI — promote any card to master with a checkbox
 
