@@ -545,18 +545,18 @@ def setup_output_GPIOs():
     zone_config = config.get(zone, {})
     latch_gpio = zone_config.get("latch_gpio")
 
+    # Status LEDs must be set up BEFORE lock_door() which uses them
+    GPIO.setup(25, GPIO.OUT)  # Green LED / Granted
+    GPIO.setup(22, GPIO.OUT)  # Red LED / Denied
+
     if latch_gpio:
         zone_by_pin[latch_gpio] = zone
         GPIO.setup(latch_gpio, GPIO.OUT)
         lock_door()
-
-    # Status LEDs: Green (access granted) and Red (access denied)
-    GPIO.setup(25, GPIO.OUT)  # Green LED / Granted
-    GPIO.setup(22, GPIO.OUT)  # Red LED / Denied
-
-    # Initial state: Red LED on (door locked)
-    GPIO.output(25, 0)
-    GPIO.output(22, 1)
+    else:
+        # No latch configured - just set LED initial state
+        GPIO.output(25, 0)
+        GPIO.output(22, 1)
 
 
 def setup_readers():

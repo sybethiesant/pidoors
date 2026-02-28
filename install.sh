@@ -22,7 +22,7 @@ NC='\033[0m'
 INSTALL_DIR="/opt/pidoors"
 WEB_ROOT="/var/www/pidoors"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VERSION="2.2.6"
+VERSION="2.3.1"
 
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; }
@@ -174,13 +174,31 @@ if [ "$INSTALL_SERVER" = true ]; then
 
     step "Server: Database setup"
 
-    echo "  MariaDB needs to be secured. This will run mysql_secure_installation."
+    echo "  MariaDB needs to be secured."
     echo "  If you have already secured it, you can skip this step."
     echo
-    read -p "  Run mysql_secure_installation? (Y/n) " -n 1 -r
+    read -p "  Run secure installation? (Y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        mysql_secure_installation
+        if command -v mariadb-secure-installation > /dev/null 2>&1; then
+            mariadb-secure-installation
+        elif command -v mysql_secure_installation > /dev/null 2>&1; then
+            mysql_secure_installation
+        else
+            warn "Neither mariadb-secure-installation nor mysql_secure_installation found"
+            warn "Please secure MariaDB manually after installation"
+        fi
+    fi
+
+    # Allow remote connections from door controllers
+    MARIADB_CNF="/etc/mysql/mariadb.conf.d/50-server.cnf"
+    if [ -f "$MARIADB_CNF" ]; then
+        if grep -q "^bind-address\s*=\s*127.0.0.1" "$MARIADB_CNF"; then
+            info "Configuring MariaDB to accept remote connections..."
+            sed -i 's/^bind-address\s*=\s*127.0.0.1/bind-address = 0.0.0.0/' "$MARIADB_CNF"
+            systemctl restart mariadb
+            ok "MariaDB bind-address set to 0.0.0.0 (allows door controllers to connect)"
+        fi
     fi
 
     echo
