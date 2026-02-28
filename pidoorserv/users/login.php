@@ -32,18 +32,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         $error_message = 'Invalid security token. Please try again.';
     } else {
-        $email = sanitize_email($_POST['email'] ?? '');
+        $login = trim($_POST['login'] ?? '');
         $password = $_POST['pass'] ?? '';
 
-        if (empty($email) || empty($password)) {
-            $error_message = 'Please enter both email and password.';
-        } elseif (!validate_email($email)) {
-            $error_message = 'Please enter a valid email address.';
+        if (empty($login) || empty($password)) {
+            $error_message = 'Please enter both username/email and password.';
         } else {
             try {
-                // Use prepared statement to prevent SQL injection
-                $stmt = $pdo->prepare("SELECT id, user_name, user_email, user_pass, admin FROM users WHERE user_email = ?");
-                $stmt->execute([$email]);
+                // Support login by username or email
+                $stmt = $pdo->prepare("SELECT id, user_name, user_email, user_pass, admin FROM users WHERE user_email = ? OR user_name = ?");
+                $stmt->execute([$login, $login]);
                 $user = $stmt->fetch();
 
                 if ($user) {
@@ -107,12 +105,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
                             $error_message = "Too many failed login attempts. Account locked for {$lockout_minutes} minute(s).";
                         } else {
                             $remaining_attempts = $max_attempts - $_SESSION['login_attempts'];
-                            $error_message = 'Invalid email or password. ' . $remaining_attempts . ' attempt(s) remaining.';
+                            $error_message = 'Invalid username/email or password. ' . $remaining_attempts . ' attempt(s) remaining.';
                         }
 
                         // Log failed login attempt
                         try {
-                            log_security_event($pdo, 'login_failed', null, "Failed login attempt for: $email");
+                            log_security_event($pdo, 'login_failed', null, "Failed login attempt for: $login");
                         } catch (Exception $e) {
                             // Audit log table might not exist yet, ignore
                         }
@@ -128,7 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
                         $lockout_minutes = ceil($lockout_seconds / 60);
                         $error_message = "Too many failed login attempts. Account locked for {$lockout_minutes} minute(s).";
                     } else {
-                        $error_message = 'Invalid email or password.';
+                        $error_message = 'Invalid username/email or password.';
                     }
                 }
             } catch (PDOException $e) {
@@ -158,10 +156,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
                         <?php echo csrf_field(); ?>
 
                         <div class="mb-3">
-                            <label for="email" class="form-label">Email Address</label>
-                            <input type="email" class="form-control" id="email" name="email"
-                                   placeholder="Enter your email" required autofocus
-                                   value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>">
+                            <label for="login" class="form-label">Username or Email</label>
+                            <input type="text" class="form-control" id="login" name="login"
+                                   placeholder="Enter your username or email" required autofocus
+                                   value="<?php echo htmlspecialchars($_POST['login'] ?? ''); ?>">
                         </div>
 
                         <div class="mb-3">

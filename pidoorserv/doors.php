@@ -51,8 +51,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $reader_type = 'wiegand';
         }
 
+        // Normalize door name: lowercase, spaces to underscores, alphanumeric+underscore only
+        $name = strtolower(trim($name));
+        $name = preg_replace('/\s+/', '_', $name);
+        $name = preg_replace('/[^a-z0-9_]/', '', $name);
+
         if (empty($name)) {
-            $error_message = 'Door name is required.';
+            $error_message = 'Door name is required (letters, numbers, underscores only).';
         } else {
             try {
                 $stmt = $pdo_access->prepare("

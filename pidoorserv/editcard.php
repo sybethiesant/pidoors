@@ -54,12 +54,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $valid_from = $_POST['valid_from'] ?? null;
         $valid_until = $_POST['valid_until'] ?? null;
         $active = isset($_POST['active']) ? 1 : 0;
+        $card_email = sanitize_string($_POST['card_email'] ?? '');
+        $card_phone = sanitize_string($_POST['card_phone'] ?? '');
+        $card_department = sanitize_string($_POST['card_department'] ?? '');
+        $card_employee_id = sanitize_string($_POST['card_employee_id'] ?? '');
+        $card_company = sanitize_string($_POST['card_company'] ?? '');
+        $card_title = sanitize_string($_POST['card_title'] ?? '');
+        $card_notes = sanitize_string($_POST['card_notes'] ?? '');
 
         try {
             $stmt = $pdo_access->prepare("
                 UPDATE cards SET
                     firstname = ?, lastname = ?, doors = ?, active = ?,
                     group_id = ?, schedule_id = ?, valid_from = ?, valid_until = ?,
+                    email = ?, phone = ?, department = ?, employee_id = ?,
+                    company = ?, title = ?, notes = ?,
                     updated_at = NOW()
                 WHERE card_id = ?
             ");
@@ -67,6 +76,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $firstname, $lastname, $doors_str, $active,
                 $group_id, $schedule_id,
                 $valid_from ?: null, $valid_until ?: null,
+                $card_email ?: null, $card_phone ?: null, $card_department ?: null,
+                $card_employee_id ?: null, $card_company ?: null, $card_title ?: null, $card_notes ?: null,
                 $card_id
             ]);
 
@@ -188,6 +199,53 @@ $card_doors = array_filter(array_map('trim', explode(',', $card['doors'])));
                         <input type="checkbox" class="form-check-input" id="active" name="active" value="1"
                                <?php echo $card['active'] ? 'checked' : ''; ?>>
                         <label class="form-check-label" for="active">Active</label>
+                    </div>
+
+                    <hr>
+                    <h6 class="text-muted mb-3">Cardholder Details</h6>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="card_email" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="card_email" name="card_email"
+                                   value="<?php echo htmlspecialchars($card['email'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="card_phone" class="form-label">Phone</label>
+                            <input type="text" class="form-control" id="card_phone" name="card_phone"
+                                   value="<?php echo htmlspecialchars($card['phone'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="card_department" class="form-label">Department</label>
+                            <input type="text" class="form-control" id="card_department" name="card_department"
+                                   value="<?php echo htmlspecialchars($card['department'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="card_employee_id" class="form-label">Employee ID</label>
+                            <input type="text" class="form-control" id="card_employee_id" name="card_employee_id"
+                                   value="<?php echo htmlspecialchars($card['employee_id'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="card_company" class="form-label">Company</label>
+                            <input type="text" class="form-control" id="card_company" name="card_company"
+                                   value="<?php echo htmlspecialchars($card['company'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="card_title" class="form-label">Title</label>
+                            <input type="text" class="form-control" id="card_title" name="card_title"
+                                   value="<?php echo htmlspecialchars($card['title'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="card_notes" class="form-label">Notes</label>
+                        <textarea class="form-control" id="card_notes" name="card_notes" rows="2"><?php echo htmlspecialchars($card['notes'] ?? ''); ?></textarea>
                     </div>
 
                     <div class="d-flex justify-content-between">

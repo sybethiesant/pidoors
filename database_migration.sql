@@ -409,4 +409,129 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- --------------------------------------------------------
+-- v2.3.0 - Extended cardholder fields on cards table
+-- --------------------------------------------------------
+
+-- Add email column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'email');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `email` varchar(255) DEFAULT NULL AFTER `lastname`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add phone column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'phone');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `phone` varchar(30) DEFAULT NULL AFTER `email`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add department column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'department');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `department` varchar(100) DEFAULT NULL AFTER `phone`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add employee_id column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'employee_id');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `employee_id` varchar(50) DEFAULT NULL AFTER `department`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add company column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'company');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `company` varchar(100) DEFAULT NULL AFTER `employee_id`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add title column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'title');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `title` varchar(100) DEFAULT NULL AFTER `company`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add notes column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'notes');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `notes` text DEFAULT NULL AFTER `title`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- --------------------------------------------------------
+-- v2.3.0 - Extended user profile fields (users database)
+-- --------------------------------------------------------
+
+USE `users`;
+
+-- Add first_name column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'first_name');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD COLUMN `first_name` varchar(100) DEFAULT NULL AFTER `user_name`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add last_name column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'last_name');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD COLUMN `last_name` varchar(100) DEFAULT NULL AFTER `first_name`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add phone column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'phone');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD COLUMN `phone` varchar(30) DEFAULT NULL AFTER `last_name`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add department column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'department');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD COLUMN `department` varchar(100) DEFAULT NULL AFTER `phone`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add employee_id column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'employee_id');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD COLUMN `employee_id` varchar(50) DEFAULT NULL AFTER `department`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add company column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'company');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD COLUMN `company` varchar(100) DEFAULT NULL AFTER `employee_id`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add job_title column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'job_title');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD COLUMN `job_title` varchar(100) DEFAULT NULL AFTER `company`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add notes column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'notes');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD COLUMN `notes` text DEFAULT NULL AFTER `job_title`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add UNIQUE index on user_name if not exists (for username-based login)
+SET @exist := (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'unique_user_name');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `users` ADD UNIQUE KEY `unique_user_name` (`user_name`)', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Switch back to access database context
+USE `access`;
+
 COMMIT;
