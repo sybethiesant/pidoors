@@ -17,16 +17,23 @@ Features:
 - Automatic database reconnection
 """
 
-import RPi.GPIO as GPIO
 from datetime import datetime, timedelta
 import sys
+import os
+
+# Ensure install dir is in sys.path for local imports (formats, readers)
+# even when WorkingDirectory is set to a runtime dir for lgpio temp files
+_install_dir = os.environ.get('PIDOORS_DIR', '/opt/pidoors')
+if _install_dir not in sys.path:
+    sys.path.insert(0, _install_dir)
+
+import RPi.GPIO as GPIO
 import time
 import signal
 import json
 import threading
 import syslog
 import socket
-import os
 import fcntl
 
 # Try to import optional dependencies

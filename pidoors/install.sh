@@ -588,10 +588,7 @@ EOF
     ok "Permissions set"
 
     # Systemd service
-    if [ -f "$DOOR_SRC/pidoors.service" ]; then
-        cp "$DOOR_SRC/pidoors.service" /etc/systemd/system/
-    else
-        cat > /etc/systemd/system/pidoors.service <<EOF
+    cat > /etc/systemd/system/pidoors.service <<EOF
 [Unit]
 Description=PiDoors Access Control Service
 After=network.target
@@ -600,8 +597,10 @@ After=network.target
 Type=simple
 User=pidoors
 Group=pidoors
-WorkingDirectory=/opt/pidoors
+RuntimeDirectory=pidoors
+WorkingDirectory=/run/pidoors
 ExecStart=/opt/pidoors/venv/bin/python3 /opt/pidoors/pidoors.py
+Environment=PIDOORS_DIR=/opt/pidoors
 Restart=always
 RestartSec=10
 SupplementaryGroups=gpio
@@ -609,7 +608,6 @@ SupplementaryGroups=gpio
 [Install]
 WantedBy=multi-user.target
 EOF
-    fi
     systemctl daemon-reload
     systemctl enable pidoors.service > /dev/null 2>&1
     ok "Systemd service installed and enabled"
