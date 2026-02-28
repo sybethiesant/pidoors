@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.4.0-green)
+![Version](https://img.shields.io/badge/version-2.4.1-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -511,7 +511,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.4.0** - Production Ready
+**Current Version: 2.4.1** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -523,6 +523,16 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.4.1 (February 2026)
+- **Fix**: Holidays page crash — column name mismatch (`no_access` vs `access_denied`)
+- **Fix**: Groups page crash — missing `doors` column on `access_groups` table
+- **Fix**: Log export crash — `rowCount()` called on array instead of `count()`
+- **Fix**: `config.php.example` missing `site_name` and `notification_from` keys
+- **Accuracy**: Removed undocumented PIN code and anti-passback feature claims
+- **Accuracy**: Marked OSDP and NFC reader support as planned (modules exist, not yet integrated)
+- **Cleanup**: Removed dead code (`addcard.php`, `adddoor.php`, legacy backup templates)
+- Database migration adds `doors` column to `access_groups` for existing installs
 
 ### Version 2.4.0 (February 2026)
 - **Master card web UI** — toggle any card as a master card from the cards list, edit form, or add modal
