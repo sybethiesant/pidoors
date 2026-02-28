@@ -99,13 +99,16 @@ def get_local_ip():
         return '127.0.0.1'
 
 
-myip = get_local_ip()
+myip = '127.0.0.1'
 
 
 def initialize():
     """Initialize the access control system"""
-    global running, format_registry
+    global running, format_registry, myip
     running = True
+
+    # Detect local IP (network should be ready by now, unlike module load time)
+    myip = get_local_ip()
 
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
@@ -1278,10 +1281,14 @@ def start_heartbeat_thread():
 
 def heartbeat_loop():
     """Send periodic heartbeat to server and sync cache"""
-    global running
+    global running, myip
 
     while running:
         try:
+            # Refresh IP in case network came up after boot
+            if myip == '127.0.0.1':
+                myip = get_local_ip()
+
             send_heartbeat()
 
             # Sync cache every hour
