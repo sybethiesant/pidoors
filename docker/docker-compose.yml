@@ -1,0 +1,55 @@
+services:
+  db:
+    image: mariadb:10.6
+    container_name: pidoors-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: pidoors_root_pass
+      MARIADB_USER: pidoors
+      MARIADB_PASSWORD: pidoors_pass
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    networks:
+      - pidoors-network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  php:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.php
+    container_name: pidoors-php
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app_data:/var/www/pidoors
+    networks:
+      - pidoors-network
+
+  web:
+    image: nginx:1.25-alpine
+    container_name: pidoors-web
+    restart: unless-stopped
+    depends_on:
+      - php
+    ports:
+      - "8088:80"
+    volumes:
+      - app_data:/var/www/pidoors:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - pidoors-network
+
+volumes:
+  db_data:
+  app_data:
+
+networks:
+  pidoors-network:
+    driver: bridge
