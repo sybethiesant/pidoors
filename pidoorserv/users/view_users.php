@@ -22,6 +22,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = $_POST['pass'] ?? '';
         $user_isadmin = isset($_POST['isadmin']) ? 1 : 0;
 
+            $first_name = sanitize_string($_POST['first_name'] ?? '');
+        $last_name = sanitize_string($_POST['last_name'] ?? '');
+        $phone = sanitize_string($_POST['phone'] ?? '');
+        $department = sanitize_string($_POST['department'] ?? '');
+        $employee_id = sanitize_string($_POST['employee_id'] ?? '');
+        $company = sanitize_string($_POST['company'] ?? '');
+        $job_title = sanitize_string($_POST['job_title'] ?? '');
+        $notes = sanitize_string($_POST['notes'] ?? '');
+
         if (empty($user_name)) {
             $error_message = 'Please enter a username.';
         } elseif (empty($user_email) || !validate_email($user_email)) {
@@ -34,15 +43,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error_message = implode(' ', $password_errors);
             } else {
                 try {
-                    $stmt = $pdo->prepare("SELECT id FROM users WHERE user_email = ?");
-                    $stmt->execute([$user_email]);
+                    // Check for duplicate email or username
+                    $stmt = $pdo->prepare("SELECT id FROM users WHERE user_email = ? OR user_name = ?");
+                    $stmt->execute([$user_email, $user_name]);
 
                     if ($stmt->fetch()) {
-                        $error_message = 'This email address is already registered.';
+                        $error_message = 'A user with this email or username already exists.';
                     } else {
                         $password_hash = hash_password($password);
-                        $stmt = $pdo->prepare("INSERT INTO users (user_name, user_pass, user_email, admin) VALUES (?, ?, ?, ?)");
-                        $stmt->execute([$user_name, $password_hash, $user_email, $user_isadmin]);
+                        $stmt = $pdo->prepare("INSERT INTO users (user_name, user_pass, user_email, admin, first_name, last_name, phone, department, employee_id, company, job_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                        $stmt->execute([$user_name, $password_hash, $user_email, $user_isadmin, $first_name ?: null, $last_name ?: null, $phone ?: null, $department ?: null, $employee_id ?: null, $company ?: null, $job_title ?: null, $notes ?: null]);
 
                         try {
                             log_security_event($pdo, 'user_created', $_SESSION['user_id'],
@@ -66,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Fetch all users
 try {
-    $stmt = $pdo->query("SELECT id, user_name, user_email, admin FROM users ORDER BY user_name");
+    $stmt = $pdo->query("SELECT id, user_name, user_email, admin, first_name, last_name, department, company FROM users ORDER BY user_name");
     $users = $stmt->fetchAll();
 } catch (PDOException $e) {
     error_log("View users error: " . $e->getMessage());
@@ -88,7 +98,9 @@ try {
             <thead class="table-dark">
                 <tr>
                     <th>Username</th>
+                    <th>Name</th>
                     <th>Email</th>
+                    <th>Department</th>
                     <th>Role</th>
                     <th width="100">Actions</th>
                 </tr>
@@ -97,7 +109,9 @@ try {
                 <?php foreach ($users as $user): ?>
                     <tr>
                         <td><?php echo htmlspecialchars($user['user_name']); ?></td>
+                        <td><?php echo htmlspecialchars(trim(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '')) ?: '-'); ?></td>
                         <td><?php echo htmlspecialchars($user['user_email']); ?></td>
+                        <td><?php echo htmlspecialchars($user['department'] ?? '-'); ?></td>
                         <td>
                             <?php if ($user['admin'] == 1): ?>
                                 <span class="badge bg-danger">Administrator</span>
@@ -127,7 +141,7 @@ try {
 
 <!-- Add User Modal -->
 <div class="modal fade" id="addUserModal" tabindex="-1" aria-labelledby="addUserModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header bg-primary text-white">
                 <h5 class="modal-title" id="addUserModalLabel">Add New Panel User</h5>
@@ -141,33 +155,92 @@ try {
 
                     <?php echo csrf_field(); ?>
 
-                    <div class="mb-3">
-                        <label for="name" class="form-label">Username</label>
-                        <input type="text" class="form-control" id="name" name="name"
-                               placeholder="Enter username" required
-                               value="<?php echo htmlspecialchars($_POST['name'] ?? ''); ?>">
-                    </div>
+                    <h6 class="text-muted mb-3">Account Details <span class="text-danger">*</span></h6>
 
-                    <div class="mb-3">
-                        <label for="email" class="form-label">Email Address</label>
-                        <input type="email" class="form-control" id="email" name="email"
-                               placeholder="Enter email address" required
-                               value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>">
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="pass" class="form-label">Password</label>
-                        <input type="password" class="form-control" id="pass" name="pass"
-                               placeholder="Enter password" required>
-                        <div class="form-text">
-                            Password must be at least <?php echo $config['password_min_length']; ?> characters,
-                            include uppercase and lowercase letters, and contain at least one number.
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="name" class="form-label">Username <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="name" name="name"
+                                   placeholder="Enter username" required
+                                   value="<?php echo htmlspecialchars($_POST['name'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="email" class="form-label">Email Address <span class="text-danger">*</span></label>
+                            <input type="email" class="form-control" id="email" name="email"
+                                   placeholder="Enter email address" required
+                                   value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>">
                         </div>
                     </div>
 
-                    <div class="form-check">
-                        <input type="checkbox" class="form-check-input" id="isadmin" name="isadmin" value="1">
-                        <label class="form-check-label" for="isadmin">Administrator Access</label>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="pass" class="form-label">Password <span class="text-danger">*</span></label>
+                            <input type="password" class="form-control" id="pass" name="pass"
+                                   placeholder="Enter password" required>
+                            <div class="form-text">
+                                Min <?php echo $config['password_min_length']; ?> chars, mixed case + number.
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3 d-flex align-items-center pt-4">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="isadmin" name="isadmin" value="1">
+                                <label class="form-check-label" for="isadmin">Administrator Access</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+                    <h6 class="text-muted mb-3">Profile Details <small>(optional)</small></h6>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="first_name" class="form-label">First Name</label>
+                            <input type="text" class="form-control" id="first_name" name="first_name"
+                                   value="<?php echo htmlspecialchars($_POST['first_name'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="last_name" class="form-label">Last Name</label>
+                            <input type="text" class="form-control" id="last_name" name="last_name"
+                                   value="<?php echo htmlspecialchars($_POST['last_name'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="phone" class="form-label">Phone</label>
+                            <input type="text" class="form-control" id="phone" name="phone"
+                                   value="<?php echo htmlspecialchars($_POST['phone'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="employee_id" class="form-label">Employee ID</label>
+                            <input type="text" class="form-control" id="employee_id" name="employee_id"
+                                   value="<?php echo htmlspecialchars($_POST['employee_id'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="department" class="form-label">Department</label>
+                            <input type="text" class="form-control" id="department" name="department"
+                                   value="<?php echo htmlspecialchars($_POST['department'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="job_title" class="form-label">Job Title</label>
+                            <input type="text" class="form-control" id="job_title" name="job_title"
+                                   value="<?php echo htmlspecialchars($_POST['job_title'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="company" class="form-label">Company</label>
+                            <input type="text" class="form-control" id="company" name="company"
+                                   value="<?php echo htmlspecialchars($_POST['company'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="notes" class="form-label">Notes</label>
+                            <textarea class="form-control" id="notes" name="notes" rows="1"><?php echo htmlspecialchars($_POST['notes'] ?? ''); ?></textarea>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">

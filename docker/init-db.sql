@@ -18,6 +18,14 @@ USE `users`;
 CREATE TABLE IF NOT EXISTS `users` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `user_name` varchar(100) NOT NULL,
+  `first_name` varchar(100) DEFAULT NULL,
+  `last_name` varchar(100) DEFAULT NULL,
+  `phone` varchar(30) DEFAULT NULL,
+  `department` varchar(100) DEFAULT NULL,
+  `employee_id` varchar(50) DEFAULT NULL,
+  `company` varchar(100) DEFAULT NULL,
+  `job_title` varchar(100) DEFAULT NULL,
+  `notes` text DEFAULT NULL,
   `user_email` varchar(255) NOT NULL,
   `user_pass` varchar(255) NOT NULL,
   `admin` tinyint(1) NOT NULL DEFAULT 0,
@@ -25,7 +33,8 @@ CREATE TABLE IF NOT EXISTS `users` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `last_login` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `user_email` (`user_email`)
+  UNIQUE KEY `user_email` (`user_email`),
+  UNIQUE KEY `unique_user_name` (`user_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `audit_logs` (
@@ -265,6 +274,13 @@ ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `anti_passback_location` varchar(50
 ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `created_at` datetime DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP;
 ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `card_type` enum('wiegand','nfc') DEFAULT 'wiegand' AFTER `bstr`;
+ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `email` varchar(255) DEFAULT NULL AFTER `lastname`;
+ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `phone` varchar(30) DEFAULT NULL AFTER `email`;
+ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `department` varchar(100) DEFAULT NULL AFTER `phone`;
+ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `employee_id` varchar(50) DEFAULT NULL AFTER `department`;
+ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `company` varchar(100) DEFAULT NULL AFTER `employee_id`;
+ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `title` varchar(100) DEFAULT NULL AFTER `company`;
+ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `notes` text DEFAULT NULL AFTER `title`;
 
 -- Add extended columns to doors table
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `ip_address` varchar(45) DEFAULT NULL AFTER `description`;

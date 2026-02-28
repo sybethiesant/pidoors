@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                         // Map columns
                         $col_map = [];
                         $required_cols = ['card_id', 'user_id'];
-                        $optional_cols = ['firstname', 'lastname', 'group_id', 'schedule_id', 'valid_from', 'valid_until', 'pin_code'];
+                        $optional_cols = ['firstname', 'lastname', 'email', 'phone', 'department', 'employee_id', 'company', 'title', 'notes', 'group_id', 'schedule_id', 'valid_from', 'valid_until', 'pin_code'];
 
                         foreach ($required_cols as $col) {
                             $idx = array_search($col, $header);
@@ -84,8 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
                             try {
                                 $insert_stmt = $pdo_access->prepare("
-                                    INSERT INTO cards (card_id, user_id, firstname, lastname, group_id, schedule_id, valid_from, valid_until, pin_code)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    INSERT INTO cards (card_id, user_id, firstname, lastname, email, phone, department, employee_id, company, title, notes, group_id, schedule_id, valid_from, valid_until, pin_code)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ");
 
                                 while (($row = fgetcsv($handle)) !== false) {
@@ -119,6 +119,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
                                     $firstname = sanitize_string($row[$col_map['firstname'] ?? -1] ?? '');
                                     $lastname = sanitize_string($row[$col_map['lastname'] ?? -1] ?? '');
+                                    $csv_email = sanitize_string($row[$col_map['email'] ?? -1] ?? '') ?: null;
+                                    $csv_phone = sanitize_string($row[$col_map['phone'] ?? -1] ?? '') ?: null;
+                                    $csv_department = sanitize_string($row[$col_map['department'] ?? -1] ?? '') ?: null;
+                                    $csv_employee_id = sanitize_string($row[$col_map['employee_id'] ?? -1] ?? '') ?: null;
+                                    $csv_company = sanitize_string($row[$col_map['company'] ?? -1] ?? '') ?: null;
+                                    $csv_title = sanitize_string($row[$col_map['title'] ?? -1] ?? '') ?: null;
+                                    $csv_notes = sanitize_string($row[$col_map['notes'] ?? -1] ?? '') ?: null;
                                     $group_id = validate_int($row[$col_map['group_id'] ?? -1] ?? 0) ?: $default_group;
                                     $schedule_id = validate_int($row[$col_map['schedule_id'] ?? -1] ?? 0) ?: $default_schedule;
                                     $valid_from = sanitize_string($row[$col_map['valid_from'] ?? -1] ?? '') ?: null;
@@ -128,6 +135,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                                     try {
                                         $insert_stmt->execute([
                                             $card_id, $user_id, $firstname, $lastname,
+                                            $csv_email, $csv_phone, $csv_department, $csv_employee_id,
+                                            $csv_company, $csv_title, $csv_notes,
                                             $group_id, $schedule_id, $valid_from, $valid_until, $pin_code
                                         ]);
                                         $imported++;
@@ -251,6 +260,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                 <ul class="small">
                     <li><code>firstname</code> - First name</li>
                     <li><code>lastname</code> - Last name</li>
+                    <li><code>email</code> - Email address</li>
+                    <li><code>phone</code> - Phone number</li>
+                    <li><code>department</code> - Department</li>
+                    <li><code>employee_id</code> - Employee ID</li>
+                    <li><code>company</code> - Company name</li>
+                    <li><code>title</code> - Job title</li>
+                    <li><code>notes</code> - Notes</li>
                     <li><code>group_id</code> - Access group ID</li>
                     <li><code>schedule_id</code> - Schedule ID</li>
                     <li><code>valid_from</code> - Start date (YYYY-MM-DD)</li>

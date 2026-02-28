@@ -37,17 +37,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($action === 'update_profile') {
             $email = filter_var($_POST['email'] ?? '', FILTER_VALIDATE_EMAIL);
+            $first_name = sanitize_string($_POST['first_name'] ?? '');
+            $last_name = sanitize_string($_POST['last_name'] ?? '');
+            $phone = sanitize_string($_POST['phone'] ?? '');
+            $department = sanitize_string($_POST['department'] ?? '');
+            $company = sanitize_string($_POST['company'] ?? '');
+            $job_title = sanitize_string($_POST['job_title'] ?? '');
 
             if (!$email) {
                 $error_message = 'Valid email address is required.';
             } else {
                 try {
-                    $stmt = $pdo->prepare("UPDATE users SET user_email = ? WHERE id = ?");
-                    $stmt->execute([$email, $user_id]);
+                    $stmt = $pdo->prepare("UPDATE users SET user_email = ?, first_name = ?, last_name = ?, phone = ?, department = ?, company = ?, job_title = ? WHERE id = ?");
+                    $stmt->execute([$email, $first_name ?: null, $last_name ?: null, $phone ?: null, $department ?: null, $company ?: null, $job_title ?: null, $user_id]);
                     $user['user_email'] = $email;
+                    $user['first_name'] = $first_name;
+                    $user['last_name'] = $last_name;
+                    $user['phone'] = $phone;
+                    $user['department'] = $department;
+                    $user['company'] = $company;
+                    $user['job_title'] = $job_title;
                     $success_message = 'Profile updated successfully.';
 
-                    log_security_event($pdo, 'profile_update', $user_id, 'Email updated');
+                    log_security_event($pdo, 'profile_update', $user_id, 'Profile updated');
                 } catch (PDOException $e) {
                     error_log("Profile update error: " . $e->getMessage());
                     $error_message = 'Failed to update profile.';
@@ -128,28 +140,68 @@ try {
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="action" value="update_profile">
 
-                    <div class="mb-3">
-                        <label class="form-label">Username</label>
-                        <input type="text" class="form-control" value="<?php echo htmlspecialchars($user['user_name']); ?>" disabled>
-                        <div class="form-text">Username cannot be changed.</div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Username</label>
+                            <input type="text" class="form-control" value="<?php echo htmlspecialchars($user['user_name']); ?>" disabled>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="email" class="form-label">Email Address</label>
+                            <input type="email" class="form-control" id="email" name="email"
+                                   value="<?php echo htmlspecialchars($user['user_email'] ?? ''); ?>" required>
+                        </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label for="email" class="form-label">Email Address</label>
-                        <input type="email" class="form-control" id="email" name="email"
-                               value="<?php echo htmlspecialchars($user['user_email'] ?? ''); ?>" required>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="first_name" class="form-label">First Name</label>
+                            <input type="text" class="form-control" id="first_name" name="first_name"
+                                   value="<?php echo htmlspecialchars($user['first_name'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="last_name" class="form-label">Last Name</label>
+                            <input type="text" class="form-control" id="last_name" name="last_name"
+                                   value="<?php echo htmlspecialchars($user['last_name'] ?? ''); ?>">
+                        </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label">Role</label>
-                        <input type="text" class="form-control"
-                               value="<?php echo $user['admin'] ? 'Administrator' : 'User'; ?>" disabled>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="phone" class="form-label">Phone</label>
+                            <input type="text" class="form-control" id="phone" name="phone"
+                                   value="<?php echo htmlspecialchars($user['phone'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="department" class="form-label">Department</label>
+                            <input type="text" class="form-control" id="department" name="department"
+                                   value="<?php echo htmlspecialchars($user['department'] ?? ''); ?>">
+                        </div>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label">Account Created</label>
-                        <input type="text" class="form-control"
-                               value="<?php echo date('Y-m-d H:i:s', strtotime($user['created_at'] ?? 'now')); ?>" disabled>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="company" class="form-label">Company</label>
+                            <input type="text" class="form-control" id="company" name="company"
+                                   value="<?php echo htmlspecialchars($user['company'] ?? ''); ?>">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="job_title" class="form-label">Job Title</label>
+                            <input type="text" class="form-control" id="job_title" name="job_title"
+                                   value="<?php echo htmlspecialchars($user['job_title'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Role</label>
+                            <input type="text" class="form-control"
+                                   value="<?php echo $user['admin'] ? 'Administrator' : 'User'; ?>" disabled>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Account Created</label>
+                            <input type="text" class="form-control"
+                                   value="<?php echo date('Y-m-d H:i:s', strtotime($user['created_at'] ?? 'now')); ?>" disabled>
+                        </div>
                     </div>
 
                     <button type="submit" class="btn btn-primary">Update Profile</button>
