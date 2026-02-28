@@ -22,7 +22,7 @@ NC='\033[0m'
 INSTALL_DIR="/opt/pidoors"
 WEB_ROOT="/var/www/pidoors"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VERSION="2.3.1"
+VERSION="2.4.0"
 
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; }
