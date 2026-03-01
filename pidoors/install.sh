@@ -22,7 +22,7 @@ NC='\033[0m'
 INSTALL_DIR="/opt/pidoors"
 WEB_ROOT="/var/www/pidoors"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VERSION="2.4.1"
+VERSION="2.4.2"
 
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; }
@@ -514,8 +514,16 @@ if [ "$INSTALL_DOOR" = true ]; then
 
     # Clone or update from git repo for easy future updates via git pull
     REPO_URL="https://github.com/sybethiesant/pidoors.git"
+
+    # Mark install dir as safe BEFORE any git operations (prevents "dubious ownership" errors)
+    git config --global --add safe.directory "$INSTALL_DIR"
+
     if [ -d "$INSTALL_DIR/.git" ]; then
         info "Updating existing git repo..."
+        # Ensure remote exists (may be missing if a previous install was interrupted)
+        if ! git -C "$INSTALL_DIR" remote get-url origin >/dev/null 2>&1; then
+            git -C "$INSTALL_DIR" remote add origin "$REPO_URL"
+        fi
         git -C "$INSTALL_DIR" fetch origin
         git -C "$INSTALL_DIR" checkout origin/main -- pidoors/pidoors.py pidoors/readers pidoors/formats 2>/dev/null || true
         cp "$INSTALL_DIR/pidoors/pidoors.py" "$INSTALL_DIR/pidoors.py"
@@ -551,7 +559,6 @@ if [ "$INSTALL_DOOR" = true ]; then
         # Init git repo in install dir for future git pull updates
         git init -q "$INSTALL_DIR"
         git -C "$INSTALL_DIR" remote add origin "$REPO_URL"
-        git config --global --add safe.directory "$INSTALL_DIR"
         ok "Controller files installed (git repo initialized for updates)"
     fi
 

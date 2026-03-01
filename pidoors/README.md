@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.4.1-green)
+![Version](https://img.shields.io/badge/version-2.4.2-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -511,7 +511,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.4.1** - Production Ready
+**Current Version: 2.4.2** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -523,6 +523,10 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.4.2 (February 2026)
+- **Fix**: Install script "dubious ownership" crash — `safe.directory` is now set before any git operations (#3)
+- **Fix**: Install script recovery — re-running after a partial failure no longer crashes when the git remote is missing
 
 ### Version 2.4.1 (February 2026)
 - **Fix**: Holidays page crash — column name mismatch (`no_access` vs `access_denied`)

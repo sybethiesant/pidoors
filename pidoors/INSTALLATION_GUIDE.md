@@ -1254,6 +1254,7 @@ sudo systemctl restart nginx && sudo systemctl restart php*-fpm
 
 | Version | Date | Migration Required | Notes |
 |---------|------|-------------------|-------|
+| v2.4.2 | Feb 2026 | No | Fix install script git dubious ownership & partial failure recovery |
 | v2.4.1 | Feb 2026 | **Yes** - `database_migration.sql` | Bug fixes: holidays, groups, log export; dead code cleanup |
 | v2.4.0 | Feb 2026 | No | Master card web UI, GPIO/lgpio fix, git-based updates |
 | v2.3.0 | Feb 2026 | **Yes** - `database_migration.sql` | Extended fields, username login, door normalization |
