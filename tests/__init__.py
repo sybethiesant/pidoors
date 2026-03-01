@@ -1,3 +1,0 @@
-"""
-PiDoors Test Suite
-"""

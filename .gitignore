@@ -1,32 +1,20 @@
 # PiDoors - Files to ignore
 
-# Audit log (local only)
-AUDIT_LOG.md
-
 # Configuration files with sensitive data
 pidoorserv/includes/config.php
 pidoors/conf/config.json
+pidoors/conf/zone.json
+*.remote
 
-# Remote files
-pidoors/.remote
-pidoorserv/.remote
-
-# Cache files
+# Runtime files
 pidoors/cache/
 pidoors/__pycache__/
+__pycache__/
 *.pyc
 *.pyo
-
-# Coverage reports
-htmlcov/
-.coverage
-.coverage.*
-coverage.xml
-
-# Log files
 *.log
 
-# Backup files
+# Backup / temp files
 *.bak
 *.swp
 *~
@@ -35,7 +23,8 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
-# IDE files
+# IDE / tools
 .vscode/
 .idea/
 *.sublime-*
+.claude/
