@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.4.2-green)
+![Version](https://img.shields.io/badge/version-2.5.4-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -48,6 +48,13 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - Complete audit trail
 - Remote door control
 - Door auto-registration from client heartbeat
+
+### Updates
+- One-click server updates from the web UI
+- Remote controller updates via heartbeat signaling
+- Pre-flight checks prevent partial updates
+- Actionable error messages on failure
+- Version tracking across all doors and server
 
 ### Reliability
 - 24-hour offline operation
@@ -383,6 +390,14 @@ sudo /usr/local/bin/pidoors-backup.sh
 ```
 
 ### Update PiDoors
+
+**Via Web UI (Recommended):**
+1. Go to **Updates** in the admin sidebar
+2. Click **Check for Updates** to see the latest release
+3. Click **Update Server** to update the web interface
+4. Use the **Doors** page to push updates to door controllers
+
+**Manual update:**
 ```bash
 cd ~/pidoors
 git pull
@@ -460,6 +475,7 @@ pidoors/
 ├── pidoors/              # Door controller
 │   ├── pidoors.py        # Main daemon
 │   ├── pidoors.service   # Systemd service
+│   ├── pidoors-update.sh # Self-update script (runs as root via sudo)
 │   ├── readers/          # Card reader modules
 │   │   ├── base.py       # Abstract base class
 │   │   ├── wiegand.py    # Wiegand GPIO reader
@@ -473,6 +489,7 @@ pidoors/
 ├── nginx/                # Nginx configuration
 │   └── pidoors.conf
 ├── pidoorspcb/           # PCB design files (KiCAD)
+├── VERSION               # Current version number
 ├── install.sh            # Installation script
 ├── database_migration.sql
 └── README.md
@@ -511,7 +528,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.4.2** - Production Ready
+**Current Version: 2.5.4** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -523,6 +540,33 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.5.4 (March 2026)
+- **Hardened client updater**: Pre-flight checks verify archive contents before stopping the service; aborts cleanly if anything is wrong
+- **Detailed error messages**: Update failures now include actionable details (e.g. "Could not reach GitHub API") visible on the Doors, Edit Door, and Updates pages
+- **Service safety**: Controller service always restarts after a failed update so the door isn't left dead
+- **Database**: Widened `update_status` column to hold detail messages
+
+### Version 2.5.3 (March 2026)
+- **Pre-flight writability check**: Server updater verifies all target files are writable before copying anything; aborts with a clear error listing problem files if not
+- **Atomic version update**: VERSION file and database only updated after all file copies succeed, preventing version mismatch on partial updates
+
+### Version 2.5.2 (March 2026)
+- **Fix**: Server updater now validates file copy results — previously reported success even when copies silently failed
+
+### Version 2.5.1 (March 2026)
+- **Fix**: "Add Door" POST handler fired after failed "Request Update" POST on doors page
+- **Fix**: Server updater PharData extraction wrapped in try/catch to handle corrupt archives gracefully
+- **Fix**: Client update script passes DB credentials via environment variables to avoid shell injection with special characters in passwords
+
+### Version 2.5.0 (March 2026)
+- **Version tracking**: Server and controller versions displayed throughout the web UI
+- **Server self-update**: Check for updates via GitHub API, one-click update from the Updates page (preserves config.php)
+- **Controller self-update**: Set a target version in Settings, click "Request Update" on the Doors page; controllers download and install the update on the next heartbeat
+- **Updates page**: Centralized view of server version, GitHub latest, and all controller versions with status badges
+- **Settings**: Target controller version setting with outdated warnings on door cards
+- **Footer**: Version number displayed on all pages
+- **Install script**: Copies VERSION file and update script, adds sudoers entry for controller updates
 
 ### Version 2.4.2 (February 2026)
 - **Fix**: Install script "dubious ownership" crash — `safe.directory` is now set before any git operations (#3)
