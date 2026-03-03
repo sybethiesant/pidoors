@@ -392,15 +392,21 @@ try {
                                             <?php
                                             $us = $door['update_status'] ?? '';
                                             if ($us) {
-                                                $usBadge = match($us) {
+                                                $us_parts = explode(':', $us, 2);
+                                                $us_base = trim($us_parts[0]);
+                                                $us_detail = isset($us_parts[1]) ? trim($us_parts[1]) : '';
+                                                $usBadge = match($us_base) {
                                                     'success' => 'success',
                                                     'failed' => 'danger',
                                                     'updating' => 'info',
                                                     default => 'secondary'
                                                 };
-                                                echo '<span class="badge bg-' . $usBadge . '">' . ucfirst(htmlspecialchars($us)) . '</span>';
+                                                echo '<span class="badge bg-' . $usBadge . '">' . ucfirst(htmlspecialchars($us_base)) . '</span>';
+                                                if ($us_detail) {
+                                                    echo ' <small class="text-muted">' . htmlspecialchars($us_detail) . '</small>';
+                                                }
                                                 if ($door['update_status_time']) {
-                                                    echo ' <small class="text-muted">' . date('M j, g:i A', strtotime($door['update_status_time'])) . '</small>';
+                                                    echo ' <small class="text-muted">(' . date('M j, g:i A', strtotime($door['update_status_time'])) . ')</small>';
                                                 }
                                             } else {
                                                 echo '<span class="text-muted">-</span>';

@@ -300,7 +300,7 @@ ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `lockdown_mode` tinyint(1) DEFAULT 
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `reader_type` enum('wiegand','osdp','nfc_pn532','nfc_mfrc522') DEFAULT 'wiegand' AFTER `lockdown_mode`;
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `controller_version` varchar(20) DEFAULT NULL AFTER `reader_type`;
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_requested` tinyint(1) DEFAULT 0 AFTER `controller_version`;
-ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_status` varchar(20) DEFAULT NULL AFTER `update_requested`;
+ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_status` varchar(255) DEFAULT NULL AFTER `update_requested`;
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_status_time` datetime DEFAULT NULL AFTER `update_status`;
 
 -- Add indexes for performance

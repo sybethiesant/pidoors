@@ -21,16 +21,16 @@ log() {
 
 update_db_status() {
     local status="$1"
-    local version="${2:-}"
+    local detail="${2:-}"
+    local version="${3:-}"
     local config_file="$INSTALL_DIR/conf/config.json"
 
     if [ ! -f "$config_file" ] || [ -z "$ZONE" ]; then
         return
     fi
 
-    # Pass values via environment variables to avoid shell/quote injection issues
     PIDOORS_CONFIG="$config_file" PIDOORS_ZONE="$ZONE" \
-    PIDOORS_STATUS="$status" PIDOORS_VERSION="$version" \
+    PIDOORS_STATUS="$status" PIDOORS_DETAIL="$detail" PIDOORS_VERSION="$version" \
     python3 -c "
 import os, json, pymysql
 cfg = json.load(open(os.environ['PIDOORS_CONFIG']))
@@ -38,15 +38,29 @@ zc = cfg[os.environ['PIDOORS_ZONE']]
 db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5)
 c = db.cursor()
 version = os.environ.get('PIDOORS_VERSION', '')
+detail = os.environ.get('PIDOORS_DETAIL', '')
+status = os.environ['PIDOORS_STATUS']
+if detail:
+    status = status + ': ' + detail
 if version:
     c.execute('UPDATE doors SET update_requested=0, update_status=%s, update_status_time=NOW(), controller_version=%s WHERE name=%s',
-              (os.environ['PIDOORS_STATUS'], version, os.environ['PIDOORS_ZONE']))
+              (status, version, os.environ['PIDOORS_ZONE']))
 else:
     c.execute('UPDATE doors SET update_requested=0, update_status=%s, update_status_time=NOW() WHERE name=%s',
-              (os.environ['PIDOORS_STATUS'], os.environ['PIDOORS_ZONE']))
+              (status, os.environ['PIDOORS_ZONE']))
 db.commit()
 db.close()
 " 2>/dev/null || log "Warning: failed to update DB status"
+}
+
+fail() {
+    local message="$1"
+    log "Error: $message"
+    update_db_status "failed" "$message"
+    # Always try to restart the service so the controller isn't left dead
+    log "Restarting pidoors service..."
+    systemctl start pidoors 2>/dev/null || true
+    exit 1
 }
 
 cleanup() {
@@ -71,12 +85,9 @@ log "Starting update for zone: $ZONE"
 # Fetch latest release tag from GitHub
 log "Checking latest release..."
 LATEST_TAG=$(curl -sf "https://api.github.com/repos/$REPO/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || {
-    log "Error: failed to fetch latest release from GitHub"
-    update_db_status "failed"
-    exit 1
+    fail "Could not reach GitHub API. Check internet connection."
 }
 
-# Strip leading 'v' if present
 LATEST_VERSION="${LATEST_TAG#v}"
 log "Latest version: $LATEST_VERSION"
 
@@ -86,34 +97,93 @@ TARBALL="$TMPDIR/release.tar.gz"
 log "Downloading release tarball..."
 curl -sfL "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
 curl -sfL "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
-    log "Error: failed to download release"
-    update_db_status "failed"
-    exit 1
+    fail "Failed to download release $LATEST_TAG. Tag may not exist on GitHub."
 }
+
+if [ ! -s "$TARBALL" ]; then
+    fail "Downloaded tarball is empty."
+fi
 
 # Extract
 log "Extracting..."
-tar xzf "$TARBALL" -C "$TMPDIR"
+tar xzf "$TARBALL" -C "$TMPDIR" || {
+    fail "Failed to extract tarball. Download may be corrupt."
+}
 
-# Find the extracted directory (could be pidoors-X.Y.Z or pidoors-vX.Y.Z)
+# Find the extracted directory
 EXTRACTED=$(find "$TMPDIR" -maxdepth 1 -type d -name "pidoors*" | head -1)
 if [ -z "$EXTRACTED" ]; then
-    log "Error: could not find extracted directory"
-    update_db_status "failed"
-    exit 1
+    fail "Could not find extracted directory in tarball."
 fi
+
+# --- Pre-flight: verify source files exist before stopping the service ---
+SRC_DIR="$EXTRACTED/pidoors"
+if [ ! -d "$SRC_DIR" ]; then
+    fail "Release archive missing pidoors/ directory. Bad release?"
+fi
+
+if [ ! -f "$SRC_DIR/pidoors.py" ]; then
+    fail "Release archive missing pidoors/pidoors.py. Bad release?"
+fi
+
+if [ ! -f "$EXTRACTED/VERSION" ]; then
+    fail "Release archive missing VERSION file. Bad release?"
+fi
+
+log "Pre-flight checks passed."
 
 # Stop the service
 log "Stopping pidoors service..."
 systemctl stop pidoors || true
 
-# Copy updated files
-log "Installing updated files..."
-[ -f "$EXTRACTED/pidoors/pidoors.py" ] && cp "$EXTRACTED/pidoors/pidoors.py" "$INSTALL_DIR/"
-[ -f "$EXTRACTED/VERSION" ] && cp "$EXTRACTED/VERSION" "$INSTALL_DIR/"
-[ -f "$EXTRACTED/pidoors/pidoors-update.sh" ] && cp "$EXTRACTED/pidoors/pidoors-update.sh" "$INSTALL_DIR/" && chmod +x "$INSTALL_DIR/pidoors-update.sh"
-[ -d "$EXTRACTED/pidoors/formats" ] && cp -r "$EXTRACTED/pidoors/formats/"* "$INSTALL_DIR/formats/" 2>/dev/null || true
-[ -d "$EXTRACTED/pidoors/readers" ] && cp -r "$EXTRACTED/pidoors/readers/"* "$INSTALL_DIR/readers/" 2>/dev/null || true
+# Copy updated files with verification
+FAILED=0
+COPIED=0
+
+copy_file() {
+    local src="$1"
+    local dest="$2"
+    if cp "$src" "$dest" 2>/dev/null; then
+        COPIED=$((COPIED + 1))
+    else
+        FAILED=$((FAILED + 1))
+        log "Failed to copy: $src -> $dest"
+    fi
+}
+
+# Core files
+copy_file "$SRC_DIR/pidoors.py" "$INSTALL_DIR/pidoors.py"
+
+if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
+    copy_file "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh"
+    chmod +x "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null || true
+fi
+
+# Optional directories
+if [ -d "$SRC_DIR/formats" ]; then
+    mkdir -p "$INSTALL_DIR/formats"
+    for f in "$SRC_DIR/formats/"*; do
+        [ -f "$f" ] && copy_file "$f" "$INSTALL_DIR/formats/$(basename "$f")"
+    done
+fi
+
+if [ -d "$SRC_DIR/readers" ]; then
+    mkdir -p "$INSTALL_DIR/readers"
+    for f in "$SRC_DIR/readers/"*; do
+        [ -f "$f" ] && copy_file "$f" "$INSTALL_DIR/readers/$(basename "$f")"
+    done
+fi
+
+# Check for failures before updating VERSION
+if [ "$FAILED" -gt 0 ]; then
+    # Fix ownership on whatever was copied, then restart
+    chown -R pidoors:pidoors "$INSTALL_DIR"
+    chmod +x "$INSTALL_DIR/pidoors.py" 2>/dev/null || true
+    fail "$FAILED file(s) failed to copy ($COPIED succeeded). Check disk space and permissions."
+fi
+
+# All copies succeeded — now update VERSION
+copy_file "$EXTRACTED/VERSION" "$INSTALL_DIR/VERSION"
 
 # Fix ownership
 chown -R pidoors:pidoors "$INSTALL_DIR"
@@ -125,12 +195,16 @@ if [ -f "$INSTALL_DIR/VERSION" ]; then
     NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" | tr -d '[:space:]')
 fi
 
-# Update database
+# Update database — only mark success after everything worked
 log "Updating database status..."
-update_db_status "success" "$NEW_VERSION"
+update_db_status "success" "$COPIED files updated" "$NEW_VERSION"
 
 # Start the service
 log "Starting pidoors service..."
-systemctl start pidoors
+systemctl start pidoors || {
+    update_db_status "failed" "Files updated but service failed to start" "$NEW_VERSION"
+    log "Error: service failed to start after update"
+    exit 1
+}
 
-log "Update complete: version $NEW_VERSION"
+log "Update complete: version $NEW_VERSION ($COPIED files copied)"

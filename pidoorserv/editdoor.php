@@ -177,19 +177,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <?php
                                 $us = $door['update_status'] ?? '';
                                 if ($us):
-                                    $usBadge = match($us) {
+                                    $us_parts = explode(':', $us, 2);
+                                    $us_base = trim($us_parts[0]);
+                                    $us_detail = isset($us_parts[1]) ? trim($us_parts[1]) : '';
+                                    $usBadge = match($us_base) {
                                         'success' => 'success',
                                         'failed' => 'danger',
                                         'updating' => 'info',
                                         default => 'secondary'
                                     };
                                 ?>
-                                    <p class="mb-0"><strong>Update Status:</strong>
-                                        <span class="badge bg-<?php echo $usBadge; ?>"><?php echo ucfirst(htmlspecialchars($us)); ?></span>
+                                    <p class="mb-1"><strong>Update Status:</strong>
+                                        <span class="badge bg-<?php echo $usBadge; ?>"><?php echo ucfirst(htmlspecialchars($us_base)); ?></span>
                                         <?php if ($door['update_status_time'] ?? ''): ?>
                                             <small class="text-muted">(<?php echo date('Y-m-d H:i:s', strtotime($door['update_status_time'])); ?>)</small>
                                         <?php endif; ?>
                                     </p>
+                                    <?php if ($us_detail): ?>
+                                        <p class="mb-0 text-<?php echo $us_base === 'failed' ? 'danger' : 'muted'; ?> small"><?php echo htmlspecialchars($us_detail); ?></p>
+                                    <?php endif; ?>
                                 <?php endif; ?>
                             </div>
                         </div>

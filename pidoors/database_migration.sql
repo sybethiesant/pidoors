@@ -562,12 +562,15 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
--- Add update_status column to doors
+-- Add update_status column to doors (varchar(255) to hold status detail messages)
 SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'update_status');
-SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `update_status` varchar(20) DEFAULT NULL AFTER `update_requested`', 'SELECT 1');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `update_status` varchar(255) DEFAULT NULL AFTER `update_requested`', 'SELECT 1');
 PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+-- Widen update_status from varchar(20) to varchar(255) for existing installs
+ALTER TABLE `doors` MODIFY COLUMN `update_status` varchar(255) DEFAULT NULL;
 
 -- Add update_status_time column to doors
 SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'update_status_time');

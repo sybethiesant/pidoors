@@ -237,14 +237,17 @@ try {
                         <?php
                         $us = $door['update_status'] ?? '';
                         if ($us):
-                            $usBadge = match($us) {
+                            // Status may contain detail after colon, e.g. "failed: reason"
+                            $us_base = explode(':', $us, 2)[0];
+                            $us_detail = isset(explode(':', $us, 2)[1]) ? trim(explode(':', $us, 2)[1]) : '';
+                            $usBadge = match(trim($us_base)) {
                                 'success' => 'success',
                                 'failed' => 'danger',
                                 'updating' => 'info',
                                 default => 'secondary'
                             };
                         ?>
-                            <span class="badge bg-<?php echo $usBadge; ?>"><?php echo ucfirst(htmlspecialchars($us)); ?></span>
+                            <span class="badge bg-<?php echo $usBadge; ?>" <?php if ($us_detail): ?>title="<?php echo htmlspecialchars($us_detail); ?>" data-bs-toggle="tooltip"<?php endif; ?>><?php echo ucfirst(htmlspecialchars(trim($us_base))); ?></span>
                         <?php endif; ?>
                     </p>
                 </div>
