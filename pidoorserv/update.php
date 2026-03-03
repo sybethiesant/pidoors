@@ -135,67 +135,117 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                 $web_src = $extracted . '/pidoorserv';
                 $apppath = rtrim($config['apppath'], '/');
 
-                $copied = 0;
-                $failed = 0;
-
-                if (is_dir($web_src)) {
-                    // Copy web files, skip config.php
-                    $iterator = new RecursiveIteratorIterator(
-                        new RecursiveDirectoryIterator($web_src, RecursiveDirectoryIterator::SKIP_DOTS),
-                        RecursiveIteratorIterator::SELF_FIRST
-                    );
-                    foreach ($iterator as $item) {
-                        $target = $apppath . '/' . $iterator->getSubPathName();
-                        if ($item->isDir()) {
-                            if (!is_dir($target)) {
-                                mkdir($target, 0755, true);
-                            }
-                        } else {
-                            // Skip config.php to preserve local settings
-                            if ($iterator->getSubPathName() === 'includes/config.php') {
-                                continue;
-                            }
-                            if (copy($item->getPathname(), $target)) {
-                                $copied++;
-                            } else {
-                                $failed++;
-                            }
-                        }
-                    }
-                } else {
+                if (!is_dir($web_src)) {
                     $error_message = "Update failed: web source directory not found in release archive.";
                     $cleanup_cmd = 'rm -rf ' . escapeshellarg($tmpdir);
                     @exec($cleanup_cmd);
                     goto render_page;
                 }
 
-                if ($copied === 0) {
-                    $error_message = "Update failed: no files were copied (failed: $failed).";
+                // --- Pre-flight check: verify all files are writable before copying ---
+                $files_to_copy = [];
+                $preflight_errors = [];
+
+                $iterator = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator($web_src, RecursiveDirectoryIterator::SKIP_DOTS),
+                    RecursiveIteratorIterator::SELF_FIRST
+                );
+                foreach ($iterator as $item) {
+                    $sub = $iterator->getSubPathName();
+                    $target = $apppath . '/' . $sub;
+                    if ($item->isDir()) {
+                        // Check that parent dir exists or is creatable
+                        if (!is_dir($target) && !is_writable(dirname($target))) {
+                            $preflight_errors[] = "Cannot create directory: $sub";
+                        }
+                    } else {
+                        if ($sub === 'includes/config.php') continue;
+                        if (file_exists($target) && !is_writable($target)) {
+                            $preflight_errors[] = $sub;
+                        } elseif (!file_exists($target) && !is_writable(dirname($target))) {
+                            $preflight_errors[] = "$sub (parent dir not writable)";
+                        }
+                        $files_to_copy[] = ['src' => $item->getPathname(), 'sub' => $sub, 'target' => $target];
+                    }
+                }
+
+                // Check VERSION file too
+                $version_target = $apppath . '/VERSION';
+                if (file_exists($version_target) && !is_writable($version_target)) {
+                    $preflight_errors[] = 'VERSION';
+                }
+
+                if (!empty($preflight_errors)) {
+                    $count = count($preflight_errors);
+                    $sample = array_slice($preflight_errors, 0, 5);
+                    $error_message = "Update aborted: $count file(s) are not writable — " . implode(', ', $sample);
+                    if ($count > 5) $error_message .= " and " . ($count - 5) . " more";
+                    $error_message .= ". Fix file ownership and try again.";
                     $cleanup_cmd = 'rm -rf ' . escapeshellarg($tmpdir);
                     @exec($cleanup_cmd);
                     goto render_page;
                 }
 
-                // Copy VERSION file
-                if (file_exists($extracted . '/VERSION')) {
-                    if (!copy($extracted . '/VERSION', $apppath . '/VERSION')) {
-                        $failed++;
+                // --- All checks passed, perform the update ---
+                $copied = 0;
+                $failed = 0;
+                $failed_files = [];
+
+                // Create directories first
+                $iterator = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator($web_src, RecursiveDirectoryIterator::SKIP_DOTS),
+                    RecursiveIteratorIterator::SELF_FIRST
+                );
+                foreach ($iterator as $item) {
+                    if ($item->isDir()) {
+                        $target = $apppath . '/' . $iterator->getSubPathName();
+                        if (!is_dir($target)) mkdir($target, 0755, true);
                     }
-                    $current_version = trim(file_get_contents($extracted . '/VERSION'));
                 }
 
-                // Update server_version in settings
+                // Copy all files
+                foreach ($files_to_copy as $file) {
+                    if (copy($file['src'], $file['target'])) {
+                        $copied++;
+                    } else {
+                        $failed++;
+                        $failed_files[] = $file['sub'];
+                    }
+                }
+
+                if ($failed > 0) {
+                    $sample = array_slice($failed_files, 0, 5);
+                    $error_message = "Update aborted after $failed copy failure(s): " . implode(', ', $sample);
+                    if ($failed > 5) $error_message .= " and " . ($failed - 5) . " more";
+                    $error_message .= ". $copied files were copied before the failure. Manual cleanup may be needed.";
+                    $cleanup_cmd = 'rm -rf ' . escapeshellarg($tmpdir);
+                    @exec($cleanup_cmd);
+                    goto render_page;
+                }
+
+                // Only update VERSION after all files copied successfully
+                if (file_exists($extracted . '/VERSION')) {
+                    $new_version = trim(file_get_contents($extracted . '/VERSION'));
+                    if (!copy($extracted . '/VERSION', $apppath . '/VERSION')) {
+                        $error_message = "All $copied files copied but VERSION file update failed. Version may be mismatched.";
+                        $cleanup_cmd = 'rm -rf ' . escapeshellarg($tmpdir);
+                        @exec($cleanup_cmd);
+                        goto render_page;
+                    }
+                    $current_version = $new_version;
+                }
+
+                // Only update DB version after everything succeeded
                 try {
                     $stmt = $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('server_version', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
                     $stmt->execute([$current_version]);
                 } catch (PDOException $e) {
-                    // ignore
+                    // ignore — files are updated, DB will catch up on next page load
                 }
 
-                // Log the event
                 log_security_event($pdo, 'server_update', $_SESSION['user_id'] ?? null, "Server updated to version $current_version ($copied files)");
 
-                $success_message = "Server updated to version $current_version. $copied files copied" . ($failed ? ", $failed failed" : "") . ". Refresh the page to see updated code.";
+                $success_message = "Server updated to version $current_version. $copied files copied successfully. Refresh the page to see updated code.";
             }
 
             // Cleanup temp files
