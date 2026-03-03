@@ -30,7 +30,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $settings_to_save = [
             'site_name' => sanitize_string($_POST['site_name'] ?? 'PiDoors'),
-            'default_unlock_duration' => validate_int($_POST['default_unlock_duration'] ?? 5, 1, 60) ?: 5,
+            'max_unlock_duration' => validate_int($_POST['max_unlock_duration'] ?? 3600, 60, 86400) ?: 3600,
+            'default_unlock_duration' => validate_int($_POST['default_unlock_duration'] ?? 5, 1, 86400) ?: 5,
+            'default_daily_scan_limit' => validate_int($_POST['default_daily_scan_limit'] ?? 0, 0, 999),
             'session_timeout' => validate_int($_POST['session_timeout'] ?? 3600, 300, 86400) ?: 3600,
             'max_login_attempts' => validate_int($_POST['max_login_attempts'] ?? 5, 3, 20) ?: 5,
             'lockout_duration' => validate_int($_POST['lockout_duration'] ?? 900, 60, 86400) ?: 900,
@@ -40,6 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'notification_email' => filter_var($_POST['notification_email'] ?? '', FILTER_VALIDATE_EMAIL) ?: '',
             'log_retention_days' => validate_int($_POST['log_retention_days'] ?? 365, 30, 3650) ?: 365,
             'timezone' => sanitize_string($_POST['timezone'] ?? 'UTC'),
+            'target_controller_version' => sanitize_string($_POST['target_controller_version'] ?? ''),
         ];
 
         try {
@@ -66,7 +69,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Get default values
 $settings = [
     'site_name' => $db_settings['site_name'] ?? 'PiDoors',
+    'max_unlock_duration' => $db_settings['max_unlock_duration'] ?? 3600,
     'default_unlock_duration' => $db_settings['default_unlock_duration'] ?? 5,
+    'default_daily_scan_limit' => $db_settings['default_daily_scan_limit'] ?? 0,
     'session_timeout' => $db_settings['session_timeout'] ?? 3600,
     'max_login_attempts' => $db_settings['max_login_attempts'] ?? 5,
     'lockout_duration' => $db_settings['lockout_duration'] ?? 900,
@@ -76,6 +81,7 @@ $settings = [
     'notification_email' => $db_settings['notification_email'] ?? '',
     'log_retention_days' => $db_settings['log_retention_days'] ?? 365,
     'timezone' => $db_settings['timezone'] ?? 'UTC',
+    'target_controller_version' => $db_settings['target_controller_version'] ?? '',
 ];
 
 // Get list of timezones
@@ -121,8 +127,8 @@ $timezones = DateTimeZone::listIdentifiers();
                     <div class="mb-3">
                         <label for="default_unlock_duration" class="form-label">Default Unlock Duration (seconds)</label>
                         <input type="number" class="form-control" id="default_unlock_duration" name="default_unlock_duration"
-                               min="1" max="60" value="<?php echo htmlspecialchars($settings['default_unlock_duration']); ?>">
-                        <div class="form-text">How long doors stay unlocked after access is granted (1-60 seconds).</div>
+                               min="1" max="86400" value="<?php echo htmlspecialchars($settings['default_unlock_duration']); ?>">
+                        <div class="form-text">How long doors stay unlocked after access is granted. Max is controlled by the setting below.</div>
                     </div>
                 </div>
             </div>
@@ -162,6 +168,21 @@ $timezones = DateTimeZone::listIdentifiers();
                     <h5 class="mb-0">Door Controller Settings</h5>
                 </div>
                 <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="max_unlock_duration" class="form-label">Max Unlock Duration (seconds)</label>
+                            <input type="number" class="form-control" id="max_unlock_duration" name="max_unlock_duration"
+                                   min="60" max="86400" value="<?php echo htmlspecialchars($settings['max_unlock_duration']); ?>">
+                            <div class="form-text">Maximum unlock duration admins can set per door (60s - 24 hours).</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="default_daily_scan_limit" class="form-label">Default Daily Scan Limit</label>
+                            <input type="number" class="form-control" id="default_daily_scan_limit" name="default_daily_scan_limit"
+                                   min="0" max="999" value="<?php echo htmlspecialchars($settings['default_daily_scan_limit']); ?>">
+                            <div class="form-text">Default daily scan limit for new cards (0 = unlimited).</div>
+                        </div>
+                    </div>
+
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label for="heartbeat_interval" class="form-label">Heartbeat Interval (seconds)</label>
@@ -214,6 +235,32 @@ $timezones = DateTimeZone::listIdentifiers();
                         <input type="number" class="form-control" id="log_retention_days" name="log_retention_days"
                                min="30" max="3650" value="<?php echo htmlspecialchars($settings['log_retention_days']); ?>">
                         <div class="form-text">How long to keep access logs before automatic cleanup (30 days - 10 years).</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Version & Updates -->
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">Version & Updates</h5>
+                </div>
+                <div class="card-body">
+                    <?php
+                    $version_file = $config['apppath'] . 'VERSION';
+                    $server_version = 'unknown';
+                    if (file_exists($version_file)) {
+                        $server_version = trim(file_get_contents($version_file));
+                    }
+                    ?>
+                    <p class="mb-3"><strong>Server Version:</strong> <?php echo htmlspecialchars($server_version); ?>
+                        &mdash; <a href="update.php">Check for Updates</a>
+                    </p>
+                    <div class="mb-3">
+                        <label for="target_controller_version" class="form-label">Target Controller Version</label>
+                        <input type="text" class="form-control" id="target_controller_version" name="target_controller_version"
+                               value="<?php echo htmlspecialchars($settings['target_controller_version']); ?>"
+                               placeholder="e.g., 2.5.0">
+                        <div class="form-text">The version all door controllers should be running. Controllers with an older version will show as "Outdated" on the Doors page.</div>
                     </div>
                 </div>
             </div>

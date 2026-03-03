@@ -208,7 +208,13 @@ INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VA
 ('smtp_user', '', 'SMTP username'),
 ('smtp_pass', '', 'SMTP password'),
 ('system_name', 'PiDoors', 'System display name'),
-('timezone', 'America/New_York', 'System timezone');
+('timezone', 'America/New_York', 'System timezone'),
+('max_unlock_duration', '3600', 'Maximum unlock duration in seconds that admins can set per door'),
+('default_daily_scan_limit', '0', 'Default daily scan limit for new cards (0 = unlimited)'),
+('server_version', '', 'Current server software version'),
+('target_controller_version', '', 'Target version for door controllers'),
+('github_latest_version', '', 'Latest version available on GitHub'),
+('github_check_time', '', 'Last time GitHub was checked for updates');
 
 -- Audit logs (in access DB too)
 CREATE TABLE IF NOT EXISTS `audit_logs` (
@@ -281,6 +287,7 @@ ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `employee_id` varchar(50) DEFAULT N
 ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `company` varchar(100) DEFAULT NULL AFTER `employee_id`;
 ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `title` varchar(100) DEFAULT NULL AFTER `company`;
 ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `notes` text DEFAULT NULL AFTER `title`;
+ALTER TABLE `cards` ADD COLUMN IF NOT EXISTS `daily_scan_limit` int(11) DEFAULT NULL AFTER `notes`;
 
 -- Add extended columns to doors table
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `ip_address` varchar(45) DEFAULT NULL AFTER `description`;
@@ -291,6 +298,10 @@ ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `last_seen` datetime DEFAULT NULL A
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `locked` tinyint(1) DEFAULT 1 AFTER `last_seen`;
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `lockdown_mode` tinyint(1) DEFAULT 0 AFTER `locked`;
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `reader_type` enum('wiegand','osdp','nfc_pn532','nfc_mfrc522') DEFAULT 'wiegand' AFTER `lockdown_mode`;
+ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `controller_version` varchar(20) DEFAULT NULL AFTER `reader_type`;
+ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_requested` tinyint(1) DEFAULT 0 AFTER `controller_version`;
+ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_status` varchar(20) DEFAULT NULL AFTER `update_requested`;
+ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_status_time` datetime DEFAULT NULL AFTER `update_status`;
 
 -- Add indexes for performance
 ALTER TABLE `logs` ADD INDEX IF NOT EXISTS `idx_user_id` (`user_id`);

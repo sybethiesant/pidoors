@@ -28,6 +28,11 @@ try {
     }
 
     $schedules = $pdo_access->query("SELECT id, name FROM access_schedules ORDER BY name")->fetchAll();
+
+    // Fetch max unlock duration from settings
+    $max_unlock_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'max_unlock_duration'");
+    $max_unlock_stmt->execute();
+    $max_unlock_duration = (int)($max_unlock_stmt->fetchColumn() ?: 3600);
 } catch (PDOException $e) {
     error_log("Edit door error: " . $e->getMessage());
     header("Location: {$config['url']}/doors.php?error=Error loading door.");
@@ -42,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $doornum = sanitize_string($_POST['doornum'] ?? '');
         $description = sanitize_string($_POST['description'] ?? '');
         $schedule_id = validate_int($_POST['schedule_id'] ?? 0) ?: null;
-        $unlock_duration = validate_int($_POST['unlock_duration'] ?? 5, 1, 60) ?: 5;
+        $unlock_duration = validate_int($_POST['unlock_duration'] ?? 5, 1, $max_unlock_duration) ?: 5;
         $reader_type = sanitize_string($_POST['reader_type'] ?? 'wiegand');
 
         // Validate reader_type
@@ -122,7 +127,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="mb-3">
                         <label for="unlock_duration" class="form-label">Unlock Duration (seconds)</label>
                         <input type="number" class="form-control" id="unlock_duration" name="unlock_duration"
-                               min="1" max="60" value="<?php echo htmlspecialchars($door['unlock_duration'] ?? 5); ?>">
+                               min="1" max="<?php echo $max_unlock_duration; ?>" value="<?php echo htmlspecialchars($door['unlock_duration'] ?? 5); ?>">
+                        <?php $dur = (int)($door['unlock_duration'] ?? 5); ?>
+                        <div class="form-text">
+                            <?php if ($dur >= 60): ?>
+                                Current: <?php echo floor($dur / 60); ?>m <?php echo $dur % 60 ? ($dur % 60 . 's') : ''; ?>.
+                            <?php endif; ?>
+                            Max allowed: <?php echo number_format($max_unlock_duration); ?>s (<?php echo round($max_unlock_duration / 60); ?> min).
+                        </div>
                     </div>
 
                     <div class="mb-3">
@@ -157,7 +169,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <p class="mb-1"><strong>IP Address:</strong> <?php echo htmlspecialchars($door['ip_address']); ?></p>
                                 <?php endif; ?>
                                 <?php if ($door['last_seen']): ?>
-                                    <p class="mb-0"><strong>Last Seen:</strong> <?php echo date('Y-m-d H:i:s', strtotime($door['last_seen'])); ?></p>
+                                    <p class="mb-1"><strong>Last Seen:</strong> <?php echo date('Y-m-d H:i:s', strtotime($door['last_seen'])); ?></p>
+                                <?php endif; ?>
+                                <?php if ($door['controller_version'] ?? ''): ?>
+                                    <p class="mb-1"><strong>Version:</strong> <?php echo htmlspecialchars($door['controller_version']); ?></p>
+                                <?php endif; ?>
+                                <?php
+                                $us = $door['update_status'] ?? '';
+                                if ($us):
+                                    $usBadge = match($us) {
+                                        'success' => 'success',
+                                        'failed' => 'danger',
+                                        'updating' => 'info',
+                                        default => 'secondary'
+                                    };
+                                ?>
+                                    <p class="mb-0"><strong>Update Status:</strong>
+                                        <span class="badge bg-<?php echo $usBadge; ?>"><?php echo ucfirst(htmlspecialchars($us)); ?></span>
+                                        <?php if ($door['update_status_time'] ?? ''): ?>
+                                            <small class="text-muted">(<?php echo date('Y-m-d H:i:s', strtotime($door['update_status_time'])); ?>)</small>
+                                        <?php endif; ?>
+                                    </p>
                                 <?php endif; ?>
                             </div>
                         </div>

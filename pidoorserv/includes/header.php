@@ -163,6 +163,12 @@ $csrf_token = generate_csrf_token();
                                     </a>
                                 </li>
                                 <li class="nav-item">
+                                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'update.php' ? 'active' : ''; ?>" href="<?php echo htmlspecialchars($config['url']); ?>/update.php">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                                        Updates
+                                    </a>
+                                </li>
+                                <li class="nav-item">
                                     <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'importcards.php' ? 'active' : ''; ?>" href="<?php echo htmlspecialchars($config['url']); ?>/importcards.php">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
                                         Import Cards

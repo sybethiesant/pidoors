@@ -2,7 +2,10 @@
 
     <footer class="footer mt-auto py-3 bg-light">
         <div class="container text-center">
-            <span class="text-muted">PiDoors Access Control System</span>
+            <span class="text-muted">PiDoors Access Control System<?php
+                $vf = ($config['apppath'] ?? '') . 'VERSION';
+                if (file_exists($vf)) { echo ' v' . htmlspecialchars(trim(file_get_contents($vf))); }
+            ?></span>
         </div>
     </footer>
 

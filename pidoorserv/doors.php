@@ -33,6 +33,46 @@ try {
     $schedules = [];
 }
 
+// Fetch max unlock duration and target controller version from settings
+try {
+    $max_unlock_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'max_unlock_duration'");
+    $max_unlock_stmt->execute();
+    $max_unlock_duration = (int)($max_unlock_stmt->fetchColumn() ?: 3600);
+} catch (PDOException $e) {
+    $max_unlock_duration = 3600;
+}
+
+$target_controller_version = '';
+try {
+    $tcv_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'target_controller_version'");
+    $tcv_stmt->execute();
+    $target_controller_version = $tcv_stmt->fetchColumn() ?: '';
+} catch (PDOException $e) {
+    // ignore
+}
+
+// Handle "Request Update" actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['request_update'])) {
+    if (verify_csrf_token($_POST['csrf_token'] ?? '')) {
+        try {
+            if ($_POST['request_update'] === 'all') {
+                // Request update for all online doors
+                $pdo_access->exec("UPDATE doors SET update_requested = 1 WHERE status = 'online'");
+                header("Location: {$config['url']}/doors.php?success=Update requested for all online controllers.");
+                exit();
+            } else {
+                $door_to_update = sanitize_string($_POST['request_update']);
+                $stmt = $pdo_access->prepare("UPDATE doors SET update_requested = 1 WHERE name = ?");
+                $stmt->execute([$door_to_update]);
+                header("Location: {$config['url']}/doors.php?success=Update requested for " . htmlspecialchars($door_to_update) . ".");
+                exit();
+            }
+        } catch (PDOException $e) {
+            error_log("Request update error: " . $e->getMessage());
+        }
+    }
+}
+
 // Handle add door form
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
@@ -43,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $doornum = sanitize_string($_POST['doornum'] ?? '');
         $description = sanitize_string($_POST['description'] ?? '');
         $schedule_id = validate_int($_POST['schedule_id'] ?? 0) ?: null;
-        $unlock_duration = validate_int($_POST['unlock_duration'] ?? 5, 1, 60) ?: 5;
+        $unlock_duration = validate_int($_POST['unlock_duration'] ?? 5, 1, $max_unlock_duration) ?: 5;
         $reader_type = sanitize_string($_POST['reader_type'] ?? 'wiegand');
 
         $valid_reader_types = ['wiegand', 'osdp', 'nfc_pn532', 'nfc_mfrc522'];
@@ -98,10 +138,32 @@ try {
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div><span class="text-muted"><?php echo count($doors); ?> doors configured</span></div>
-    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addDoorModal">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-        Add Door
-    </button>
+    <div class="d-flex gap-2">
+        <?php
+        // Check if any online doors are outdated
+        $has_outdated = false;
+        if ($target_controller_version) {
+            foreach ($doors as $d) {
+                $cv = $d['controller_version'] ?? '';
+                if ($d['status'] === 'online' && $cv && version_compare($cv, $target_controller_version, '<')) {
+                    $has_outdated = true;
+                    break;
+                }
+            }
+        }
+        if ($has_outdated): ?>
+            <form method="post" class="d-inline" onsubmit="return confirm('Request update for ALL online controllers?');">
+                <?php echo csrf_field(); ?>
+                <button type="submit" name="request_update" value="all" class="btn btn-warning">
+                    Update All Controllers
+                </button>
+            </form>
+        <?php endif; ?>
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addDoorModal">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Add Door
+        </button>
+    </div>
 </div>
 
 <div class="row">
@@ -142,7 +204,7 @@ try {
                     <?php if ($door['schedule_name']): ?>
                         <p class="mb-1"><strong>Schedule:</strong> <?php echo htmlspecialchars($door['schedule_name']); ?></p>
                     <?php endif; ?>
-                    <p class="mb-0">
+                    <p class="mb-1">
                         <strong>Reader:</strong>
                         <?php
                         $reader_type = $door['reader_type'] ?? 'wiegand';
@@ -155,9 +217,49 @@ try {
                         echo htmlspecialchars($reader_labels[$reader_type] ?? $reader_type);
                         ?>
                     </p>
+                    <?php
+                    $cv = $door['controller_version'] ?? '';
+                    $is_outdated = false;
+                    if ($cv) {
+                        $is_outdated = $target_controller_version && version_compare($cv, $target_controller_version, '<');
+                    }
+                    ?>
+                    <p class="mb-0">
+                        <strong>Version:</strong>
+                        <?php if ($cv): ?>
+                            <?php echo htmlspecialchars($cv); ?>
+                            <?php if ($is_outdated): ?>
+                                <span class="badge bg-warning text-dark">Outdated</span>
+                            <?php endif; ?>
+                        <?php else: ?>
+                            <span class="text-muted">Not reported</span>
+                        <?php endif; ?>
+                        <?php
+                        $us = $door['update_status'] ?? '';
+                        if ($us):
+                            $usBadge = match($us) {
+                                'success' => 'success',
+                                'failed' => 'danger',
+                                'updating' => 'info',
+                                default => 'secondary'
+                            };
+                        ?>
+                            <span class="badge bg-<?php echo $usBadge; ?>"><?php echo ucfirst(htmlspecialchars($us)); ?></span>
+                        <?php endif; ?>
+                    </p>
                 </div>
                 <div class="card-footer d-flex justify-content-between">
-                    <a href="editdoor.php?name=<?php echo urlencode($door['name']); ?>" class="btn btn-sm btn-outline-primary">Edit</a>
+                    <div>
+                        <a href="editdoor.php?name=<?php echo urlencode($door['name']); ?>" class="btn btn-sm btn-outline-primary">Edit</a>
+                        <?php if ($is_outdated && $door['status'] === 'online' && !$door['update_requested']): ?>
+                            <form method="post" class="d-inline">
+                                <?php echo csrf_field(); ?>
+                                <button type="submit" name="request_update" value="<?php echo htmlspecialchars($door['name']); ?>" class="btn btn-sm btn-outline-warning">Request Update</button>
+                            </form>
+                        <?php elseif ($door['update_requested']): ?>
+                            <span class="badge bg-info">Update Pending</span>
+                        <?php endif; ?>
+                    </div>
                     <a href="doors.php?delete=<?php echo urlencode($door['name']); ?>&token=<?php echo htmlspecialchars($csrf_token); ?>"
                        class="btn btn-sm btn-outline-danger"
                        onclick="return confirmDelete('Delete this door?');">Delete</a>
@@ -214,7 +316,8 @@ try {
                         <div class="col-md-6 mb-3">
                             <label for="unlock_duration" class="form-label">Unlock Duration (seconds)</label>
                             <input type="number" class="form-control" id="unlock_duration" name="unlock_duration"
-                                   min="1" max="60" value="<?php echo htmlspecialchars($_POST['unlock_duration'] ?? '5'); ?>">
+                                   min="1" max="<?php echo $max_unlock_duration; ?>" value="<?php echo htmlspecialchars($_POST['unlock_duration'] ?? '5'); ?>">
+                            <div class="form-text">Max: <?php echo number_format($max_unlock_duration); ?>s (<?php echo round($max_unlock_duration / 60); ?> min)</div>
                         </div>
                     </div>
 

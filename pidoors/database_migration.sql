@@ -175,7 +175,9 @@ INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VA
 ('smtp_user', '', 'SMTP username'),
 ('smtp_pass', '', 'SMTP password'),
 ('system_name', 'PiDoors', 'System display name'),
-('timezone', 'America/New_York', 'System timezone');
+('timezone', 'America/New_York', 'System timezone'),
+('max_unlock_duration', '3600', 'Maximum unlock duration in seconds that admins can set per door'),
+('default_daily_scan_limit', '0', 'Default daily scan limit for new cards (0 = unlimited)');
 
 -- --------------------------------------------------------
 -- Audit Logs Table
@@ -463,6 +465,13 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- Add daily_scan_limit column if not exists
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'cards' AND column_name = 'daily_scan_limit');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `cards` ADD COLUMN `daily_scan_limit` int(11) DEFAULT NULL AFTER `notes`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- --------------------------------------------------------
 -- v2.3.0 - Extended user profile fields (users database)
 -- --------------------------------------------------------
@@ -534,6 +543,45 @@ DEALLOCATE PREPARE stmt;
 
 -- Switch back to access database context
 USE `access`;
+
+-- --------------------------------------------------------
+-- v2.5.0 - Version checking & update system
+-- --------------------------------------------------------
+
+-- Add controller_version column to doors
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'controller_version');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `controller_version` varchar(20) DEFAULT NULL AFTER `reader_type`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add update_requested column to doors
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'update_requested');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `update_requested` tinyint(1) DEFAULT 0 AFTER `controller_version`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add update_status column to doors
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'update_status');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `update_status` varchar(20) DEFAULT NULL AFTER `update_requested`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add update_status_time column to doors
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'update_status_time');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `update_status_time` datetime DEFAULT NULL AFTER `update_status`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add version-related settings
+INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
+('server_version', '', 'Current server software version'),
+('target_controller_version', '', 'Target version for door controllers'),
+('github_latest_version', '', 'Latest version available on GitHub'),
+('github_check_time', '', 'Last time GitHub was checked for updates');
 
 -- --------------------------------------------------------
 -- v2.4.0 - Add doors column to access_groups

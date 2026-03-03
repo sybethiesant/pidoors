@@ -35,6 +35,7 @@ import threading
 import syslog
 import socket
 import fcntl
+import subprocess
 
 # Try to import optional dependencies
 try:
@@ -51,6 +52,18 @@ try:
 except ImportError:
     FORMAT_REGISTRY_AVAILABLE = False
     print("Warning: Format registry not available. Using legacy format support.")
+
+# Version
+def _read_version():
+    """Read version from VERSION file, fallback to 'unknown'"""
+    version_file = os.path.join(os.environ.get('PIDOORS_DIR', '/opt/pidoors'), 'VERSION')
+    try:
+        with open(version_file, 'r') as f:
+            return f.read().strip()
+    except Exception:
+        return 'unknown'
+
+VERSION = _read_version()
 
 # Configuration
 DEBUG_MODE = False
@@ -157,7 +170,7 @@ def initialize():
     # Sync cache from server
     sync_cache_from_server()
 
-    report(f"{zone} access control is online (IP: {myip})")
+    report(f"{zone} access control is online (IP: {myip}, version: {VERSION})")
 
 
 def report(subject):
@@ -471,7 +484,8 @@ def sync_cache_from_server():
         # Use FIND_IN_SET for proper comma-delimited matching (prevents "main" matching "maintenance")
         sql = """
             SELECT card_id, user_id, facility, bstr, firstname, lastname,
-                   doors, active, group_id, schedule_id, valid_from, valid_until
+                   doors, active, group_id, schedule_id, valid_from, valid_until,
+                   daily_scan_limit
             FROM cards
             WHERE active = 1
               AND (FIND_IN_SET(%s, doors) > 0 OR doors = '*')
@@ -516,7 +530,8 @@ def sync_cache_from_server():
                 'doors': card['doors'],
                 'schedule_id': card['schedule_id'],
                 'valid_from': str(card['valid_from']) if card['valid_from'] else None,
-                'valid_until': str(card['valid_until']) if card['valid_until'] else None
+                'valid_until': str(card['valid_until']) if card['valid_until'] else None,
+                'daily_scan_limit': card.get('daily_scan_limit')
             }
 
         with cache_lock:
@@ -672,12 +687,21 @@ def unlock_door():
 
 
 def unlock_briefly(gpio):
-    """Unlock the door temporarily"""
-    zone_config = config.get(zone, {})
-    open_delay = zone_config.get("open_delay", 5)
+    """Unlock the door temporarily using DB unlock_duration, falling back to config open_delay"""
+    # Priority: DB door setting > config.json open_delay > default 5
+    unlock_time = None
+    with cache_lock:
+        door_settings = local_cache.get('door_settings')
+        if door_settings and door_settings.get('unlock_duration'):
+            unlock_time = int(door_settings['unlock_duration'])
 
+    if not unlock_time:
+        zone_config = config.get(zone, {})
+        unlock_time = zone_config.get("open_delay", 5)
+
+    debug(f"Unlocking for {unlock_time} seconds")
     unlock_door()
-    time.sleep(open_delay)
+    time.sleep(unlock_time)
     lock_door()
 
 
@@ -805,6 +829,31 @@ def validate_34bit_legacy(bstr):
 # ACCESS CONTROL LOGIC
 # ============================================================
 
+def count_todays_granted_scans(user_id):
+    """Count today's granted scans for a user from the local access log (cache fallback)"""
+    log_file = os.path.join(CACHE_DIR, f"{zone}_access_log.json")
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    count = 0
+
+    try:
+        if os.path.exists(log_file):
+            with open(log_file, 'r') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    logs = json.load(f)
+                    for entry in logs:
+                        if (entry.get('user_id') == user_id
+                                and entry.get('granted')
+                                and entry.get('timestamp', '').startswith(today_str)):
+                            count += 1
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception as e:
+        debug(f"Error counting daily scans: {e}")
+
+    return count
+
+
 def lookup_card(card_id, facility, user_id, bstr):
     """Look up card and determine if access should be granted"""
     global db_connected
@@ -865,11 +914,20 @@ def lookup_card(card_id, facility, user_id, bstr):
                     elif valid_until and now.date() > datetime.strptime(valid_until, '%Y-%m-%d').date():
                         access_reason = "Card expired"
                     elif check_schedule(cached_card.get('schedule_id'), now):
-                        if not is_holiday_denied(now):
+                        if is_holiday_denied(now):
+                            access_reason = "Access denied on holiday"
+                        elif cached_card.get('daily_scan_limit') and int(cached_card['daily_scan_limit']) > 0:
+                            # Check daily scan count from local access log
+                            limit = int(cached_card['daily_scan_limit'])
+                            today_count = count_todays_granted_scans(user_id)
+                            if today_count >= limit:
+                                access_reason = f"Daily scan limit reached ({today_count}/{limit})"
+                            else:
+                                access_granted = True
+                                access_reason = "Cached access granted"
+                        else:
                             access_granted = True
                             access_reason = "Cached access granted"
-                        else:
-                            access_reason = "Access denied on holiday"
                     else:
                         access_reason = "Outside scheduled hours"
                 except ValueError as e:
@@ -972,6 +1030,22 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
                 reason = "Outside scheduled hours"
             elif is_holiday_denied_db(cursor, now):
                 reason = "Access denied on holiday"
+            elif card.get('daily_scan_limit') and int(card['daily_scan_limit']) > 0:
+                # Check daily scan count
+                limit = int(card['daily_scan_limit'])
+                cursor.execute("""
+                    SELECT COUNT(*) as cnt FROM logs
+                    WHERE user_id = %s AND Location = %s
+                      AND DATE(Date) = CURDATE() AND Granted = 1
+                """, (user_id, zone))
+                count_row = cursor.fetchone()
+                today_count = int(count_row['cnt']) if count_row else 0
+                if today_count >= limit:
+                    reason = f"Daily scan limit reached ({today_count}/{limit})"
+                else:
+                    granted = True
+                    name = f"{card.get('firstname', '')} {card.get('lastname', '')}".strip() or user_id
+                    open_door(user_id, name)
             else:
                 granted = True
                 name = f"{card.get('firstname', '')} {card.get('lastname', '')}".strip() or user_id
@@ -1328,30 +1402,48 @@ def send_heartbeat():
             database=sqldb,
             connect_timeout=5
         )
-        cursor = db.cursor()
+        cursor = db.cursor(pymysql.cursors.DictCursor)
 
         locked_status = 1 if not zone_config.get("unlocked", False) else 0
         reader = zone_config.get("reader_type", "wiegand")
 
-        # Update door status
+        # Update door status with version
         cursor.execute("""
             UPDATE doors
             SET status = 'online',
                 last_seen = NOW(),
                 ip_address = %s,
-                locked = %s
+                locked = %s,
+                controller_version = %s
             WHERE name = %s
-        """, (myip, locked_status, zone))
+        """, (myip, locked_status, VERSION, zone))
 
         # Auto-register door if it doesn't exist yet
         if cursor.rowcount == 0:
             cursor.execute("""
-                INSERT INTO doors (name, ip_address, status, last_seen, locked, reader_type)
-                VALUES (%s, %s, 'online', NOW(), %s, %s)
-            """, (zone, myip, locked_status, reader))
+                INSERT INTO doors (name, ip_address, status, last_seen, locked, reader_type, controller_version)
+                VALUES (%s, %s, 'online', NOW(), %s, %s, %s)
+            """, (zone, myip, locked_status, reader, VERSION))
             report(f"Door '{zone}' auto-registered in database")
 
         db.commit()
+
+        # Check if an update has been requested
+        cursor.execute("""
+            SELECT update_requested FROM doors WHERE name = %s
+        """, (zone,))
+        row = cursor.fetchone()
+        if row and row.get('update_requested'):
+            report("Update requested by server, initiating update...")
+            cursor.execute("""
+                UPDATE doors
+                SET update_status = 'updating',
+                    update_status_time = NOW()
+                WHERE name = %s
+            """, (zone,))
+            db.commit()
+            trigger_update()
+
         with state_lock:
             db_connected = True
 
@@ -1365,6 +1457,28 @@ def send_heartbeat():
                 db.close()
             except Exception:
                 pass
+
+
+# ============================================================
+# SELF-UPDATE
+# ============================================================
+
+def trigger_update():
+    """Launch the update script detached so it can restart this service"""
+    update_script = os.path.join(INSTALL_DIR, 'pidoors-update.sh')
+    if not os.path.isfile(update_script):
+        report(f"Update script not found: {update_script}")
+        return
+    try:
+        subprocess.Popen(
+            ['sudo', update_script, zone],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        report("Update script launched")
+    except Exception as e:
+        report(f"Failed to launch update script: {e}")
 
 
 # ============================================================
