@@ -135,6 +135,9 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                 $web_src = $extracted . '/pidoorserv';
                 $apppath = rtrim($config['apppath'], '/');
 
+                $copied = 0;
+                $failed = 0;
+
                 if (is_dir($web_src)) {
                     // Copy web files, skip config.php
                     $iterator = new RecursiveIteratorIterator(
@@ -152,14 +155,32 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                             if ($iterator->getSubPathName() === 'includes/config.php') {
                                 continue;
                             }
-                            copy($item->getPathname(), $target);
+                            if (copy($item->getPathname(), $target)) {
+                                $copied++;
+                            } else {
+                                $failed++;
+                            }
                         }
                     }
+                } else {
+                    $error_message = "Update failed: web source directory not found in release archive.";
+                    $cleanup_cmd = 'rm -rf ' . escapeshellarg($tmpdir);
+                    @exec($cleanup_cmd);
+                    goto render_page;
+                }
+
+                if ($copied === 0) {
+                    $error_message = "Update failed: no files were copied (failed: $failed).";
+                    $cleanup_cmd = 'rm -rf ' . escapeshellarg($tmpdir);
+                    @exec($cleanup_cmd);
+                    goto render_page;
                 }
 
                 // Copy VERSION file
                 if (file_exists($extracted . '/VERSION')) {
-                    copy($extracted . '/VERSION', $apppath . '/VERSION');
+                    if (!copy($extracted . '/VERSION', $apppath . '/VERSION')) {
+                        $failed++;
+                    }
                     $current_version = trim(file_get_contents($extracted . '/VERSION'));
                 }
 
@@ -172,9 +193,9 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                 }
 
                 // Log the event
-                log_security_event($pdo, 'server_update', $_SESSION['user_id'] ?? null, "Server updated to version $current_version");
+                log_security_event($pdo, 'server_update', $_SESSION['user_id'] ?? null, "Server updated to version $current_version ($copied files)");
 
-                $success_message = "Server updated to version $current_version. Refresh the page to see updated code.";
+                $success_message = "Server updated to version $current_version. $copied files copied" . ($failed ? ", $failed failed" : "") . ". Refresh the page to see updated code.";
             }
 
             // Cleanup temp files
