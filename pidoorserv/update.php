@@ -116,8 +116,15 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
             rmdir($tmpdir);
         } else {
             // Extract
-            $phar = new PharData($tarball);
-            $phar->extractTo($tmpdir);
+            try {
+                $phar = new PharData($tarball);
+                $phar->extractTo($tmpdir);
+            } catch (Exception $e) {
+                $error_message = 'Failed to extract release archive: ' . $e->getMessage();
+                $cleanup_cmd = 'rm -rf ' . escapeshellarg($tmpdir);
+                @exec($cleanup_cmd);
+                goto render_page;
+            }
 
             // Find extracted dir
             $dirs = glob($tmpdir . '/pidoors-*', GLOB_ONLYDIR);
@@ -177,6 +184,7 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
     }
 }
 
+render_page:
 // Check if cache is stale (older than 1 hour)
 $cache_stale = true;
 if ($github_check_time) {

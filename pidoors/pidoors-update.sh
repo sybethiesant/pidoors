@@ -28,32 +28,25 @@ update_db_status() {
         return
     fi
 
-    # Extract DB connection info from config.json
-    local sqladdr sqluser sqlpass sqldb
-    sqladdr=$(python3 -c "import json; c=json.load(open('$config_file')); print(c['$ZONE']['sqladdr'])" 2>/dev/null) || return
-    sqluser=$(python3 -c "import json; c=json.load(open('$config_file')); print(c['$ZONE']['sqluser'])" 2>/dev/null) || return
-    sqlpass=$(python3 -c "import json; c=json.load(open('$config_file')); print(c['$ZONE']['sqlpass'])" 2>/dev/null) || return
-    sqldb=$(python3 -c "import json; c=json.load(open('$config_file')); print(c['$ZONE']['sqldb'])" 2>/dev/null) || return
-
-    if [ -n "$version" ]; then
-        python3 -c "
-import pymysql
-db = pymysql.connect(host='$sqladdr', user='$sqluser', password='$sqlpass', database='$sqldb', connect_timeout=5)
+    # Pass values via environment variables to avoid shell/quote injection issues
+    PIDOORS_CONFIG="$config_file" PIDOORS_ZONE="$ZONE" \
+    PIDOORS_STATUS="$status" PIDOORS_VERSION="$version" \
+    python3 -c "
+import os, json, pymysql
+cfg = json.load(open(os.environ['PIDOORS_CONFIG']))
+zc = cfg[os.environ['PIDOORS_ZONE']]
+db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5)
 c = db.cursor()
-c.execute(\"UPDATE doors SET update_requested=0, update_status=%s, update_status_time=NOW(), controller_version=%s WHERE name=%s\", ('$status', '$version', '$ZONE'))
+version = os.environ.get('PIDOORS_VERSION', '')
+if version:
+    c.execute('UPDATE doors SET update_requested=0, update_status=%s, update_status_time=NOW(), controller_version=%s WHERE name=%s',
+              (os.environ['PIDOORS_STATUS'], version, os.environ['PIDOORS_ZONE']))
+else:
+    c.execute('UPDATE doors SET update_requested=0, update_status=%s, update_status_time=NOW() WHERE name=%s',
+              (os.environ['PIDOORS_STATUS'], os.environ['PIDOORS_ZONE']))
 db.commit()
 db.close()
 " 2>/dev/null || log "Warning: failed to update DB status"
-    else
-        python3 -c "
-import pymysql
-db = pymysql.connect(host='$sqladdr', user='$sqluser', password='$sqlpass', database='$sqldb', connect_timeout=5)
-c = db.cursor()
-c.execute(\"UPDATE doors SET update_requested=0, update_status=%s, update_status_time=NOW() WHERE name=%s\", ('$status', '$ZONE'))
-db.commit()
-db.close()
-" 2>/dev/null || log "Warning: failed to update DB status"
-    fi
 }
 
 cleanup() {

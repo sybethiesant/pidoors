@@ -74,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['request_update'])) {
 }
 
 // Handle add door form
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['request_update'])) {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         $error_message = 'Invalid security token.';
     } else {
