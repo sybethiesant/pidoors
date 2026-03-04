@@ -62,6 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $card_company = sanitize_string($_POST['card_company'] ?? '');
         $card_title = sanitize_string($_POST['card_title'] ?? '');
         $card_notes = sanitize_string($_POST['card_notes'] ?? '');
+        $daily_scan_limit = ($_POST['daily_scan_limit'] ?? '') !== '' ? validate_int($_POST['daily_scan_limit'], 0, 999) : null;
 
         if (empty($user_id) || empty($facility)) {
             $error_message = 'User ID and Facility are required.';
@@ -72,15 +73,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $stmt = $pdo_access->prepare("
-                    INSERT INTO cards (card_id, user_id, facility, bstr, firstname, lastname, email, phone, department, employee_id, company, title, notes, doors, active, group_id, schedule_id, valid_from, valid_until)
-                    VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO cards (card_id, user_id, facility, bstr, firstname, lastname, email, phone, department, employee_id, company, title, notes, doors, active, group_id, schedule_id, valid_from, valid_until, daily_scan_limit)
+                    VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->execute([
                     $card_id, $user_id, $facility, $firstname, $lastname,
                     $card_email ?: null, $card_phone ?: null, $card_department ?: null,
                     $card_employee_id ?: null, $card_company ?: null, $card_title ?: null, $card_notes ?: null,
                     $doors_str, $active, $group_id, $schedule_id,
-                    $valid_from ?: null, $valid_until ?: null
+                    $valid_from ?: null, $valid_until ?: null, $daily_scan_limit
                 ]);
 
                 header("Location: {$config['url']}/cards.php?success=Card added successfully.");
@@ -140,6 +141,7 @@ try {
                     <th>Facility</th>
                     <th>Doors</th>
                     <th>Schedule</th>
+                    <th>Limit</th>
                     <th>Status</th>
                     <th width="120">Actions</th>
                 </tr>
@@ -183,6 +185,13 @@ try {
                                     if ($card['valid_until']) echo 'Until: ' . date('M j, Y', strtotime($card['valid_until']));
                                     ?>
                                 </small>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if (!empty($card['daily_scan_limit'])): ?>
+                                <span class="badge bg-info"><?php echo (int)$card['daily_scan_limit']; ?>/day</span>
+                            <?php else: ?>
+                                <span class="text-muted">-</span>
                             <?php endif; ?>
                         </td>
                         <td>
@@ -318,9 +327,20 @@ try {
                         </div>
                     </div>
 
-                    <div class="form-check mb-3">
-                        <input type="checkbox" class="form-check-input" id="active" name="active" value="1" checked>
-                        <label class="form-check-label" for="active">Active</label>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check mt-2">
+                                <input type="checkbox" class="form-check-input" id="active" name="active" value="1" checked>
+                                <label class="form-check-label" for="active">Active</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="daily_scan_limit" class="form-label">Daily Scan Limit</label>
+                            <input type="number" class="form-control" id="daily_scan_limit" name="daily_scan_limit"
+                                   min="0" max="999" value="<?php echo htmlspecialchars($_POST['daily_scan_limit'] ?? ''); ?>"
+                                   placeholder="0 or empty = unlimited">
+                            <div class="form-text">Max scans per day (0 or empty = unlimited).</div>
+                        </div>
                     </div>
 
                     <hr>

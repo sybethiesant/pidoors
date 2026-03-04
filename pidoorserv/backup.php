@@ -16,7 +16,9 @@ $backup_dir = '/var/backups/pidoors/';
 
 // Create backup directory if it doesn't exist
 if (!is_dir($backup_dir)) {
-    mkdir($backup_dir, 0750, true);
+    if (!mkdir($backup_dir, 0750, true)) {
+        $error_message = "Cannot create backup directory: {$backup_dir} — check permissions.";
+    }
 }
 
 // Handle backup creation
@@ -69,12 +71,16 @@ if (isset($_POST['create_backup']) && verify_csrf_token($_POST['csrf_token'] ?? 
         }
 
         // Write backup file
-        file_put_contents($backup_file, $backup_content);
+        if (file_put_contents($backup_file, $backup_content) === false) {
+            throw new Exception("Failed to write backup file to {$backup_dir} — check directory permissions.");
+        }
 
         // Compress if possible
         if (function_exists('gzencode')) {
             $gz_file = $backup_file . '.gz';
-            file_put_contents($gz_file, gzencode($backup_content, 9));
+            if (file_put_contents($gz_file, gzencode($backup_content, 9)) === false) {
+                throw new Exception("Failed to write compressed backup file.");
+            }
             unlink($backup_file);
             $backup_file = $gz_file;
         }

@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                         // Map columns
                         $col_map = [];
                         $required_cols = ['card_id', 'user_id'];
-                        $optional_cols = ['firstname', 'lastname', 'email', 'phone', 'department', 'employee_id', 'company', 'title', 'notes', 'group_id', 'schedule_id', 'valid_from', 'valid_until', 'pin_code'];
+                        $optional_cols = ['firstname', 'lastname', 'email', 'phone', 'department', 'employee_id', 'company', 'title', 'notes', 'group_id', 'schedule_id', 'valid_from', 'valid_until', 'pin_code', 'daily_scan_limit'];
 
                         foreach ($required_cols as $col) {
                             $idx = array_search($col, $header);
@@ -84,8 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
                             try {
                                 $insert_stmt = $pdo_access->prepare("
-                                    INSERT INTO cards (card_id, user_id, firstname, lastname, email, phone, department, employee_id, company, title, notes, group_id, schedule_id, valid_from, valid_until, pin_code)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    INSERT INTO cards (card_id, user_id, firstname, lastname, email, phone, department, employee_id, company, title, notes, group_id, schedule_id, valid_from, valid_until, pin_code, daily_scan_limit)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ");
 
                                 while (($row = fgetcsv($handle)) !== false) {
@@ -131,13 +131,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                                     $valid_from = sanitize_string($row[$col_map['valid_from'] ?? -1] ?? '') ?: null;
                                     $valid_until = sanitize_string($row[$col_map['valid_until'] ?? -1] ?? '') ?: null;
                                     $pin_code = sanitize_string($row[$col_map['pin_code'] ?? -1] ?? '') ?: null;
+                                    $csv_daily_scan_limit = isset($col_map['daily_scan_limit']) ? (validate_int($row[$col_map['daily_scan_limit']] ?? '', 0, 999) ?: null) : null;
 
                                     try {
                                         $insert_stmt->execute([
                                             $card_id, $user_id, $firstname, $lastname,
                                             $csv_email, $csv_phone, $csv_department, $csv_employee_id,
                                             $csv_company, $csv_title, $csv_notes,
-                                            $group_id, $schedule_id, $valid_from, $valid_until, $pin_code
+                                            $group_id, $schedule_id, $valid_from, $valid_until, $pin_code,
+                                            $csv_daily_scan_limit
                                         ]);
                                         $imported++;
                                     } catch (PDOException $e) {
@@ -272,6 +274,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                     <li><code>valid_from</code> - Start date (YYYY-MM-DD)</li>
                     <li><code>valid_until</code> - End date (YYYY-MM-DD)</li>
                     <li><code>pin_code</code> - Optional PIN</li>
+                    <li><code>daily_scan_limit</code> - Max scans per day (0 = unlimited)</li>
                 </ul>
             </div>
         </div>

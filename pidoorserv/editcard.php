@@ -61,6 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $card_company = sanitize_string($_POST['card_company'] ?? '');
         $card_title = sanitize_string($_POST['card_title'] ?? '');
         $card_notes = sanitize_string($_POST['card_notes'] ?? '');
+        $daily_scan_limit = ($_POST['daily_scan_limit'] ?? '') !== '' ? validate_int($_POST['daily_scan_limit'], 0, 999) : null;
 
         try {
             $stmt = $pdo_access->prepare("
@@ -68,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     firstname = ?, lastname = ?, doors = ?, active = ?,
                     group_id = ?, schedule_id = ?, valid_from = ?, valid_until = ?,
                     email = ?, phone = ?, department = ?, employee_id = ?,
-                    company = ?, title = ?, notes = ?,
+                    company = ?, title = ?, notes = ?, daily_scan_limit = ?,
                     updated_at = NOW()
                 WHERE card_id = ?
             ");
@@ -78,6 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $valid_from ?: null, $valid_until ?: null,
                 $card_email ?: null, $card_phone ?: null, $card_department ?: null,
                 $card_employee_id ?: null, $card_company ?: null, $card_title ?: null, $card_notes ?: null,
+                $daily_scan_limit,
                 $card_id
             ]);
 
@@ -195,10 +197,21 @@ $card_doors = array_filter(array_map('trim', explode(',', $card['doors'])));
                         </div>
                     </div>
 
-                    <div class="mb-3 form-check">
-                        <input type="checkbox" class="form-check-input" id="active" name="active" value="1"
-                               <?php echo $card['active'] ? 'checked' : ''; ?>>
-                        <label class="form-check-label" for="active">Active</label>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check mt-2">
+                                <input type="checkbox" class="form-check-input" id="active" name="active" value="1"
+                                       <?php echo $card['active'] ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="active">Active</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="daily_scan_limit" class="form-label">Daily Scan Limit</label>
+                            <input type="number" class="form-control" id="daily_scan_limit" name="daily_scan_limit"
+                                   min="0" max="999" value="<?php echo htmlspecialchars($card['daily_scan_limit'] ?? ''); ?>"
+                                   placeholder="0 or empty = unlimited">
+                            <div class="form-text">Max scans per day (0 or empty = unlimited).</div>
+                        </div>
                     </div>
 
                     <hr>
