@@ -492,7 +492,8 @@ if [ "$INSTALL_DOOR" = true ]; then
     python3 -m venv "$INSTALL_DIR/venv" --system-site-packages
     "$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q
     "$INSTALL_DIR/venv/bin/pip" install pymysql pyserial smbus2 spidev -q 2>/dev/null || true
-    "$INSTALL_DIR/venv/bin/pip" install RPi.GPIO -q 2>/dev/null || warn "RPi.GPIO not available (non-Pi system?)"
+    # rpi-lgpio is the drop-in replacement for RPi.GPIO on Bookworm/Trixie
+    "$INSTALL_DIR/venv/bin/pip" install rpi-lgpio -q 2>/dev/null || warn "rpi-lgpio not available (non-Pi system?)"
     ok "Python environment ready"
 
     # Create user
@@ -576,7 +577,8 @@ After=network.target
 Type=simple
 User=pidoors
 Group=pidoors
-WorkingDirectory=/opt/pidoors
+RuntimeDirectory=pidoors
+WorkingDirectory=/run/pidoors
 ExecStart=/opt/pidoors/venv/bin/python3 /opt/pidoors/pidoors.py
 Restart=always
 RestartSec=10
