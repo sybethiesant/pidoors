@@ -3,6 +3,10 @@
  * Backup & Restore
  * PiDoors Access Control System
  */
+
+// Buffer output so download/delete can send headers after header.php
+ob_start();
+
 $title = 'Backup & Restore';
 require_once './includes/header.php';
 
@@ -18,6 +22,43 @@ $backup_dir = '/var/backups/pidoors/';
 if (!is_dir($backup_dir)) {
     if (!mkdir($backup_dir, 0750, true)) {
         $error_message = "Cannot create backup directory: {$backup_dir} — check permissions.";
+    }
+}
+
+// Handle backup download (must send headers before any HTML)
+if (isset($_GET['download']) && verify_csrf_token($_GET['token'] ?? '')) {
+    // Security: Use basename to prevent path traversal
+    $file = basename(sanitize_string($_GET['download']));
+    $filepath = $backup_dir . $file;
+
+    // Security check - ensure file exists and is a regular file
+    if (file_exists($filepath) && is_file($filepath) && !is_link($filepath)) {
+        ob_end_clean(); // Discard buffered HTML
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="' . $file . '"');
+        header('Content-Length: ' . filesize($filepath));
+        readfile($filepath);
+        exit();
+    } else {
+        $error_message = 'Backup file not found.';
+    }
+}
+
+// Handle backup deletion
+if (isset($_GET['delete']) && verify_csrf_token($_GET['token'] ?? '')) {
+    // Security: Use basename to prevent path traversal
+    $file = basename(sanitize_string($_GET['delete']));
+    $filepath = $backup_dir . $file;
+
+    // Security check - ensure file exists and is a regular file
+    if (file_exists($filepath) && is_file($filepath) && !is_link($filepath)) {
+        if (unlink($filepath)) {
+            $success_message = 'Backup deleted: ' . $file;
+        } else {
+            $error_message = 'Failed to delete backup file — check permissions.';
+        }
+    } else {
+        $error_message = 'Backup file not found.';
     }
 }
 
@@ -96,40 +137,6 @@ if (isset($_POST['create_backup']) && verify_csrf_token($_POST['csrf_token'] ?? 
     }
 }
 
-// Handle backup download
-if (isset($_GET['download']) && verify_csrf_token($_GET['token'] ?? '')) {
-    // Security: Use basename to prevent path traversal
-    $file = basename(sanitize_string($_GET['download']));
-    $filepath = $backup_dir . $file;
-
-    // Security check - ensure file exists and is a regular file
-    if (file_exists($filepath) && is_file($filepath) && !is_link($filepath)) {
-        header('Content-Type: application/octet-stream');
-        header('Content-Disposition: attachment; filename="' . $file . '"');
-        header('Content-Length: ' . filesize($filepath));
-        readfile($filepath);
-        exit();
-    } else {
-        $error_message = 'Backup file not found.';
-    }
-}
-
-// Handle backup deletion
-if (isset($_GET['delete']) && verify_csrf_token($_GET['token'] ?? '')) {
-    // Security: Use basename to prevent path traversal
-    $file = basename(sanitize_string($_GET['delete']));
-    $filepath = $backup_dir . $file;
-
-    // Security check - ensure file exists and is a regular file
-    if (file_exists($filepath) && is_file($filepath) && !is_link($filepath)) {
-        unlink($filepath);
-        header("Location: {$config['url']}/backup.php?success=Backup deleted.");
-        exit();
-    } else {
-        $error_message = 'Backup file not found.';
-    }
-}
-
 // Get list of backups
 $backups = [];
 if (is_dir($backup_dir)) {
@@ -145,6 +152,9 @@ if (is_dir($backup_dir)) {
         }
     }
 }
+
+// Flush the buffered HTML output
+ob_end_flush();
 ?>
 
 <div class="row">
