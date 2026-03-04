@@ -235,6 +235,17 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                     $current_version = $new_version;
                 }
 
+                // Ensure required directories exist after update
+                $required_dirs = [
+                    '/var/backups/pidoors' => ['owner' => 'www-data:www-data', 'mode' => '750'],
+                ];
+                foreach ($required_dirs as $dir => $opts) {
+                    if (!is_dir($dir)) {
+                        @mkdir($dir, octdec($opts['mode']), true);
+                        @exec('chown ' . escapeshellarg($opts['owner']) . ' ' . escapeshellarg($dir) . ' 2>/dev/null');
+                    }
+                }
+
                 // Only update DB version after everything succeeded
                 try {
                     $stmt = $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('server_version', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
