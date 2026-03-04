@@ -21,7 +21,7 @@ if (file_exists($version_file)) {
 
 // Load settings
 try {
-    $settings_query = $pdo_access->query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('server_version', 'github_latest_version', 'github_check_time', 'target_controller_version')");
+    $settings_query = $pdo_access->query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('server_version', 'github_latest_version', 'github_check_time')");
     $update_settings = [];
     while ($row = $settings_query->fetch()) {
         $update_settings[$row['setting_key']] = $row['setting_value'];
@@ -43,7 +43,8 @@ if (($update_settings['server_version'] ?? '') !== $current_version) {
 
 $github_latest = $update_settings['github_latest_version'] ?? '';
 $github_check_time = $update_settings['github_check_time'] ?? '';
-$target_controller_version = $update_settings['target_controller_version'] ?? '';
+// Controllers should match the server version
+$target_controller_version = $current_version !== 'unknown' ? $current_version : '';
 
 // Handle "Check for Updates" button
 if (isset($_POST['check_updates']) && verify_csrf_token($_POST['csrf_token'] ?? '')) {
@@ -351,13 +352,9 @@ try {
                 <h5 class="mb-0">Door Controller Versions</h5>
             </div>
             <div class="card-body">
-                <?php if ($target_controller_version): ?>
-                    <p class="mb-3">Target controller version: <strong><?php echo htmlspecialchars($target_controller_version); ?></strong>
-                        <small class="text-muted">(set in <a href="settings.php">Settings</a>)</small>
-                    </p>
-                <?php else: ?>
-                    <p class="text-muted mb-3">No target controller version set. <a href="settings.php">Set one in Settings</a> to see outdated warnings.</p>
-                <?php endif; ?>
+                <p class="mb-3">Expected controller version: <strong><?php echo htmlspecialchars($target_controller_version ?: 'unknown'); ?></strong>
+                    <small class="text-muted">(matches server version)</small>
+                </p>
 
                 <?php if (empty($doors)): ?>
                     <p class="text-muted">No doors configured.</p>
@@ -443,7 +440,7 @@ try {
                 <p>Click "Check for Updates" to query GitHub for the latest release. If a newer version is available, click "Update Server" to download and install the new web interface files. Your <code>config.php</code> is preserved.</p>
 
                 <h6>Controller Updates</h6>
-                <p>Set the <strong>Target Controller Version</strong> in <a href="settings.php">Settings</a>, then use the "Request Update" button on the <a href="doors.php">Doors</a> page. On the next heartbeat (every 60 seconds), the controller will download and install the update, then restart itself.</p>
+                <p>Controllers are expected to match the server version. After updating the server, use the "Request Update" button on the <a href="doors.php">Doors</a> page. On the next heartbeat (every 60 seconds), the controller will download and install the update, then restart itself.</p>
             </div>
         </div>
     </div>

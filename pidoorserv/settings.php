@@ -42,7 +42,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'notification_email' => filter_var($_POST['notification_email'] ?? '', FILTER_VALIDATE_EMAIL) ?: '',
             'log_retention_days' => validate_int($_POST['log_retention_days'] ?? 365, 30, 3650) ?: 365,
             'timezone' => sanitize_string($_POST['timezone'] ?? 'UTC'),
-            'target_controller_version' => sanitize_string($_POST['target_controller_version'] ?? ''),
         ];
 
         try {
@@ -81,7 +80,6 @@ $settings = [
     'notification_email' => $db_settings['notification_email'] ?? '',
     'log_retention_days' => $db_settings['log_retention_days'] ?? 365,
     'timezone' => $db_settings['timezone'] ?? 'UTC',
-    'target_controller_version' => $db_settings['target_controller_version'] ?? '',
 ];
 
 // Get list of timezones
@@ -255,13 +253,7 @@ $timezones = DateTimeZone::listIdentifiers();
                     <p class="mb-3"><strong>Server Version:</strong> <?php echo htmlspecialchars($server_version); ?>
                         &mdash; <a href="update.php">Check for Updates</a>
                     </p>
-                    <div class="mb-3">
-                        <label for="target_controller_version" class="form-label">Target Controller Version</label>
-                        <input type="text" class="form-control" id="target_controller_version" name="target_controller_version"
-                               value="<?php echo htmlspecialchars($settings['target_controller_version']); ?>"
-                               placeholder="e.g., 2.5.0">
-                        <div class="form-text">The version all door controllers should be running. Controllers with an older version will show as "Outdated" on the Doors page.</div>
-                    </div>
+                    <p class="mb-0 text-muted">Door controllers are expected to match the server version. Outdated controllers can be updated from the <a href="doors.php">Doors</a> page.</p>
                 </div>
             </div>
 

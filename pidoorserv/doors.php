@@ -42,14 +42,9 @@ try {
     $max_unlock_duration = 3600;
 }
 
-$target_controller_version = '';
-try {
-    $tcv_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'target_controller_version'");
-    $tcv_stmt->execute();
-    $target_controller_version = $tcv_stmt->fetchColumn() ?: '';
-} catch (PDOException $e) {
-    // ignore
-}
+// Controllers should match the server version
+$version_file = $config['apppath'] . 'VERSION';
+$target_controller_version = file_exists($version_file) ? trim(file_get_contents($version_file)) : '';
 
 // Handle "Request Update" actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['request_update'])) {
