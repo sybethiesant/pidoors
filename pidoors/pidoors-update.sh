@@ -110,8 +110,8 @@ tar xzf "$TARBALL" -C "$TMPDIR" || {
     fail "Failed to extract tarball. Download may be corrupt."
 }
 
-# Find the extracted directory
-EXTRACTED=$(find "$TMPDIR" -maxdepth 1 -type d -name "pidoors*" | head -1)
+# Find the extracted directory (mindepth 1 to skip TMPDIR itself which also matches pidoors*)
+EXTRACTED=$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d | head -1)
 if [ -z "$EXTRACTED" ]; then
     fail "Could not find extracted directory in tarball."
 fi

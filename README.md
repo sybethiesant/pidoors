@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.5.18-green)
+![Version](https://img.shields.io/badge/version-2.5.19-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -571,7 +571,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.5.18** - Production Ready
+**Current Version: 2.5.19** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -583,6 +583,9 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.5.19 (March 2026)
+- **Fix**: Controller self-update script failed because `find` matched the temp directory itself instead of the extracted archive directory, causing "missing pidoors/ directory" error and update loop
 
 ### Version 2.5.18 (March 2026)
 - **Upgrade Bootstrap** from 5.0.0-beta1 to 5.3.8 (bundled files and install.sh CDN URLs)
