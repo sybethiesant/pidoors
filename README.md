@@ -117,8 +117,8 @@ The installer presents three installation modes:
 #### After installation
 
 1. Open `http://your-pi-ip/` in a browser
-2. Log in with your username or email and the password you set during install
-3. Navigate to **Doors** to register your door controllers
+2. Log in with the email (or username `Admin`) and password you set during install
+3. Navigate to **Doors** to see your door controllers as they come online
 4. Navigate to **Cards** to add access cards
 5. Set up **Schedules** and **Access Groups** as needed
 
@@ -129,8 +129,8 @@ If you prefer to install manually or need to troubleshoot:
 #### 1. Install system packages
 ```bash
 sudo apt-get update && sudo apt-get install -y \
-  nginx php-fpm php-mysql php-cli php-mbstring mariadb-server \
-  python3 python3-pip git
+  nginx php-fpm php-mysql php-cli php-mbstring php-curl php-json \
+  mariadb-server python3 python3-pip python3-dev python3-venv git curl
 ```
 
 #### 2. Create databases
@@ -141,19 +141,54 @@ sudo mysql -u root -p <<'SQL'
 CREATE DATABASE IF NOT EXISTS users;
 CREATE DATABASE IF NOT EXISTS access;
 CREATE USER IF NOT EXISTS 'pidoors'@'localhost' IDENTIFIED BY 'YOUR_PASSWORD';
+CREATE USER IF NOT EXISTS 'pidoors'@'%' IDENTIFIED BY 'YOUR_PASSWORD';
 GRANT ALL PRIVILEGES ON users.* TO 'pidoors'@'localhost';
 GRANT ALL PRIVILEGES ON access.* TO 'pidoors'@'localhost';
+GRANT ALL PRIVILEGES ON users.* TO 'pidoors'@'%';
+GRANT ALL PRIVILEGES ON access.* TO 'pidoors'@'%';
 FLUSH PRIVILEGES;
 SQL
 ```
 
+> **Note:** The `'pidoors'@'%'` user allows door controllers on other Pis to connect remotely. You also need to set `bind-address = 0.0.0.0` in `/etc/mysql/mariadb.conf.d/50-server.cnf` and restart MariaDB.
+
 #### 3. Import schemas
 ```bash
-# Import the full schema (handles both access and users databases)
+# Create the users table and audit_logs table in the users database
+sudo mysql -u root -p users <<'SQL'
+CREATE TABLE IF NOT EXISTS `users` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_name` varchar(100) NOT NULL,
+  `user_email` varchar(255) NOT NULL,
+  `user_pass` varchar(255) NOT NULL,
+  `admin` tinyint(1) NOT NULL DEFAULT 0,
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `last_login` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `user_email` (`user_email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `audit_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `event_type` varchar(50) NOT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  `details` text,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `event_type` (`event_type`),
+  KEY `user_id` (`user_id`),
+  KEY `created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+SQL
+
+# Import the access database schema and migration extensions
 sudo mysql -u root -p access < database_migration.sql
 ```
 
-The migration script creates all tables, adds extended columns, and handles both the `access` and `users` databases. It is safe to re-run on existing installations.
+The migration script creates all access tables, adds extended columns, and also switches to the `users` database to add profile columns. It is safe to re-run on existing installations.
 
 #### 4. Create your admin user
 ```bash
@@ -169,8 +204,9 @@ sudo mysql -u root -p users -e \
 ```bash
 sudo mkdir -p /var/www/pidoors
 sudo cp -r pidoorserv/* /var/www/pidoors/
+sudo cp VERSION /var/www/pidoors/                 # Version file for update page
 sudo cp /var/www/pidoors/includes/config.php.example /var/www/pidoors/includes/config.php
-sudo nano /var/www/pidoors/includes/config.php   # Set your database password
+sudo nano /var/www/pidoors/includes/config.php    # Set your database password and server IP
 sudo chown -R www-data:www-data /var/www/pidoors
 sudo chmod 640 /var/www/pidoors/includes/config.php
 ```
@@ -183,7 +219,7 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-See the [Installation Guide](INSTALLATION_GUIDE.md) for additional details.
+See the [Installation Guide](pidoors/INSTALLATION_GUIDE.md) for additional details.
 
 ---
 
@@ -292,10 +328,17 @@ cp pidoors/conf/config.json.example pidoors/conf/config.json
 nano pidoors/conf/config.json
 ```
 
-3. Set your values:
+3. Set your values (use your actual door name as the key):
 ```json
 {
-    "connex1": {
+    "frontdoor": {
+        "reader_type": "wiegand",
+        "d0": 24,
+        "d1": 23,
+        "wiegand_format": "auto",
+        "latch_gpio": 18,
+        "open_delay": 5,
+        "unlock_value": 1,
         "sqladdr": "SERVER_IP_ADDRESS",
         "sqluser": "pidoors",
         "sqlpass": "your_database_password",
@@ -340,7 +383,7 @@ Connect lock to relay NO/COM terminals with 12V power supply.
     3V3 (17) (18) GPIO24    <- DATA0 (GPIO24)
 ```
 
-Full wiring diagrams available in [Installation Guide](INSTALLATION_GUIDE.md#wiring).
+Full wiring diagrams available in [Installation Guide](pidoors/INSTALLATION_GUIDE.md#wiring).
 
 ---
 
@@ -501,7 +544,7 @@ pidoors/
 
 | Document | Description |
 |----------|-------------|
-| [Installation Guide](INSTALLATION_GUIDE.md) | Complete beginner-friendly setup |
+| [Installation Guide](pidoors/INSTALLATION_GUIDE.md) | Complete beginner-friendly setup |
 | [Security Notice](SECURITY_NOTICE.md) | Security best practices |
 | [Security Audit](SECURITY_AUDIT_REPORT.md) | Full security audit report |
 | [Project Log](PROJECT_LOG.md) | Development history |
@@ -712,7 +755,7 @@ This project is open source and available for free use, modification, and distri
 
 ## Support
 
-- **Documentation**: [Installation Guide](INSTALLATION_GUIDE.md)
+- **Documentation**: [Installation Guide](pidoors/INSTALLATION_GUIDE.md)
 - **Bug Reports**: [GitHub Issues](https://github.com/sybethiesant/pidoors/issues)
 - **Feature Requests**: [GitHub Issues](https://github.com/sybethiesant/pidoors/issues)
 
