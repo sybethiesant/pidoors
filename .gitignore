@@ -23,6 +23,15 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Test / coverage artifacts
+.coverage
+.coveragerc
+htmlcov/
+.pytest_cache/
+pytest.ini
+requirements-test.txt
+tests/
+
 # IDE / tools
 .vscode/
 .idea/

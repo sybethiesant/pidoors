@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                         // Map columns
                         $col_map = [];
                         $required_cols = ['card_id', 'user_id'];
-                        $optional_cols = ['firstname', 'lastname', 'email', 'phone', 'department', 'employee_id', 'company', 'title', 'notes', 'group_id', 'schedule_id', 'valid_from', 'valid_until', 'pin_code', 'daily_scan_limit'];
+                        $optional_cols = ['firstname', 'lastname', 'email', 'phone', 'department', 'employee_id', 'company', 'title', 'notes', 'group_id', 'schedule_id', 'valid_from', 'valid_until', 'pin_code', 'daily_scan_limit', 'master'];
 
                         foreach ($required_cols as $col) {
                             $idx = array_search($col, $header);
@@ -132,6 +132,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                                     $valid_until = sanitize_string($row[$col_map['valid_until'] ?? -1] ?? '') ?: null;
                                     $pin_code = sanitize_string($row[$col_map['pin_code'] ?? -1] ?? '') ?: null;
                                     $csv_daily_scan_limit = isset($col_map['daily_scan_limit']) ? (validate_int($row[$col_map['daily_scan_limit']] ?? '', 0, 999) ?: null) : null;
+                                    $csv_master = strtolower(trim($row[$col_map['master'] ?? -1] ?? ''));
+                                    $is_master = in_array($csv_master, ['1', 'yes', 'true'], true);
 
                                     try {
                                         $insert_stmt->execute([
@@ -141,6 +143,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                                             $group_id, $schedule_id, $valid_from, $valid_until, $pin_code,
                                             $csv_daily_scan_limit
                                         ]);
+
+                                        if ($is_master) {
+                                            $desc = trim($firstname . ' ' . $lastname) ?: 'Card ' . $card_id;
+                                            $master_stmt = $pdo_access->prepare("INSERT INTO master_cards (card_id, user_id, facility, description, active) VALUES (?, ?, '', ?, 1)");
+                                            $master_stmt->execute([$card_id, $user_id, $desc]);
+                                        }
+
                                         $imported++;
                                     } catch (PDOException $e) {
                                         if ($e->getCode() == 23000) {
@@ -275,6 +284,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                     <li><code>valid_until</code> - End date (YYYY-MM-DD)</li>
                     <li><code>pin_code</code> - Optional PIN</li>
                     <li><code>daily_scan_limit</code> - Max scans per day (0 = unlimited)</li>
+                    <li><code>master</code> - Master card (1/yes/true)</li>
                 </ul>
             </div>
         </div>
