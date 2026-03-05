@@ -17,6 +17,8 @@ if (isset($_GET['delete']) && isset($_GET['token'])) {
     if (verify_csrf_token($_GET['token'])) {
         $card_id = sanitize_string($_GET['delete']);
         try {
+            $stmt = $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?");
+            $stmt->execute([$card_id]);
             $stmt = $pdo_access->prepare("DELETE FROM cards WHERE card_id = ?");
             $stmt->execute([$card_id]);
             header("Location: {$config['url']}/cards.php?success=Card deleted successfully.");
@@ -55,6 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $valid_from = $_POST['valid_from'] ?? null;
         $valid_until = $_POST['valid_until'] ?? null;
         $active = isset($_POST['active']) ? 1 : 0;
+        $master_card = isset($_POST['master_card']) ? 1 : 0;
         $card_email = sanitize_string($_POST['card_email'] ?? '');
         $card_phone = sanitize_string($_POST['card_phone'] ?? '');
         $card_department = sanitize_string($_POST['card_department'] ?? '');
@@ -84,6 +87,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $valid_from ?: null, $valid_until ?: null, $daily_scan_limit
                 ]);
 
+                if ($master_card) {
+                    $desc = trim($firstname . ' ' . $lastname) ?: 'Card ' . $card_id;
+                    $stmt = $pdo_access->prepare("INSERT INTO master_cards (card_id, user_id, facility, description, active) VALUES (?, ?, ?, ?, 1)");
+                    $stmt->execute([$card_id, $user_id, $facility, $desc]);
+                }
+
                 header("Location: {$config['url']}/cards.php?success=Card added successfully.");
                 exit();
             } catch (PDOException $e) {
@@ -112,6 +121,14 @@ try {
 } catch (PDOException $e) {
     error_log("Cards fetch error: " . $e->getMessage());
     $cards = [];
+}
+
+// Build master card lookup
+try {
+    $master_card_ids = $pdo_access->query("SELECT card_id FROM master_cards WHERE active = 1")->fetchAll(PDO::FETCH_COLUMN);
+    $master_lookup = array_flip($master_card_ids);
+} catch (PDOException $e) {
+    $master_lookup = [];
 }
 ?>
 
@@ -199,6 +216,9 @@ try {
                                 <span class="badge bg-success">Active</span>
                             <?php else: ?>
                                 <span class="badge bg-danger">Inactive</span>
+                            <?php endif; ?>
+                            <?php if (isset($master_lookup[$card['card_id']])): ?>
+                                <span class="badge bg-warning text-dark">Master</span>
                             <?php endif; ?>
                         </td>
                         <td>
@@ -341,6 +361,12 @@ try {
                                    placeholder="0 or empty = unlimited">
                             <div class="form-text">Max scans per day (0 or empty = unlimited).</div>
                         </div>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input type="checkbox" class="form-check-input" id="master_card" name="master_card" value="1">
+                        <label class="form-check-label" for="master_card">Master Card</label>
+                        <div class="form-text text-warning">Master cards have unrestricted access to all doors, ignoring schedules and expiration.</div>
                     </div>
 
                     <hr>

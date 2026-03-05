@@ -34,6 +34,11 @@ try {
     $doors = $pdo_access->query("SELECT name FROM doors ORDER BY name")->fetchAll(PDO::FETCH_COLUMN);
     $schedules = $pdo_access->query("SELECT id, name FROM access_schedules ORDER BY name")->fetchAll();
     $groups = $pdo_access->query("SELECT id, name FROM access_groups ORDER BY name")->fetchAll();
+
+    // Check if card is a master card
+    $master_stmt = $pdo_access->prepare("SELECT id FROM master_cards WHERE card_id = ? AND active = 1");
+    $master_stmt->execute([$card_id]);
+    $is_master = (bool) $master_stmt->fetch();
 } catch (PDOException $e) {
     error_log("Edit card error: " . $e->getMessage());
     header("Location: {$config['url']}/cards.php?error=Error loading card.");
@@ -62,6 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $card_title = sanitize_string($_POST['card_title'] ?? '');
         $card_notes = sanitize_string($_POST['card_notes'] ?? '');
         $daily_scan_limit = ($_POST['daily_scan_limit'] ?? '') !== '' ? validate_int($_POST['daily_scan_limit'], 0, 999) : null;
+        $master_card = isset($_POST['master_card']) ? 1 : 0;
 
         try {
             $stmt = $pdo_access->prepare("
@@ -82,6 +88,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $daily_scan_limit,
                 $card_id
             ]);
+
+            // Sync master_cards table
+            if ($master_card && !$is_master) {
+                $desc = trim($firstname . ' ' . $lastname) ?: 'Card ' . $card_id;
+                $stmt = $pdo_access->prepare("INSERT INTO master_cards (card_id, user_id, facility, description, active) VALUES (?, ?, ?, ?, 1)");
+                $stmt->execute([$card_id, $card['user_id'], $card['facility'], $desc]);
+            } elseif (!$master_card && $is_master) {
+                $stmt = $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?");
+                $stmt->execute([$card_id]);
+            }
 
             header("Location: {$config['url']}/cards.php?success=Card updated successfully.");
             exit();
@@ -212,6 +228,13 @@ $card_doors = array_filter(array_map('trim', explode(',', $card['doors'])));
                                    placeholder="0 or empty = unlimited">
                             <div class="form-text">Max scans per day (0 or empty = unlimited).</div>
                         </div>
+                    </div>
+
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="master_card" name="master_card" value="1"
+                               <?php echo $is_master ? 'checked' : ''; ?>>
+                        <label class="form-check-label" for="master_card">Master Card</label>
+                        <div class="form-text text-warning">Master cards have unrestricted access to all doors, ignoring schedules and expiration.</div>
                     </div>
 
                     <hr>
