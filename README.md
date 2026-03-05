@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.5.14-green)
+![Version](https://img.shields.io/badge/version-2.5.15-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -528,7 +528,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.5.14** - Production Ready
+**Current Version: 2.5.15** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -540,6 +540,13 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.5.15 (March 2026)
+- **Stale file cleanup**: All three updaters (server-update.sh, web UI update, controller update) now remove orphaned files that were deleted from the project
+- Server shell updater uses `rsync --delete` (with `cp` fallback cleanup)
+- Web UI updater removes orphaned files after copying, reports count in success message
+- Controller updater cleans orphaned files from `formats/` and `readers/` directories
+- Protected files (`config.php`, `VERSION`, dotfiles, `conf/`, `cache/`) are never deleted
 
 ### Version 2.5.14 (March 2026)
 - **Fix**: Export logs crash — `rowCount()` called on array instead of PDOStatement

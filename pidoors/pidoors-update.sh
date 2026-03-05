@@ -195,6 +195,24 @@ copy_file "$EXTRACTED/VERSION" "$INSTALL_DIR/VERSION"
 chown -R pidoors:pidoors "$INSTALL_DIR"
 chmod +x "$INSTALL_DIR/pidoors.py"
 
+# Remove orphaned files from managed directories
+REMOVED=0
+for dir in formats readers; do
+    if [ -d "$INSTALL_DIR/$dir" ] && [ -d "$SRC_DIR/$dir" ]; then
+        for f in "$INSTALL_DIR/$dir/"*; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+            if [ ! -f "$SRC_DIR/$dir/$base" ]; then
+                rm -f "$f" && REMOVED=$((REMOVED + 1))
+                log "Removed orphaned file: $dir/$base"
+            fi
+        done
+    fi
+done
+if [ "$REMOVED" -gt 0 ]; then
+    log "Cleaned up $REMOVED orphaned file(s)"
+fi
+
 # Read new version
 NEW_VERSION="$LATEST_VERSION"
 if [ -f "$INSTALL_DIR/VERSION" ]; then

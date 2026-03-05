@@ -227,6 +227,27 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                     goto render_page;
                 }
 
+                // Remove files that were deleted from the project
+                $removed = 0;
+                $remove_iterator = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator($apppath, RecursiveDirectoryIterator::SKIP_DOTS),
+                    RecursiveIteratorIterator::CHILD_FIRST
+                );
+                foreach ($remove_iterator as $item) {
+                    $sub = substr($item->getPathname(), strlen($apppath) + 1);
+                    // Skip protected files
+                    if ($sub === 'includes' . DIRECTORY_SEPARATOR . 'config.php' || $sub === 'includes/config.php') continue;
+                    if ($sub === 'VERSION' || $sub === 'database_migration.sql') continue;
+                    if (str_starts_with(basename($sub), '.')) continue;
+
+                    $release_path = $web_src . '/' . str_replace(DIRECTORY_SEPARATOR, '/', $sub);
+                    if ($item->isFile() && !file_exists($release_path)) {
+                        if (@unlink($item->getPathname())) $removed++;
+                    } elseif ($item->isDir() && !file_exists($release_path)) {
+                        @rmdir($item->getPathname()); // only removes if empty
+                    }
+                }
+
                 // Only update VERSION after all files copied successfully
                 if (file_exists($extracted . '/VERSION')) {
                     $new_version = trim(file_get_contents($extracted . '/VERSION'));
@@ -260,7 +281,8 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
 
                 log_security_event($pdo, 'server_update', $_SESSION['user_id'] ?? null, "Server updated to version $current_version ($copied files)");
 
-                $success_message = "Server updated to version $current_version. $copied files copied successfully. Refresh the page to see updated code.";
+                $cleanup_msg = $removed > 0 ? " $removed orphaned file(s) removed." : "";
+                $success_message = "Server updated to version $current_version. $copied files copied successfully.{$cleanup_msg} Refresh the page to see updated code.";
             }
 
             // Cleanup temp files

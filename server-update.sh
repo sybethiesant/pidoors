@@ -161,8 +161,8 @@ SKIPPED=0
 
 # Use rsync if available, otherwise cp with exclusion
 if command -v rsync > /dev/null 2>&1; then
-    rsync -a --exclude='includes/config.php' "$EXTRACTED/pidoorserv/" "$WEB_ROOT/"
-    ok "Web files updated (rsync)"
+    rsync -a --delete --exclude='includes/config.php' "$EXTRACTED/pidoorserv/" "$WEB_ROOT/"
+    ok "Web files updated (rsync, stale files removed)"
 else
     # Manual copy, preserving config.php
     if [ -f "$WEB_ROOT/includes/config.php" ]; then
@@ -174,7 +174,19 @@ else
     if [ -f "$TMPDIR/config.php.bak" ]; then
         cp "$TMPDIR/config.php.bak" "$WEB_ROOT/includes/config.php"
     fi
-    ok "Web files updated (cp)"
+    # Remove files no longer in the release
+    STALE=0
+    find "$WEB_ROOT" -type f | while read -r f; do
+        rel="${f#$WEB_ROOT/}"
+        case "$rel" in
+            includes/config.php|.docker*|.*) continue ;;
+        esac
+        if [ ! -f "$EXTRACTED/pidoorserv/$rel" ]; then
+            rm -f "$f" && STALE=$((STALE + 1))
+        fi
+    done
+    find "$WEB_ROOT" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+    ok "Web files updated (cp, stale files removed)"
 fi
 
 # Copy VERSION file
