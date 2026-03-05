@@ -313,3 +313,33 @@ ALTER TABLE `cards` ADD INDEX IF NOT EXISTS `idx_active` (`active`);
 -- Insert a sample door for testing
 INSERT IGNORE INTO `doors` (`name`, `location`, `doornum`, `description`) VALUES
 ('FrontDoor', 'Main Entrance', 1, 'Front door - Docker test environment');
+
+-- ========================================
+-- EXAMPLE DATA
+-- ========================================
+
+-- Example user (password: password123)
+USE `users`;
+INSERT IGNORE INTO `users` (`user_name`, `user_email`, `user_pass`, `first_name`, `last_name`, `department`, `company`, `job_title`, `admin`, `active`)
+VALUES ('jsmith', 'jsmith@example.com', '$2y$12$mBbwG6jxtJetQWLIQqhBfO9q34t57WdhpDmmWM7eEZkFjLJ3/e9jm', 'John', 'Smith', 'Engineering', 'Acme Corp', 'Engineer', 0, 1);
+
+USE `access`;
+
+-- Example door
+INSERT IGNORE INTO `doors` (`name`, `location`, `description`, `reader_type`, `unlock_duration`, `status`)
+VALUES ('front_door', 'Main Entrance', 'Front door with card reader', 'wiegand', 5, 'unknown');
+
+-- Example cards
+INSERT IGNORE INTO `cards` (`card_id`, `user_id`, `facility`, `firstname`, `lastname`, `department`, `group_id`, `active`)
+VALUES ('12345678', 'EMP001', '100', 'Jane', 'Doe', 'Security', 1, 1);
+
+INSERT IGNORE INTO `cards` (`card_id`, `user_id`, `facility`, `firstname`, `lastname`, `department`, `group_id`, `schedule_id`, `active`)
+VALUES ('87654321', 'EMP002', '100', 'Bob', 'Wilson', 'Engineering', 2, 2, 1);
+
+-- Example master card
+INSERT IGNORE INTO `master_cards` (`card_id`, `user_id`, `facility`, `description`, `active`)
+VALUES ('12345678', 'EMP001', '100', 'Jane Doe', 1);
+
+-- Example holiday
+INSERT IGNORE INTO `holidays` (`name`, `date`, `recurring`, `access_denied`)
+VALUES ('New Year''s Day', '2026-01-01', 1, 1);

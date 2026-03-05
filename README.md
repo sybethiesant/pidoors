@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.5.16-green)
+![Version](https://img.shields.io/badge/version-2.5.17-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -528,7 +528,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.5.16** - Production Ready
+**Current Version: 2.5.17** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -540,6 +540,15 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.5.17 (March 2026)
+- **Audit log detail modals**: Clicking any audit log row opens a modal showing full event details (event type, timestamp, user, IP, user agent, details)
+- **Rich settings change logging**: Settings changes now log exactly which keys changed with old/new values
+- **Card audit logging**: Card create, edit, and delete operations now log to the audit trail with full details
+- **Enriched audit details**: Login, logout, profile updates, and user edits now include contextual information (usernames, changed fields, old/new values)
+- Added missing event type labels in audit log (user_modified, profile_update, cards_export, cards_imported, report_export, server_update)
+- **Example data**: Docker init-db.sql and install.sh now support optional example data (cards, doors, users, holidays)
+- New `exportcards.php` for CSV card exports
 
 ### Version 2.5.16 (March 2026)
 - **Fix**: Deleting a door (or any redirect action) caused white page — `header()` calls failed silently because HTML was already sent by `header.php`

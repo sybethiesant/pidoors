@@ -85,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
 
                         // Log successful login
                         try {
-                            log_security_event($pdo, 'login_success', $user['id'], 'User logged in successfully');
+                            log_security_event($pdo, 'login_success', $user['id'], "User {$user['user_name']} logged in successfully");
                         } catch (Exception $e) {
                             // Audit log table might not exist yet, ignore
                         }

@@ -362,6 +362,46 @@ ON DUPLICATE KEY UPDATE user_pass='$HASHED_PASS';
 EOF
     ok "Admin user created: $ADMIN_EMAIL"
 
+    # ── Example data ──
+
+    echo
+    echo "  Install example content? (cards, door, holiday, user)"
+    echo "  This helps you see how the system looks with data."
+    echo
+    read -rp "  Install example content? [y/N] " INSTALL_EXAMPLES
+    if [[ "$INSTALL_EXAMPLES" =~ ^[Yy]$ ]]; then
+        step "Server: Installing example data"
+
+        # Hash the example user password
+        EXAMPLE_PASS=$(php -r 'echo password_hash("password123", PASSWORD_BCRYPT, ["cost" => 12]);')
+
+        # Example user
+        MYSQL_PWD="$DB_PASS" mysql -u pidoors users <<EOF
+INSERT IGNORE INTO users (user_name, user_email, user_pass, first_name, last_name, department, company, job_title, admin, active)
+VALUES ('jsmith', 'jsmith@example.com', '$EXAMPLE_PASS', 'John', 'Smith', 'Engineering', 'Acme Corp', 'Engineer', 0, 1);
+EOF
+
+        # Example door, cards, master card, holiday
+        MYSQL_PWD="$DB_PASS" mysql -u pidoors access <<EOF
+INSERT IGNORE INTO doors (name, location, description, reader_type, unlock_duration, status)
+VALUES ('front_door', 'Main Entrance', 'Front door with card reader', 'wiegand', 5, 'unknown');
+
+INSERT IGNORE INTO cards (card_id, user_id, facility, firstname, lastname, department, group_id, active)
+VALUES ('12345678', 'EMP001', '100', 'Jane', 'Doe', 'Security', 1, 1);
+
+INSERT IGNORE INTO cards (card_id, user_id, facility, firstname, lastname, department, group_id, schedule_id, active)
+VALUES ('87654321', 'EMP002', '100', 'Bob', 'Wilson', 'Engineering', 2, 2, 1);
+
+INSERT IGNORE INTO master_cards (card_id, user_id, facility, description, active)
+VALUES ('12345678', 'EMP001', '100', 'Jane Doe', 1);
+
+INSERT IGNORE INTO holidays (name, date, recurring, access_denied)
+VALUES ('New Year''s Day', '2026-01-01', 1, 1);
+EOF
+
+        ok "Example data installed"
+    fi
+
     # Save the server IP for later use by door controller section
     SERVER_IP=$(hostname -I | awk '{print $1}')
 fi

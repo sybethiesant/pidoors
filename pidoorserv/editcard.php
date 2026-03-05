@@ -99,6 +99,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([$card_id]);
             }
 
+            // Build change detail for audit log
+            $edit_changes = [];
+            if ($card['firstname'] !== $firstname) $edit_changes[] = "firstname ({$card['firstname']} → $firstname)";
+            if ($card['lastname'] !== $lastname) $edit_changes[] = "lastname ({$card['lastname']} → $lastname)";
+            if ($card['doors'] !== $doors_str) $edit_changes[] = "doors ({$card['doors']} → $doors_str)";
+            if ((int)$card['active'] !== $active) $edit_changes[] = "active ({$card['active']} → $active)";
+            if (($card['group_id'] ?? '') != ($group_id ?? '')) $edit_changes[] = "group_id ({$card['group_id']} → $group_id)";
+            if (($card['schedule_id'] ?? '') != ($schedule_id ?? '')) $edit_changes[] = "schedule_id ({$card['schedule_id']} → $schedule_id)";
+            if (($card['valid_from'] ?? '') !== ($valid_from ?: '')) $edit_changes[] = "valid_from ({$card['valid_from']} → $valid_from)";
+            if (($card['valid_until'] ?? '') !== ($valid_until ?: '')) $edit_changes[] = "valid_until ({$card['valid_until']} → $valid_until)";
+            if ((bool)$master_card !== $is_master) $edit_changes[] = "master_card (" . ($is_master ? 'yes' : 'no') . " → " . ($master_card ? 'yes' : 'no') . ")";
+            if (($card['daily_scan_limit'] ?? '') != ($daily_scan_limit ?? '')) $edit_changes[] = "daily_scan_limit ({$card['daily_scan_limit']} → $daily_scan_limit)";
+            $edit_detail = $edit_changes ? "Card $card_id: " . implode(', ', $edit_changes) : "Card $card_id saved (no changes)";
+            try { log_security_event($pdo, 'card_modified', $_SESSION['user_id'] ?? null, $edit_detail); } catch (Exception $e) {}
+
             header("Location: {$config['url']}/cards.php?success=Card updated successfully.");
             exit();
         } catch (PDOException $e) {

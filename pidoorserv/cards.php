@@ -17,10 +17,24 @@ if (isset($_GET['delete']) && isset($_GET['token'])) {
     if (verify_csrf_token($_GET['token'])) {
         $card_id = sanitize_string($_GET['delete']);
         try {
+            // Get card info before deleting for audit log
+            $del_stmt = $pdo_access->prepare("SELECT user_id, firstname, lastname FROM cards WHERE card_id = ?");
+            $del_stmt->execute([$card_id]);
+            $del_card = $del_stmt->fetch();
+            $del_name = $del_card ? trim($del_card['firstname'] . ' ' . $del_card['lastname']) : '';
+
             $stmt = $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?");
             $stmt->execute([$card_id]);
             $stmt = $pdo_access->prepare("DELETE FROM cards WHERE card_id = ?");
             $stmt->execute([$card_id]);
+
+            $del_detail = "Deleted card $card_id";
+            if ($del_card) {
+                $del_detail .= " (user_id: {$del_card['user_id']}";
+                if ($del_name) $del_detail .= ", name: $del_name";
+                $del_detail .= ")";
+            }
+            try { log_security_event($pdo, 'card_deleted', $_SESSION['user_id'] ?? null, $del_detail); } catch (Exception $e) {}
             header("Location: {$config['url']}/cards.php?success=Card deleted successfully.");
             exit();
         } catch (PDOException $e) {
@@ -93,6 +107,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$card_id, $user_id, $facility, $desc]);
                 }
 
+                $add_name = trim($firstname . ' ' . $lastname);
+                $add_detail = "Created card $card_id (user_id: $user_id, facility: $facility";
+                if ($add_name) $add_detail .= ", name: $add_name";
+                if ($doors_str) $add_detail .= ", doors: $doors_str";
+                if ($master_card) $add_detail .= ", master_card: yes";
+                $add_detail .= ", active: " . ($active ? 'yes' : 'no') . ")";
+                try { log_security_event($pdo, 'card_created', $_SESSION['user_id'] ?? null, $add_detail); } catch (Exception $e) {}
+
                 header("Location: {$config['url']}/cards.php?success=Card added successfully.");
                 exit();
             } catch (PDOException $e) {
@@ -144,6 +166,10 @@ try {
         <a href="importcards.php" class="btn btn-outline-secondary">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
             Import CSV
+        </a>
+        <a href="exportcards.php" class="btn btn-outline-secondary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Export CSV
         </a>
     </div>
 </div>

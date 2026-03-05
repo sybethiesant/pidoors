@@ -38,7 +38,8 @@ if (!$csrf_valid && isset($_SESSION['user_id'])) {
 if (isset($_SESSION['user_id'])) {
     try {
         require_once __DIR__ . '/../database/db_connection.php';
-        log_security_event($pdo, 'logout', $_SESSION['user_id'], 'User logged out');
+        $logout_user = $_SESSION['username'] ?? 'Unknown';
+        log_security_event($pdo, 'logout', $_SESSION['user_id'], "User $logout_user logged out");
     } catch (Exception $e) {
         // Ignore if audit log doesn't exist
     }

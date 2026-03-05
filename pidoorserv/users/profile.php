@@ -59,7 +59,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $user['job_title'] = $job_title;
                     $success_message = 'Profile updated successfully.';
 
-                    log_security_event($pdo, 'profile_update', $user_id, 'Profile updated');
+                    // Build change detail
+                    $profile_changes = [];
+                    if (($user['user_email'] ?? '') !== $email) $profile_changes[] = "email ({$user['user_email']} → $email)";
+                    if (($user['first_name'] ?? '') !== $first_name) $profile_changes[] = "first_name ({$user['first_name']} → $first_name)";
+                    if (($user['last_name'] ?? '') !== $last_name) $profile_changes[] = "last_name ({$user['last_name']} → $last_name)";
+                    if (($user['phone'] ?? '') !== $phone) $profile_changes[] = "phone";
+                    if (($user['department'] ?? '') !== $department) $profile_changes[] = "department ({$user['department']} → $department)";
+                    if (($user['company'] ?? '') !== $company) $profile_changes[] = "company ({$user['company']} → $company)";
+                    if (($user['job_title'] ?? '') !== $job_title) $profile_changes[] = "job_title ({$user['job_title']} → $job_title)";
+                    $profile_detail = $profile_changes ? "Profile updated: " . implode(', ', $profile_changes) : "Profile saved (no changes)";
+                    log_security_event($pdo, 'profile_update', $user_id, $profile_detail);
                 } catch (PDOException $e) {
                     error_log("Profile update error: " . $e->getMessage());
                     $error_message = 'Failed to update profile.';

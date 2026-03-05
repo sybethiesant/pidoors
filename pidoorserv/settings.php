@@ -45,6 +45,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
 
         try {
+            // Build detailed change log before saving
+            $changes = [];
+            foreach ($settings_to_save as $key => $value) {
+                $old = $db_settings[$key] ?? '';
+                if ((string)$old !== (string)$value) {
+                    $changes[] = "$key ($old → $value)";
+                }
+            }
+
             $stmt = $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
                                           ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
 
@@ -55,8 +64,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $success_message = 'Settings saved successfully.';
 
-            // Log settings change
-            log_security_event($pdo, 'settings_change', $_SESSION['user_id'] ?? null, 'System settings updated');
+            // Log settings change with details
+            if ($changes) {
+                $detail = 'Changed: ' . implode(', ', $changes);
+            } else {
+                $detail = 'Settings saved (no changes)';
+            }
+            log_security_event($pdo, 'settings_change', $_SESSION['user_id'] ?? null, $detail);
 
         } catch (PDOException $e) {
             error_log("Save settings error: " . $e->getMessage());

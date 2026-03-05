@@ -72,13 +72,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $stmt = $pdo->prepare("UPDATE users SET user_email = ?, admin = ?, active = ?, user_pass = ?" . $profile_fields . " WHERE id = ?");
                         $stmt->execute(array_merge([$email, $is_admin, $is_active, $password_hash], $profile_values, [$user_id]));
 
-                        log_security_event($pdo, 'user_modified', $_SESSION['user_id'], "User {$user['user_name']} updated with password reset");
+                        // Build change detail
+                        $eu_changes = [];
+                        if (($user['user_email'] ?? '') !== $email) $eu_changes[] = "email ({$user['user_email']} → $email)";
+                        if ((int)($user['admin'] ?? 0) !== $is_admin) $eu_changes[] = "admin ({$user['admin']} → $is_admin)";
+                        if ((int)($user['active'] ?? 1) !== $is_active) $eu_changes[] = "active ({$user['active']} → $is_active)";
+                        $eu_changes[] = "password reset";
+                        log_security_event($pdo, 'user_modified', $_SESSION['user_id'], "User {$user['user_name']}: " . implode(', ', $eu_changes));
                     }
                 } else {
                     $stmt = $pdo->prepare("UPDATE users SET user_email = ?, admin = ?, active = ?" . $profile_fields . " WHERE id = ?");
                     $stmt->execute(array_merge([$email, $is_admin, $is_active], $profile_values, [$user_id]));
 
-                    log_security_event($pdo, 'user_modified', $_SESSION['user_id'], "User {$user['user_name']} updated");
+                    // Build change detail
+                    $eu_changes = [];
+                    if (($user['user_email'] ?? '') !== $email) $eu_changes[] = "email ({$user['user_email']} → $email)";
+                    if ((int)($user['admin'] ?? 0) !== $is_admin) $eu_changes[] = "admin ({$user['admin']} → $is_admin)";
+                    if ((int)($user['active'] ?? 1) !== $is_active) $eu_changes[] = "active ({$user['active']} → $is_active)";
+                    if (($user['first_name'] ?? '') !== ($first_name ?: '')) $eu_changes[] = "first_name ({$user['first_name']} → $first_name)";
+                    if (($user['last_name'] ?? '') !== ($last_name ?: '')) $eu_changes[] = "last_name ({$user['last_name']} → $last_name)";
+                    if (($user['department'] ?? '') !== ($department ?: '')) $eu_changes[] = "department ({$user['department']} → $department)";
+                    if (($user['company'] ?? '') !== ($company ?: '')) $eu_changes[] = "company ({$user['company']} → $company)";
+                    if (($user['job_title'] ?? '') !== ($job_title ?: '')) $eu_changes[] = "job_title ({$user['job_title']} → $job_title)";
+                    $eu_detail = $eu_changes ? "User {$user['user_name']}: " . implode(', ', $eu_changes) : "User {$user['user_name']} saved (no changes)";
+                    log_security_event($pdo, 'user_modified', $_SESSION['user_id'], $eu_detail);
                 }
 
                 if (!$error_message) {

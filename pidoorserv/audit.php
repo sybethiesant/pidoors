@@ -72,9 +72,15 @@ $event_labels = [
     'card_created' => ['label' => 'Card Created', 'class' => 'bg-info'],
     'card_deleted' => ['label' => 'Card Deleted', 'class' => 'bg-danger'],
     'card_modified' => ['label' => 'Card Modified', 'class' => 'bg-warning'],
+    'user_modified' => ['label' => 'User Modified', 'class' => 'bg-warning'],
+    'profile_update' => ['label' => 'Profile Updated', 'class' => 'bg-info'],
     'door_unlock' => ['label' => 'Manual Unlock', 'class' => 'bg-primary'],
     'backup_created' => ['label' => 'Backup Created', 'class' => 'bg-info'],
     'log_export' => ['label' => 'Log Export', 'class' => 'bg-secondary'],
+    'cards_export' => ['label' => 'Cards Export', 'class' => 'bg-secondary'],
+    'cards_imported' => ['label' => 'Cards Imported', 'class' => 'bg-info'],
+    'report_export' => ['label' => 'Report Export', 'class' => 'bg-secondary'],
+    'server_update' => ['label' => 'Server Update', 'class' => 'bg-success'],
 ];
 ?>
 
@@ -135,8 +141,17 @@ $event_labels = [
                     <?php foreach ($logs as $log): ?>
                         <?php
                         $event_info = $event_labels[$log['event_type']] ?? ['label' => ucfirst(str_replace('_', ' ', $log['event_type'])), 'class' => 'bg-secondary'];
+                        $user_display = $log['user_name'] ? $log['user_name'] : ($log['user_id'] ? "User #{$log['user_id']}" : 'System');
                         ?>
-                        <tr>
+                        <tr style="cursor:pointer" onclick="showAuditDetail(this)"
+                            data-event-type="<?php echo htmlspecialchars($log['event_type']); ?>"
+                            data-event-label="<?php echo htmlspecialchars($event_info['label']); ?>"
+                            data-event-class="<?php echo htmlspecialchars($event_info['class']); ?>"
+                            data-timestamp="<?php echo date('Y-m-d H:i:s', strtotime($log['created_at'])); ?>"
+                            data-user="<?php echo htmlspecialchars($user_display); ?>"
+                            data-ip="<?php echo htmlspecialchars($log['ip_address'] ?? 'N/A'); ?>"
+                            data-user-agent="<?php echo htmlspecialchars($log['user_agent'] ?? 'N/A'); ?>"
+                            data-details="<?php echo htmlspecialchars($log['details'] ?? ''); ?>">
                             <td><?php echo date('Y-m-d H:i:s', strtotime($log['created_at'])); ?></td>
                             <td>
                                 <span class="badge <?php echo $event_info['class']; ?>">
@@ -170,5 +185,50 @@ $event_labels = [
         </div>
     </div>
 </div>
+
+<!-- Audit Detail Modal -->
+<div class="modal fade" id="auditDetailModal" tabindex="-1" aria-labelledby="auditDetailModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="auditDetailModalLabel"></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Event</dt>
+                    <dd class="col-sm-8" id="modal-event"></dd>
+                    <dt class="col-sm-4">Date/Time</dt>
+                    <dd class="col-sm-8" id="modal-timestamp"></dd>
+                    <dt class="col-sm-4">User</dt>
+                    <dd class="col-sm-8" id="modal-user"></dd>
+                    <dt class="col-sm-4">IP Address</dt>
+                    <dd class="col-sm-8" id="modal-ip"></dd>
+                    <dt class="col-sm-4">User Agent</dt>
+                    <dd class="col-sm-8" id="modal-user-agent"></dd>
+                    <dt class="col-sm-4">Details</dt>
+                    <dd class="col-sm-8"><pre class="mb-0" style="white-space:pre-wrap;word-break:break-word;font-size:.875rem" id="modal-details"></pre></dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showAuditDetail(row) {
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    document.getElementById('auditDetailModalLabel').innerHTML =
+        '<span class="badge ' + esc(row.dataset.eventClass) + ' me-2">' + esc(row.dataset.eventLabel) + '</span>' +
+        esc(row.dataset.timestamp);
+    document.getElementById('modal-event').innerHTML =
+        '<span class="badge ' + esc(row.dataset.eventClass) + '">' + esc(row.dataset.eventLabel) + '</span>';
+    document.getElementById('modal-timestamp').textContent = row.dataset.timestamp;
+    document.getElementById('modal-user').textContent = row.dataset.user;
+    document.getElementById('modal-ip').innerHTML = '<code>' + esc(row.dataset.ip) + '</code>';
+    document.getElementById('modal-user-agent').textContent = row.dataset.userAgent;
+    document.getElementById('modal-details').textContent = row.dataset.details || '\u2014';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('auditDetailModal')).show();
+}
+</script>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>
