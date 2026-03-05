@@ -92,7 +92,7 @@ Complete step-by-step instructions for setting up the PiDoors Access Control Sys
 
 3. **Choose Your Operating System**
    - Click "Choose OS"
-   - Select "Raspberry Pi OS (32-bit)" - the first option with desktop
+   - Select "Raspberry Pi OS (64-bit)" (recommended) or 32-bit
    - **For Door Controllers**: You can use "Raspberry Pi OS Lite" (no desktop) to save space
 
 4. **Choose Your SD Card**
@@ -158,14 +158,14 @@ cd ~
 3. **Download PiDoors** (requires internet connection):
 
 ```bash
-git clone https://github.com/yourusername/pidoors.git
+git clone https://github.com/sybethiesant/pidoors.git
 ```
 
 If you get an error that git isn't installed:
 
 ```bash
 sudo apt-get install git -y
-git clone https://github.com/yourusername/pidoors.git
+git clone https://github.com/sybethiesant/pidoors.git
 ```
 
 4. **Go into the PiDoors folder**:
@@ -280,7 +280,7 @@ sudo reboot
 
 ```bash
 cd ~
-git clone https://github.com/yourusername/pidoors.git
+git clone https://github.com/sybethiesant/pidoors.git
 cd pidoors
 ```
 
@@ -296,7 +296,7 @@ sudo ./install.sh
 4. **Follow the prompts**:
    - Database server IP: Enter your server Pi's IP (e.g., `192.168.1.100`)
    - Database password: Enter the PiDoors database password
-   - Door name: Give this door a name (e.g., "Front Entrance", "Back Door")
+   - Door name: Give this door a short name, lowercase with underscores (e.g., `front_door`, `back_gate`)
    - **Reader type**: Select your card reader type:
      - **1) Wiegand** - Standard GPIO card readers (most common)
      - **2) OSDP** - RS-485 encrypted readers
@@ -562,13 +562,9 @@ Press `Ctrl + C` to stop viewing logs.
    - Timezone: Set your timezone
    - Session Timeout: 3600 seconds (1 hour) is recommended
 
-3. **Configure Email Notifications** (optional but recommended):
-   - SMTP Host: Your email server (e.g., smtp.gmail.com)
-   - SMTP Port: Usually 587
-   - SMTP Username: Your email address
-   - SMTP Password: Your email password or app-specific password
-   - From Email: Your email address
-   - Notification Recipients: Email addresses to receive alerts (comma-separated)
+3. **Configure Email Notifications** (optional):
+   - Enable Email Notifications: Check the box
+   - Notification Email: Enter the email address to receive security alerts
 
 4. **Click "Save Settings"**
 
@@ -891,11 +887,19 @@ sudo screen /dev/ttyUSB0 9600
 ### Problem: Door won't unlock even with valid card
 
 **Solution 1: Check relay wiring**
-- Verify GPIO 17 connection to relay
+- Verify GPIO 18 connection to relay (default pin)
 - Test relay manually:
 ```bash
-# Test using Python
-python3 -c "import RPi.GPIO as GPIO; GPIO.setmode(GPIO.BCM); GPIO.setup(17, GPIO.OUT); GPIO.output(17, GPIO.HIGH); import time; time.sleep(2); GPIO.output(17, GPIO.LOW); GPIO.cleanup()"
+# Test using Python (uses lgpio on Bookworm+)
+/opt/pidoors/venv/bin/python3 -c "
+import RPi.GPIO as GPIO
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(18, GPIO.OUT)
+GPIO.output(18, GPIO.HIGH)
+import time; time.sleep(2)
+GPIO.output(18, GPIO.LOW)
+GPIO.cleanup()
+"
 ```
 
 **Solution 2: Check lock power**
@@ -985,7 +989,7 @@ Backups run automatically (if configured) to `/var/backups/pidoors/`
 ### Manual Backup
 
 ```bash
-sudo /usr/local/bin/pidoors-backup.sh
+sudo /usr/local/bin/pidoors-backup.sh YOUR_DB_PASSWORD
 ```
 
 ### Restore from Backup
@@ -997,20 +1001,33 @@ mysql -u pidoors -p access < /var/backups/pidoors/access_YYYYMMDD_HHMMSS.sql
 
 ### Update PiDoors
 
+**Recommended: One-click update from the web UI**
+
+1. Go to **Settings** in the web interface
+2. Click **Check for Updates**
+3. If an update is available, click **Update Now**
+
+The web updater handles file deployment, stale file cleanup, and version tracking automatically.
+
+**Alternative: Manual update from the command line**
+
 ```bash
 cd ~/pidoors
 git pull
 sudo cp -r pidoorserv/* /var/www/pidoors/
+sudo cp VERSION /var/www/pidoors/
 sudo chown -R www-data:www-data /var/www/pidoors
 sudo systemctl restart nginx
 sudo systemctl restart php*-fpm
 ```
 
-On door controllers:
+**Door controllers** update automatically via the heartbeat system. You can also trigger updates from the **Doors** page in the web UI. For manual updates:
+
 ```bash
 cd ~/pidoors
 git pull
 sudo cp pidoors/pidoors.py /opt/pidoors/
+sudo cp pidoors/VERSION /opt/pidoors/
 sudo cp -r pidoors/readers/* /opt/pidoors/readers/
 sudo cp -r pidoors/formats/* /opt/pidoors/formats/
 sudo systemctl restart pidoors
@@ -1130,140 +1147,68 @@ Now that your system is running:
 
 ## Upgrading
 
-### Upgrading to v2.4.0
+### General Upgrade Procedure
 
-Version 2.4.0 adds master card management in the web UI and fixes GPIO compatibility on Debian 12+ (Bookworm/Trixie).
+For most upgrades, use the **one-click web UI updater** (Settings > Check for Updates). For manual upgrades:
 
-**1. Update the code on the server:**
 ```bash
 cd ~/pidoors
 git pull
+
+# Server
 sudo cp -r pidoorserv/* /var/www/pidoors/
+sudo cp VERSION /var/www/pidoors/
 sudo chown -R www-data:www-data /var/www/pidoors
-sudo systemctl restart nginx
-sudo systemctl restart php*-fpm
-```
+sudo systemctl restart nginx && sudo systemctl restart php*-fpm
 
-**2. Update door controllers:**
-```bash
-cd /opt/pidoors
-sudo git fetch origin
-sudo git checkout origin/main -- pidoors/pidoors.py pidoors/install.sh
-sudo cp pidoors/pidoors.py ./pidoors.py
-sudo rm -rf pidoors/
-```
-
-On Debian 12+ (Bookworm/Trixie), fix the GPIO library:
-```bash
-sudo /opt/pidoors/venv/bin/pip uninstall RPi.GPIO -y 2>/dev/null
-```
-
-Update the service file for lgpio compatibility:
-```bash
-sudo tee /etc/systemd/system/pidoors.service > /dev/null <<'EOF'
-[Unit]
-Description=PiDoors Access Control Service
-After=network.target
-
-[Service]
-Type=simple
-User=pidoors
-Group=pidoors
-RuntimeDirectory=pidoors
-WorkingDirectory=/run/pidoors
-ExecStart=/opt/pidoors/venv/bin/python3 /opt/pidoors/pidoors.py
-Environment=PIDOORS_DIR=/opt/pidoors
-Restart=always
-RestartSec=10
-SupplementaryGroups=gpio
-
-[Install]
-WantedBy=multi-user.target
-EOF
-sudo systemctl daemon-reload
-sudo systemctl restart pidoors
-```
-
-**3. Verify:**
-- Edit an existing card and check for the "Master Card" checkbox
-- Toggle Master on, verify yellow "Master" badge appears on cards list
-- Toggle Master off, verify badge disappears
-- Add a new card with Master checked
-- Check `master_cards` table: `mysql -u pidoors -p access -e "SELECT * FROM master_cards"`
-
-**No database migration required** — the `master_cards` table already exists from v2.2.
-
-### Upgrading to v2.3.0
-
-Version 2.3.0 adds extended user/cardholder fields, username login, and door name normalization.
-
-**1. Update the code on the server:**
-```bash
-cd ~/pidoors
-git pull
-sudo cp -r pidoorserv/* /var/www/pidoors/
-sudo chown -R www-data:www-data /var/www/pidoors
-sudo systemctl restart nginx
-sudo systemctl restart php*-fpm
-```
-
-**2. Run the database migration:**
-```bash
-# Backup first
+# Run database migration if upgrading across major versions
 mysqldump -u pidoors -p access > access_backup_$(date +%Y%m%d).sql
 mysqldump -u pidoors -p users > users_backup_$(date +%Y%m%d).sql
-
-# Run migration (adds new columns to both databases)
 mysql -u root -p access < database_migration.sql
 ```
 
-**3. Update all door controllers:**
+Door controllers can be updated from the **Doors** page in the web UI, or manually:
+
 ```bash
-cd ~/pidoors
-git pull
+cd ~/pidoors && git pull
 sudo cp pidoors/pidoors.py /opt/pidoors/
+sudo cp pidoors/VERSION /opt/pidoors/
 sudo cp -r pidoors/readers/* /opt/pidoors/readers/
 sudo cp -r pidoors/formats/* /opt/pidoors/formats/
 sudo systemctl restart pidoors
 ```
 
-**4. Verify:**
-- Log in with your username (not just email)
-- Check that user profile pages show new fields
-- Check that card edit pages show new cardholder detail fields
+### Upgrading from v2.2.x or earlier
 
-### Upgrading to v2.2.1
-
-Version 2.2.1 includes a security fix that requires a door format migration.
+If upgrading from v2.2.x or earlier, you must run the door format migration:
 
 ```bash
-cd ~/pidoors
-git pull
-sudo cp -r pidoorserv/* /var/www/pidoors/
-sudo chown -R www-data:www-data /var/www/pidoors
-
-# Run door format migration
 mysqldump -u pidoors -p access > access_backup_$(date +%Y%m%d).sql
 python3 migrations/migrate_doors_format.py --dry-run
 python3 migrations/migrate_doors_format.py
+```
 
-sudo systemctl restart nginx && sudo systemctl restart php*-fpm
+This converts door assignments from space-separated to comma-separated format (required for `FIND_IN_SET()` security fix).
+
+On Debian 12+ (Bookworm/Trixie), ensure the GPIO library is correct:
+```bash
+sudo /opt/pidoors/venv/bin/pip uninstall RPi.GPIO -y 2>/dev/null
+sudo /opt/pidoors/venv/bin/pip install rpi-lgpio -q
 ```
 
 ### Version History
 
 | Version | Date | Migration Required | Notes |
 |---------|------|-------------------|-------|
-| v2.4.2 | Feb 2026 | No | Fix install script git dubious ownership & partial failure recovery |
-| v2.4.1 | Feb 2026 | **Yes** - `database_migration.sql` | Bug fixes: holidays, groups, log export; dead code cleanup |
-| v2.4.0 | Feb 2026 | No | Master card web UI, GPIO/lgpio fix, git-based updates |
-| v2.3.0 | Feb 2026 | **Yes** - `database_migration.sql` | Extended fields, username login, door normalization |
-| v2.2.6 | Feb 2026 | No | Modal forms, door auto-registration, install script rewrite |
-| v2.2.5 | Feb 2026 | No | Layout fixes, DataTables fix |
-| v2.2.4 | Feb 2026 | No | Vendor asset fix |
-| v2.2.3 | Feb 2026 | No | Bookworm venv fix |
-| v2.2.2 | Feb 2026 | No | Fresh install fix |
+| v2.5.18 | Mar 2026 | No | Upgrade Bootstrap to 5.3.8 |
+| v2.5.17 | Mar 2026 | No | Audit log detail modals, rich change logging, card audit trails |
+| v2.5.16 | Mar 2026 | No | Fix white-page on redirects, fix CSV exports |
+| v2.5.15 | Mar 2026 | No | Stale file cleanup in all updaters |
+| v2.5.14 | Mar 2026 | No | System audit fixes, secure password handling |
+| v2.5.13 | Mar 2026 | No | Database audit fixes |
+| v2.5.x | Feb-Mar 2026 | No | Update system, backup system, bug fixes |
+| v2.4.x | Feb 2026 | **Yes** - `database_migration.sql` | Master card UI, extended fields, GPIO/lgpio fix |
+| v2.3.0 | Feb 2026 | **Yes** - `database_migration.sql` | Extended user/cardholder fields, username login |
 | v2.2.1 | Jan 2026 | **Yes** - `migrate_doors_format.py` | Security fix for zone matching |
 | v2.2 | Jan 2026 | No | Multi-reader support |
-| v2.1 | Jan 2026 | No | Nginx migration |
 | v2.0 | Jan 2026 | Yes - `database_migration.sql` | Security overhaul |
