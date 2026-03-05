@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS `access_groups` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(50) NOT NULL,
   `description` text,
+  `doors` text DEFAULT NULL COMMENT 'JSON array of allowed door names, NULL = all doors',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                         // Map columns
                         $col_map = [];
                         $required_cols = ['card_id', 'user_id'];
-                        $optional_cols = ['firstname', 'lastname', 'email', 'phone', 'department', 'employee_id', 'company', 'title', 'notes', 'group_id', 'schedule_id', 'valid_from', 'valid_until', 'pin_code', 'daily_scan_limit', 'master'];
+                        $optional_cols = ['facility', 'firstname', 'lastname', 'email', 'phone', 'department', 'employee_id', 'company', 'title', 'notes', 'group_id', 'schedule_id', 'valid_from', 'valid_until', 'pin_code', 'daily_scan_limit', 'master'];
 
                         foreach ($required_cols as $col) {
                             $idx = array_search($col, $header);
@@ -84,8 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
                             try {
                                 $insert_stmt = $pdo_access->prepare("
-                                    INSERT INTO cards (card_id, user_id, firstname, lastname, email, phone, department, employee_id, company, title, notes, group_id, schedule_id, valid_from, valid_until, pin_code, daily_scan_limit)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    INSERT INTO cards (card_id, user_id, facility, firstname, lastname, email, phone, department, employee_id, company, title, notes, group_id, schedule_id, valid_from, valid_until, pin_code, daily_scan_limit)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ");
 
                                 while (($row = fgetcsv($handle)) !== false) {
@@ -117,6 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                                         }
                                     }
 
+                                    $csv_facility = sanitize_string($row[$col_map['facility'] ?? -1] ?? '');
                                     $firstname = sanitize_string($row[$col_map['firstname'] ?? -1] ?? '');
                                     $lastname = sanitize_string($row[$col_map['lastname'] ?? -1] ?? '');
                                     $csv_email = sanitize_string($row[$col_map['email'] ?? -1] ?? '') ?: null;
@@ -137,7 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
                                     try {
                                         $insert_stmt->execute([
-                                            $card_id, $user_id, $firstname, $lastname,
+                                            $card_id, $user_id, $csv_facility, $firstname, $lastname,
                                             $csv_email, $csv_phone, $csv_department, $csv_employee_id,
                                             $csv_company, $csv_title, $csv_notes,
                                             $group_id, $schedule_id, $valid_from, $valid_until, $pin_code,
@@ -146,8 +147,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
                                         if ($is_master) {
                                             $desc = trim($firstname . ' ' . $lastname) ?: 'Card ' . $card_id;
-                                            $master_stmt = $pdo_access->prepare("INSERT INTO master_cards (card_id, user_id, facility, description, active) VALUES (?, ?, '', ?, 1)");
-                                            $master_stmt->execute([$card_id, $user_id, $desc]);
+                                            $master_stmt = $pdo_access->prepare("INSERT INTO master_cards (card_id, user_id, facility, description, active) VALUES (?, ?, ?, ?, 1)");
+                                            $master_stmt->execute([$card_id, $user_id, $csv_facility, $desc]);
                                         }
 
                                         $imported++;
@@ -269,6 +270,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
                 <p class="small"><strong>Optional columns:</strong></p>
                 <ul class="small">
+                    <li><code>facility</code> - Facility code (needed for card verification)</li>
                     <li><code>firstname</code> - First name</li>
                     <li><code>lastname</code> - Last name</li>
                     <li><code>email</code> - Email address</li>

@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = sanitize_string($_POST['name'] ?? '');
         $date = sanitize_string($_POST['date'] ?? '');
         $recurring = isset($_POST['recurring']) ? 1 : 0;
-        $no_access = isset($_POST['no_access']) ? 1 : 0;
+        $access_denied = isset($_POST['access_denied']) ? 1 : 0;
 
         if (empty($name)) {
             $error_message = 'Holiday name is required.';
@@ -58,13 +58,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 if ($id) {
                     // Update
-                    $stmt = $pdo_access->prepare("UPDATE holidays SET name = ?, date = ?, recurring = ?, no_access = ? WHERE id = ?");
-                    $stmt->execute([$name, $date, $recurring, $no_access, $id]);
+                    $stmt = $pdo_access->prepare("UPDATE holidays SET name = ?, date = ?, recurring = ?, access_denied = ? WHERE id = ?");
+                    $stmt->execute([$name, $date, $recurring, $access_denied, $id]);
                     $message = 'Holiday updated successfully.';
                 } else {
                     // Insert
-                    $stmt = $pdo_access->prepare("INSERT INTO holidays (name, date, recurring, no_access) VALUES (?, ?, ?, ?)");
-                    $stmt->execute([$name, $date, $recurring, $no_access]);
+                    $stmt = $pdo_access->prepare("INSERT INTO holidays (name, date, recurring, access_denied) VALUES (?, ?, ?, ?)");
+                    $stmt->execute([$name, $date, $recurring, $access_denied]);
                     $message = 'Holiday added successfully.';
                 }
                 header("Location: {$config['url']}/holidays.php?success=" . urlencode($message));
@@ -128,7 +128,7 @@ try {
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <?php if ($holiday['no_access']): ?>
+                                <?php if ($holiday['access_denied']): ?>
                                     <span class="badge bg-danger">No Access</span>
                                 <?php else: ?>
                                     <span class="badge bg-success">Normal Access</span>
@@ -204,9 +204,9 @@ try {
                     </div>
 
                     <div class="form-check">
-                        <input type="checkbox" class="form-check-input" id="no_access" name="no_access"
-                               <?php echo ($editing['no_access'] ?? 1) ? 'checked' : ''; ?>>
-                        <label class="form-check-label" for="no_access">No Access on this day</label>
+                        <input type="checkbox" class="form-check-input" id="access_denied" name="access_denied"
+                               <?php echo ($editing['access_denied'] ?? 1) ? 'checked' : ''; ?>>
+                        <label class="form-check-label" for="access_denied">No Access on this day</label>
                         <div class="form-text">If checked, scheduled access will be denied on this day.</div>
                     </div>
                 </div>
