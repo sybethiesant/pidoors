@@ -211,7 +211,7 @@ fi
 
 if [ -n "$MIGRATION_SQL" ] && [ -n "$DB_PASS" ]; then
     info "Running database migration..."
-    if mysql -u pidoors -p"$DB_PASS" access < "$MIGRATION_SQL" 2>/dev/null; then
+    if MYSQL_PWD="$DB_PASS" mysql -u pidoors access < "$MIGRATION_SQL" 2>/dev/null; then
         ok "Database migration completed"
     else
         warn "Database migration had errors (non-fatal for upgrades)"

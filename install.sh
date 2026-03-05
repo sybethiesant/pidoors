@@ -211,7 +211,7 @@ if [ "$INSTALL_SERVER" = true ]; then
     prompt_secret MYSQL_ROOT_PASS "MySQL root password"
 
     # Test root connection
-    if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT 1" > /dev/null 2>&1; then
+    if MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root -e "SELECT 1" > /dev/null 2>&1; then
         ok "MySQL root connection verified"
     else
         fail "Cannot connect to MySQL as root. Check password."
@@ -225,7 +225,7 @@ if [ "$INSTALL_SERVER" = true ]; then
     prompt_secret DB_PASS "New PiDoors database password"
 
     info "Creating databases and user..."
-    mysql -u root -p"$MYSQL_ROOT_PASS" <<EOF
+    MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root <<EOF
 CREATE DATABASE IF NOT EXISTS users;
 CREATE DATABASE IF NOT EXISTS access;
 CREATE USER IF NOT EXISTS 'pidoors'@'localhost' IDENTIFIED BY '$DB_PASS';
@@ -240,7 +240,7 @@ EOF
 
     # Create table schemas
     info "Creating table schemas..."
-    mysql -u root -p"$MYSQL_ROOT_PASS" users <<EOF
+    MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root users <<EOF
 CREATE TABLE IF NOT EXISTS \`users\` (
   \`id\` int(11) NOT NULL AUTO_INCREMENT,
   \`user_name\` varchar(100) NOT NULL,
@@ -285,10 +285,10 @@ EOF
     fi
 
     info "Running access database migration from $MIGRATION_SQL..."
-    mysql -u root -p"$MYSQL_ROOT_PASS" access < "$MIGRATION_SQL"
+    MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root access < "$MIGRATION_SQL"
 
     # Verify critical tables were created
-    TABLES_OK=$(mysql -u root -p"$MYSQL_ROOT_PASS" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='access' AND table_name IN ('cards','doors','logs','settings')" 2>/dev/null)
+    TABLES_OK=$(MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='access' AND table_name IN ('cards','doors','logs','settings')" 2>/dev/null)
     if [ "$TABLES_OK" -lt 4 ] 2>/dev/null; then
         fail "Migration ran but critical tables are missing (expected 4, found ${TABLES_OK:-0})"
         fail "Check $MIGRATION_SQL for errors"
@@ -353,9 +353,9 @@ EOF
     prompt ADMIN_EMAIL "Admin email"
     prompt_secret ADMIN_PASS "Admin password"
 
-    HASHED_PASS=$(php -r "echo password_hash('$ADMIN_PASS', PASSWORD_BCRYPT, ['cost' => 12]);")
+    HASHED_PASS=$(php -r 'echo password_hash(file_get_contents("php://stdin"), PASSWORD_BCRYPT, ["cost" => 12]);' <<< "$ADMIN_PASS")
 
-    mysql -u pidoors -p"$DB_PASS" users <<EOF
+    MYSQL_PWD="$DB_PASS" mysql -u pidoors users <<EOF
 INSERT INTO users (user_name, user_email, user_pass, admin, active)
 VALUES ('Admin', '$ADMIN_EMAIL', '$HASHED_PASS', 1, 1)
 ON DUPLICATE KEY UPDATE user_pass='$HASHED_PASS';

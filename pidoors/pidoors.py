@@ -244,14 +244,20 @@ def load_cache():
         if os.path.exists(cache_file):
             with open(cache_file, 'r') as f:
                 cache_data = json.load(f)
-                local_cache = cache_data.get('cards', {})
                 cache_last_sync = cache_data.get('sync_time', 0)
+
+                # New flat format has 'schedules' at top level alongside 'cards'
+                if 'schedules' in cache_data:
+                    local_cache = cache_data
+                else:
+                    # Legacy format: full cache nested under 'cards' key
+                    local_cache = cache_data.get('cards', {})
 
                 # Check if cache is still valid (within 24 hours)
                 if time.time() - cache_last_sync > CACHE_DURATION:
                     report("Local cache expired (>24 hours old)")
                 else:
-                    card_count = len(local_cache)
+                    card_count = len(local_cache.get('cards', {}))
                     report(f"Loaded {card_count} cards from local cache")
     except Exception as e:
         report(f"Error loading cache: {e}")
@@ -265,15 +271,15 @@ def save_cache():
     cache_file = get_cache_file()
 
     try:
-        cache_data = {
-            'zone': zone,
-            'sync_time': time.time(),
-            'sync_datetime': datetime.now().isoformat(),
-            'cards': local_cache
-        }
+        # Save local_cache structure (cards, schedules, holidays, door_settings)
+        # with metadata at the same level
+        cache_data = dict(local_cache)
+        cache_data['zone'] = zone
+        cache_data['sync_time'] = time.time()
+        cache_data['sync_datetime'] = datetime.now().isoformat()
         save_json(cache_file, cache_data)
         cache_last_sync = cache_data['sync_time']
-        debug(f"Cache saved with {len(local_cache)} cards")
+        debug(f"Cache saved with {len(local_cache.get('cards', {}))} cards")
     except Exception as e:
         report(f"Error saving cache: {e}")
 
@@ -710,9 +716,11 @@ def unlock_briefly(gpio):
         unlock_time = zone_config.get("open_delay", 5)
 
     debug(f"Unlocking for {unlock_time} seconds")
-    unlock_door()
-    time.sleep(unlock_time)
-    lock_door()
+    def _do_unlock():
+        unlock_door()
+        time.sleep(unlock_time)
+        lock_door()
+    threading.Thread(target=_do_unlock, daemon=True).start()
 
 
 # ============================================================
@@ -965,6 +973,9 @@ def lookup_card(card_id, facility, user_id, bstr):
 def try_database_lookup(card_id, facility, user_id, bstr, now):
     """Try to look up card in the database"""
     global db_connected, last_db_attempt
+
+    if not MYSQL_AVAILABLE:
+        return False
 
     # Rate limit database connection attempts
     with state_lock:

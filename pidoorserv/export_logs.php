@@ -104,7 +104,7 @@ try {
 
     // Log the export action
     if (isset($pdo)) {
-        log_security_event($pdo, 'log_export', $_SESSION['user_id'] ?? null, "Exported {$logs->rowCount()} access log records");
+        log_security_event($pdo, 'log_export', $_SESSION['user_id'] ?? null, "Exported " . count($logs) . " access log records");
     }
 
 } catch (PDOException $e) {

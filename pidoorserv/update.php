@@ -93,7 +93,10 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
         $tarball_url = "https://github.com/sybethiesant/pidoors/archive/refs/tags/{$tag_with_v}.tar.gz";
 
         $tmpdir = sys_get_temp_dir() . '/pidoors-server-update-' . uniqid();
-        mkdir($tmpdir, 0755, true);
+        if (!mkdir($tmpdir, 0700, true)) {
+            $error_message = 'Failed to create temporary directory for update.';
+            goto render_page;
+        }
         $tarball = $tmpdir . '/release.tar.gz';
 
         // Download

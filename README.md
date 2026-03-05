@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.5.4-green)
+![Version](https://img.shields.io/badge/version-2.5.14-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -528,7 +528,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.5.4** - Production Ready
+**Current Version: 2.5.14** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -540,6 +540,16 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.5.14 (March 2026)
+- **Fix**: Export logs crash — `rowCount()` called on array instead of PDOStatement
+- **Fix**: Cache structure mismatch — `load_cache()` now correctly handles flat cache format with backwards compatibility
+- **Fix**: `try_database_lookup()` crashes with `NameError` when pymysql unavailable — added `MYSQL_AVAILABLE` guard
+- **Fix**: Door unlock blocks GPIO callback thread — unlock now runs in a separate daemon thread
+- **Security**: `install.sh` and `server-update.sh` use `MYSQL_PWD` env var instead of `-p` flag to avoid password exposure in process list
+- **Security**: Admin password hashing in `install.sh` now uses stdin instead of command-line interpolation
+- **Security**: Update temp directory created with `0700` permissions instead of `0755`, with mkdir failure check
+- README version badge now tracks current version
 
 ### Version 2.5.4 (March 2026)
 - **Hardened client updater**: Pre-flight checks verify archive contents before stopping the service; aborts cleanly if anything is wrong
