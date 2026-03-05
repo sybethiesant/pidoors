@@ -303,6 +303,8 @@ ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `controller_version` varchar(20) DE
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_requested` tinyint(1) DEFAULT 0 AFTER `controller_version`;
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_status` varchar(255) DEFAULT NULL AFTER `update_requested`;
 ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `update_status_time` datetime DEFAULT NULL AFTER `update_status`;
+ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `unlock_requested` tinyint(1) NOT NULL DEFAULT 0 AFTER `update_status_time`;
+ALTER TABLE `doors` ADD COLUMN IF NOT EXISTS `poll_interval` int(11) NOT NULL DEFAULT 3 AFTER `unlock_requested`;
 
 -- Add indexes for performance
 ALTER TABLE `logs` ADD INDEX IF NOT EXISTS `idx_user_id` (`user_id`);

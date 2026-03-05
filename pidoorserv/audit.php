@@ -81,6 +81,7 @@ $event_labels = [
     'cards_imported' => ['label' => 'Cards Imported', 'class' => 'bg-info'],
     'report_export' => ['label' => 'Report Export', 'class' => 'bg-secondary'],
     'server_update' => ['label' => 'Server Update', 'class' => 'bg-success'],
+    'remote_unlock' => ['label' => 'Remote Unlock', 'class' => 'bg-warning'],
 ];
 ?>
 

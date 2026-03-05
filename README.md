@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.5.19-green)
+![Version](https://img.shields.io/badge/version-2.5.20-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -571,7 +571,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.5.19** - Production Ready
+**Current Version: 2.5.20** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -583,6 +583,12 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.5.20 (March 2026)
+- **Remote Door Unlock**: Unlock doors remotely from the web UI with a new Unlock button on door cards
+- **Command Poll Loop**: Lightweight fast-polling thread on controllers checks for remote commands every few seconds (configurable per-door)
+- **Real-time lock state**: Controller now tracks and reports actual lock/unlock state instead of static config value
+- **Fix**: Controller update trigger loop — `update_requested` flag was never cleared, causing updates to re-trigger every 60 seconds
 
 ### Version 2.5.19 (March 2026)
 - **Fix**: Controller self-update script failed because `find` matched the temp directory itself instead of the extracted archive directory, causing "missing pidoors/ directory" error and update loop

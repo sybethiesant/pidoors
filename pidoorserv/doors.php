@@ -68,8 +68,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['request_update'])) {
     }
 }
 
+// Handle remote unlock
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'unlock') {
+    if (verify_csrf_token($_POST['csrf_token'] ?? '')) {
+        $door_name = sanitize_string($_POST['door'] ?? '');
+        try {
+            // Verify door exists and is online
+            $stmt = $pdo_access->prepare("SELECT status FROM doors WHERE name = ?");
+            $stmt->execute([$door_name]);
+            $door_check = $stmt->fetch();
+            if ($door_check && $door_check['status'] === 'online') {
+                $stmt = $pdo_access->prepare("UPDATE doors SET unlock_requested = 1 WHERE name = ?");
+                $stmt->execute([$door_name]);
+                log_security_event($pdo, 'remote_unlock', $_SESSION['user_id'], "Remote unlock requested for door: $door_name");
+                header("Location: {$config['url']}/doors.php?success=Unlock command sent to " . urlencode($door_name) . ".");
+                exit();
+            } else {
+                header("Location: {$config['url']}/doors.php?error=Door is not online.");
+                exit();
+            }
+        } catch (PDOException $e) {
+            error_log("Remote unlock error: " . $e->getMessage());
+        }
+    }
+}
+
 // Handle add door form
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['request_update'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['request_update']) && !(isset($_POST['action']) && $_POST['action'] === 'unlock')) {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         $error_message = 'Invalid security token.';
     } else {
@@ -249,6 +274,16 @@ try {
                 <div class="card-footer d-flex justify-content-between">
                     <div>
                         <a href="editdoor.php?name=<?php echo urlencode($door['name']); ?>" class="btn btn-sm btn-outline-primary">Edit</a>
+                        <?php if ($door['status'] === 'online'): ?>
+                            <form method="post" class="d-inline" onsubmit="return confirm('Unlock this door remotely?');">
+                                <?php echo csrf_field(); ?>
+                                <input type="hidden" name="action" value="unlock">
+                                <input type="hidden" name="door" value="<?php echo htmlspecialchars($door['name']); ?>">
+                                <button type="submit" class="btn btn-sm btn-outline-warning">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Unlock
+                                </button>
+                            </form>
+                        <?php endif; ?>
                         <?php if ($is_outdated && $door['status'] === 'online' && !$door['update_requested']): ?>
                             <form method="post" class="d-inline">
                                 <?php echo csrf_field(); ?>

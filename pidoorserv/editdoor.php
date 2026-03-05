@@ -48,6 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $description = sanitize_string($_POST['description'] ?? '');
         $schedule_id = validate_int($_POST['schedule_id'] ?? 0) ?: null;
         $unlock_duration = validate_int($_POST['unlock_duration'] ?? 5, 1, $max_unlock_duration) ?: 5;
+        $poll_interval = validate_int($_POST['poll_interval'] ?? 3, 1, 60) ?: 3;
         $reader_type = sanitize_string($_POST['reader_type'] ?? 'wiegand');
 
         // Validate reader_type
@@ -59,10 +60,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $stmt = $pdo_access->prepare("
                 UPDATE doors SET location = ?, doornum = ?, description = ?,
-                    schedule_id = ?, unlock_duration = ?, reader_type = ?
+                    schedule_id = ?, unlock_duration = ?, poll_interval = ?, reader_type = ?
                 WHERE name = ?
             ");
-            $stmt->execute([$location, $doornum, $description, $schedule_id, $unlock_duration, $reader_type, $door_name]);
+            $stmt->execute([$location, $doornum, $description, $schedule_id, $unlock_duration, $poll_interval, $reader_type, $door_name]);
 
             header("Location: {$config['url']}/doors.php?success=Door updated successfully.");
             exit();
@@ -135,6 +136,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <?php endif; ?>
                             Max allowed: <?php echo number_format($max_unlock_duration); ?>s (<?php echo round($max_unlock_duration / 60); ?> min).
                         </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="poll_interval" class="form-label">Command Poll Interval (seconds)</label>
+                        <input type="number" class="form-control" id="poll_interval" name="poll_interval"
+                               min="1" max="60" value="<?php echo htmlspecialchars($door['poll_interval'] ?? 3); ?>">
+                        <div class="form-text">How often the controller checks for remote commands like unlock. Lower = faster response.</div>
                     </div>
 
                     <div class="mb-3">

@@ -89,7 +89,9 @@ last_db_attempt = 0
 local_cache = {}
 cache_last_sync = 0
 heartbeat_thread = None
+command_poll_thread = None
 running = True
+door_unlocked = False  # Real-time lock state tracking
 master_cards = {}  # Persistent master cards (never expire)
 format_registry = None  # Wiegand format registry
 
@@ -167,6 +169,9 @@ def initialize():
 
     # Start heartbeat thread
     start_heartbeat_thread()
+
+    # Start command poll thread (lightweight fast-poll for remote unlock)
+    start_command_poll_thread()
 
     # Sync cache from server
     sync_cache_from_server()
@@ -680,6 +685,7 @@ def rex_button_pressed(channel):
 
 def lock_door():
     """Lock the door"""
+    global door_unlocked
     zone_config = config.get(zone, {})
     latch_gpio = zone_config.get("latch_gpio")
     unlock_value = zone_config.get("unlock_value", 1)
@@ -688,10 +694,13 @@ def lock_door():
         GPIO.output(latch_gpio, unlock_value ^ 1)
         GPIO.output(25, 0)  # Green LED off
         GPIO.output(22, 1)  # Red LED on
+        with state_lock:
+            door_unlocked = False
 
 
 def unlock_door():
     """Unlock the door"""
+    global door_unlocked
     zone_config = config.get(zone, {})
     latch_gpio = zone_config.get("latch_gpio")
     unlock_value = zone_config.get("unlock_value", 1)
@@ -700,6 +709,8 @@ def unlock_door():
         GPIO.output(latch_gpio, unlock_value)
         GPIO.output(25, 1)  # Green LED on
         GPIO.output(22, 0)  # Red LED off
+        with state_lock:
+            door_unlocked = True
 
 
 def unlock_briefly(gpio):
@@ -1425,7 +1436,8 @@ def send_heartbeat():
         )
         cursor = db.cursor(pymysql.cursors.DictCursor)
 
-        locked_status = 1 if not zone_config.get("unlocked", False) else 0
+        with state_lock:
+            locked_status = 0 if door_unlocked else 1
         reader = zone_config.get("reader_type", "wiegand")
 
         # Update door status with version
@@ -1458,7 +1470,8 @@ def send_heartbeat():
             report("Update requested by server, initiating update...")
             cursor.execute("""
                 UPDATE doors
-                SET update_status = 'updating',
+                SET update_requested = 0,
+                    update_status = 'updating',
                     update_status_time = NOW()
                 WHERE name = %s
             """, (zone,))
@@ -1478,6 +1491,116 @@ def send_heartbeat():
                 db.close()
             except Exception:
                 pass
+
+
+# ============================================================
+# COMMAND POLL (lightweight fast-polling for remote commands)
+# ============================================================
+
+def start_command_poll_thread():
+    """Start the command poll thread for remote unlock and real-time lock state"""
+    global command_poll_thread
+    command_poll_thread = threading.Thread(target=command_poll_loop, daemon=True)
+    command_poll_thread.start()
+
+
+def command_poll_loop():
+    """Lightweight fast-polling loop that checks for remote commands and sends lock state"""
+    global running
+
+    if not MYSQL_AVAILABLE:
+        return
+
+    zone_config = config.get(zone, {})
+    sqladdr = zone_config.get("sqladdr")
+    sqluser = zone_config.get("sqluser")
+    sqlpass = zone_config.get("sqlpass")
+    sqldb = zone_config.get("sqldb")
+
+    if not all([sqladdr, sqluser, sqlpass, sqldb]):
+        return
+
+    db = None
+    poll_interval = 3  # default, updated dynamically from DB
+
+    while running:
+        try:
+            # Reconnect if needed
+            if db is None:
+                db = pymysql.connect(
+                    host=sqladdr,
+                    user=sqluser,
+                    password=sqlpass,
+                    database=sqldb,
+                    connect_timeout=5
+                )
+                debug("Command poll: connected to database")
+
+            cursor = db.cursor(pymysql.cursors.DictCursor)
+
+            # Send real-time lock state
+            with state_lock:
+                locked_status = 0 if door_unlocked else 1
+            cursor.execute(
+                "UPDATE doors SET locked = %s WHERE name = %s",
+                (locked_status, zone)
+            )
+
+            # Check for remote commands and read current poll interval
+            cursor.execute(
+                "SELECT unlock_requested, poll_interval FROM doors WHERE name = %s",
+                (zone,)
+            )
+            row = cursor.fetchone()
+
+            if row:
+                # Update poll interval dynamically
+                new_interval = row.get('poll_interval')
+                if new_interval and 1 <= int(new_interval) <= 60:
+                    poll_interval = int(new_interval)
+
+                # Handle remote unlock request
+                if row.get('unlock_requested'):
+                    cursor.execute(
+                        "UPDATE doors SET unlock_requested = 0 WHERE name = %s",
+                        (zone,)
+                    )
+                    db.commit()
+
+                    log_door_event('remote_unlock', 'Unlocked by remote request')
+                    report("Remote unlock requested by server")
+
+                    latch_gpio = zone_config.get("latch_gpio")
+                    if latch_gpio:
+                        unlock_briefly(latch_gpio)
+                else:
+                    db.commit()
+            else:
+                db.commit()
+
+        except pymysql.Error as e:
+            debug(f"Command poll error: {e}")
+            if db:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            db = None
+            # Wait a bit longer on connection errors before retrying
+            time.sleep(DB_RETRY_INTERVAL)
+            continue
+
+        except Exception as e:
+            debug(f"Command poll unexpected error: {e}")
+
+        time.sleep(poll_interval)
+
+    # Cleanup on exit
+    if db:
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 # ============================================================
