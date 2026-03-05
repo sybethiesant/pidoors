@@ -58,6 +58,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $valid_until = $_POST['valid_until'] ?? null;
         $active = isset($_POST['active']) ? 1 : 0;
         $master_card = isset($_POST['master_card']) ? 1 : 0;
+        $daily_scan_limit = $_POST['daily_scan_limit'] ?? '';
+        $daily_scan_limit = ($daily_scan_limit === '' || $daily_scan_limit === '0') ? null : validate_int($daily_scan_limit);
         $card_email = sanitize_string($_POST['card_email'] ?? '');
         $card_phone = sanitize_string($_POST['card_phone'] ?? '');
         $card_department = sanitize_string($_POST['card_department'] ?? '');
@@ -75,15 +77,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $stmt = $pdo_access->prepare("
-                    INSERT INTO cards (card_id, user_id, facility, bstr, firstname, lastname, email, phone, department, employee_id, company, title, notes, doors, active, group_id, schedule_id, valid_from, valid_until)
-                    VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO cards (card_id, user_id, facility, bstr, firstname, lastname, email, phone, department, employee_id, company, title, notes, doors, active, group_id, schedule_id, valid_from, valid_until, daily_scan_limit)
+                    VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->execute([
                     $card_id, $user_id, $facility, $firstname, $lastname,
                     $card_email ?: null, $card_phone ?: null, $card_department ?: null,
                     $card_employee_id ?: null, $card_company ?: null, $card_title ?: null, $card_notes ?: null,
                     $doors_str, $active, $group_id, $schedule_id,
-                    $valid_from ?: null, $valid_until ?: null
+                    $valid_from ?: null, $valid_until ?: null, $daily_scan_limit
                 ]);
 
                 if ($master_card) {
@@ -347,6 +349,14 @@ try {
                         <input type="checkbox" class="form-check-input" id="master_card" name="master_card" value="1">
                         <label class="form-check-label" for="master_card">Master Card</label>
                         <div class="form-text text-warning">Master cards have unrestricted access to all doors, ignoring schedules and expiration.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="daily_scan_limit" class="form-label">Daily Scan Limit</label>
+                        <input type="number" class="form-control" id="daily_scan_limit" name="daily_scan_limit" min="0"
+                               value="<?php echo htmlspecialchars($_POST['daily_scan_limit'] ?? ''); ?>"
+                               placeholder="0">
+                        <div class="form-text">Max scans per day (0 or empty = unlimited).</div>
                     </div>
 
                     <hr>

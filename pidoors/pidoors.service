@@ -1,7 +1,7 @@
 [Unit]
 Description=PiDoors Access Control Service
-After=network.target mysql.service
-Wants=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -20,7 +20,6 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/pidoors/cache
-ReadOnlyPaths=/opt/pidoors/conf /opt/pidoors/pidoors.py
 
 # Allow GPIO access
 SupplementaryGroups=gpio

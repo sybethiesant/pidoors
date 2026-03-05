@@ -159,6 +159,12 @@ if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
     chmod +x "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null || true
 fi
 
+# Service file (picks up dependency fixes, security hardening changes)
+if [ -f "$SRC_DIR/pidoors.service" ]; then
+    copy_file "$SRC_DIR/pidoors.service" "/etc/systemd/system/pidoors.service"
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
 # Optional directories
 if [ -d "$SRC_DIR/formats" ]; then
     mkdir -p "$INSTALL_DIR/formats"

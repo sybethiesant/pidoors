@@ -70,7 +70,8 @@ DEBUG_MODE = False
 INSTALL_DIR = os.environ.get('PIDOORS_DIR', '/opt/pidoors')
 CONF_DIR = os.path.join(INSTALL_DIR, 'conf') + '/'
 CACHE_DIR = os.path.join(INSTALL_DIR, 'cache') + '/'
-MASTER_CARDS_FILE = os.path.join(CONF_DIR, 'master_cards.json')
+MASTER_CARDS_FILE = os.path.join(CACHE_DIR, 'master_cards.json')
+_OLD_MASTER_CARDS_FILE = os.path.join(CONF_DIR, 'master_cards.json')
 CUSTOM_FORMATS_FILE = os.path.join(CONF_DIR, 'formats.json')
 CACHE_DURATION = 86400  # 24 hours in seconds
 HEARTBEAT_INTERVAL = 60  # seconds
@@ -289,6 +290,15 @@ def load_master_cards():
     global master_cards
 
     try:
+        # Migrate from old location (conf/) to new location (cache/) if needed
+        if not os.path.exists(MASTER_CARDS_FILE) and os.path.exists(_OLD_MASTER_CARDS_FILE):
+            try:
+                import shutil
+                shutil.copy2(_OLD_MASTER_CARDS_FILE, MASTER_CARDS_FILE)
+                report("Migrated master_cards.json from conf/ to cache/")
+            except Exception as e:
+                report(f"Could not migrate master_cards.json: {e}")
+
         if os.path.exists(MASTER_CARDS_FILE):
             with open(MASTER_CARDS_FILE, 'r') as f:
                 data = json.load(f)

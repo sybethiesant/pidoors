@@ -269,10 +269,32 @@ CREATE TABLE IF NOT EXISTS \`audit_logs\` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 EOF
 
+    # Find and run the access database migration
+    MIGRATION_SQL=""
     if [ -f "$SCRIPT_DIR/database_migration.sql" ]; then
-        mysql -u root -p"$MYSQL_ROOT_PASS" access < "$SCRIPT_DIR/database_migration.sql"
+        MIGRATION_SQL="$SCRIPT_DIR/database_migration.sql"
+    elif [ -f "$SCRIPT_DIR/pidoors/database_migration.sql" ]; then
+        MIGRATION_SQL="$SCRIPT_DIR/pidoors/database_migration.sql"
     fi
-    ok "Table schemas created"
+
+    if [ -z "$MIGRATION_SQL" ]; then
+        fail "database_migration.sql not found in $SCRIPT_DIR or $SCRIPT_DIR/pidoors/"
+        fail "This file is required to create the access control tables."
+        fail "Re-clone the repository: git clone https://github.com/sybethiesant/pidoors.git"
+        exit 1
+    fi
+
+    info "Running access database migration from $MIGRATION_SQL..."
+    mysql -u root -p"$MYSQL_ROOT_PASS" access < "$MIGRATION_SQL"
+
+    # Verify critical tables were created
+    TABLES_OK=$(mysql -u root -p"$MYSQL_ROOT_PASS" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='access' AND table_name IN ('cards','doors','logs','settings')" 2>/dev/null)
+    if [ "$TABLES_OK" -lt 4 ] 2>/dev/null; then
+        fail "Migration ran but critical tables are missing (expected 4, found ${TABLES_OK:-0})"
+        fail "Check $MIGRATION_SQL for errors"
+        exit 1
+    fi
+    ok "Table schemas created and verified ($TABLES_OK core tables)"
 
     # ── Web interface ──
 
@@ -571,7 +593,8 @@ EOF
         cat > /etc/systemd/system/pidoors.service <<EOF
 [Unit]
 Description=PiDoors Access Control Service
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
