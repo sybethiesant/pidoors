@@ -3,6 +3,7 @@
  * Header Template
  * PiDoors Access Control System
  */
+ob_start();
 
 $config = include(__DIR__ . '/config.php');
 require_once __DIR__ . '/security.php';

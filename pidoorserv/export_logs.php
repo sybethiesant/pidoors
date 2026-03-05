@@ -58,6 +58,9 @@ try {
     $stmt->execute($params);
     $logs = $stmt->fetchAll();
 
+    // Discard buffered HTML from header.php before sending CSV
+    ob_end_clean();
+
     // Set headers for CSV download
     $filename = 'access_logs_' . date('Y-m-d_His') . '.csv';
     header('Content-Type: text/csv; charset=utf-8');

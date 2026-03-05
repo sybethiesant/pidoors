@@ -162,6 +162,9 @@ try {
             exit();
     }
 
+    // Discard buffered HTML from header.php before sending CSV
+    ob_end_clean();
+
     // Set headers for CSV download
     $filename = "report_{$report_type}_{$date_from}_to_{$date_to}.csv";
     header('Content-Type: text/csv; charset=utf-8');
