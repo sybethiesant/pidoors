@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.5.15-green)
+![Version](https://img.shields.io/badge/version-2.5.16-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -528,7 +528,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.5.15** - Production Ready
+**Current Version: 2.5.16** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -540,6 +540,11 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.5.16 (March 2026)
+- **Fix**: Deleting a door (or any redirect action) caused white page — `header()` calls failed silently because HTML was already sent by `header.php`
+- **Fix**: CSV exports (access logs, reports) were completely broken — HTML from `header.php` was prepended to CSV output
+- Added `ob_start()` output buffering to `header.php`, fixing redirect and CSV issues across all 14 affected pages
 
 ### Version 2.5.15 (March 2026)
 - **Stale file cleanup**: All three updaters (server-update.sh, web UI update, controller update) now remove orphaned files that were deleted from the project
