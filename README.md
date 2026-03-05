@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.5.17-green)
+![Version](https://img.shields.io/badge/version-2.5.18-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -528,7 +528,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.5.17** - Production Ready
+**Current Version: 2.5.18** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -540,6 +540,10 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.5.18 (March 2026)
+- **Upgrade Bootstrap** from 5.0.0-beta1 to 5.3.8 (bundled files and install.sh CDN URLs)
+- Fix audit modal compatibility with older Bootstrap 5 versions
 
 ### Version 2.5.17 (March 2026)
 - **Audit log detail modals**: Clicking any audit log row opens a modal showing full event details (event type, timestamp, user, IP, user agent, details)

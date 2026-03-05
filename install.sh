@@ -309,10 +309,10 @@ EOF
 
     # Download vendor assets
     info "Downloading front-end libraries..."
-    curl -sL "https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta1/dist/css/bootstrap.min.css" -o "$WEB_ROOT/css/bootstrap.min.css"
+    curl -sL "https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" -o "$WEB_ROOT/css/bootstrap.min.css"
     curl -sL "https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" -o "$WEB_ROOT/css/dataTables.bootstrap5.min.css"
     curl -sL "https://code.jquery.com/jquery-3.5.1.min.js" -o "$WEB_ROOT/js/jquery-3.5.1.js"
-    curl -sL "https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta1/dist/js/bootstrap.bundle.min.js" -o "$WEB_ROOT/js/bootstrap.bundle.min.js"
+    curl -sL "https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" -o "$WEB_ROOT/js/bootstrap.bundle.min.js"
     curl -sL "https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js" -o "$WEB_ROOT/js/jquery.dataTables.min.js"
     curl -sL "https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js" -o "$WEB_ROOT/js/dataTables.bootstrap5.min.js"
     curl -sL "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" -o "$WEB_ROOT/js/Chart.min.js"

@@ -227,7 +227,10 @@ function showAuditDetail(row) {
     document.getElementById('modal-ip').innerHTML = '<code>' + esc(row.dataset.ip) + '</code>';
     document.getElementById('modal-user-agent').textContent = row.dataset.userAgent;
     document.getElementById('modal-details').textContent = row.dataset.details || '\u2014';
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('auditDetailModal')).show();
+    var el = document.getElementById('auditDetailModal');
+    var modal = bootstrap.Modal.getInstance(el);
+    if (!modal) modal = new bootstrap.Modal(el);
+    modal.show();
 }
 </script>
 
