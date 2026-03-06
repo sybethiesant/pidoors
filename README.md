@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.6.0-green)
+![Version](https://img.shields.io/badge/version-2.6.1-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -15,7 +15,7 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 
 **Key Benefits:**
 - **Cost-Effective**: 10x cheaper than commercial systems (~$100-150 per door vs $500-2000)
-- **Secure**: Enterprise-grade encryption, bcrypt passwords, SQL injection protection, CSRF tokens
+- **Secure**: TLS database encryption, bcrypt passwords, SQL injection protection, CSRF tokens
 - **Open Source**: Full control over your security system
 - **Modern Interface**: Responsive Bootstrap 5 web dashboard
 - **Offline Capable**: 24-hour local caching keeps doors working during network outages
@@ -65,6 +65,7 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - Service redundancy
 
 ### Security
+- **TLS database encryption** — controller-to-server connections encrypted automatically
 - Bcrypt password hashing (cost 12)
 - PDO prepared statements (SQL injection proof)
 - CSRF protection on all forms
@@ -107,12 +108,13 @@ The installer presents three installation modes:
 
 1. Updates system packages
 2. Installs dependencies (Nginx, PHP-FPM, MariaDB, Python libraries)
-3. Creates the `users` and `access` databases with all required tables
-4. Imports the full database schema (base tables + migration extensions)
-5. Deploys the web interface to `/var/www/pidoors/`
-6. Configures Nginx with security headers
-7. Prompts you to create an admin account (username, email + password)
-8. Sets up log rotation and backup scripts
+3. Generates TLS certificates and enables encrypted database connections
+4. Creates the `users` and `access` databases with all required tables
+5. Imports the full database schema (base tables + migration extensions)
+6. Deploys the web interface to `/var/www/pidoors/`
+7. Configures Nginx with security headers
+8. Prompts you to create an admin account (username, email + password)
+9. Sets up log rotation and backup scripts
 
 #### After installation
 
@@ -234,7 +236,7 @@ See the [Installation Guide](pidoors/INSTALLATION_GUIDE.md) for additional detai
      SERVER RASPBERRY PI              DOOR CONTROLLERS
     +------------------+             +----------------+
     |  Nginx + PHP-FPM |             |  Door Pi #1    |
-    |  MariaDB         |<--Network-->|  24hr Cache    |
+    |  MariaDB (TLS)   |<--TLS/TCP->|  24hr Cache    |
     |  Backups & Logs  |             |  Card Reader   |
     +------------------+             |  Electric Lock |
                                      +----------------+
@@ -487,6 +489,7 @@ sudo tail -f /var/log/nginx/pidoors_error.log
 ## Security
 
 ### Security Features
+- TLS encryption for all database connections (auto-configured during install)
 - Bcrypt password hashing with automatic MD5 upgrade
 - PDO prepared statements (no SQL injection)
 - CSRF token protection on all forms
@@ -497,8 +500,6 @@ sudo tail -f /var/log/nginx/pidoors_error.log
 
 ### Reporting Vulnerabilities
 Please report security issues to the repository owner directly, not via public issues.
-
-See [SECURITY_NOTICE.md](SECURITY_NOTICE.md) for security best practices.
 
 ---
 
@@ -545,9 +546,6 @@ pidoors/
 | Document | Description |
 |----------|-------------|
 | [Installation Guide](pidoors/INSTALLATION_GUIDE.md) | Complete beginner-friendly setup |
-| [Security Notice](SECURITY_NOTICE.md) | Security best practices |
-| [Security Audit](SECURITY_AUDIT_REPORT.md) | Full security audit report |
-| [Project Log](PROJECT_LOG.md) | Development history |
 
 ---
 
@@ -571,7 +569,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.6.0** - Production Ready
+**Current Version: 2.6.1** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -583,6 +581,11 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.6.1 (March 2026)
+- **Fix**: Fresh install login always fails — `<<<` here-string added trailing newline to password before hashing, so `password_verify()` never matched
+- **Fix**: Controller `CERTIFICATE_VERIFY_FAILED` — pymysql auto-negotiated SSL with server's self-signed cert; now explicitly disables SSL when no CA cert is present
+- **Fix**: Controller `NO_CERTIFICATE_OR_CRL_FOUND` — empty/invalid ca.pem files are now detected and skipped instead of passed to SSL
 
 ### Version 2.6.0 (March 2026)
 - **TLS Database Encryption**: All controller-to-server database connections can now be encrypted with TLS

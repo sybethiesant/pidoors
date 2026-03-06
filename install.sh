@@ -409,7 +409,7 @@ EOF
     prompt ADMIN_EMAIL "Admin email"
     prompt_secret ADMIN_PASS "Admin password"
 
-    HASHED_PASS=$(php -r 'echo password_hash(file_get_contents("php://stdin"), PASSWORD_BCRYPT, ["cost" => 12]);' <<< "$ADMIN_PASS")
+    HASHED_PASS=$(printf '%s' "$ADMIN_PASS" | php -r 'echo password_hash(file_get_contents("php://stdin"), PASSWORD_BCRYPT, ["cost" => 12]);')
 
     MYSQL_PWD="$DB_PASS" mysql -u pidoors users <<EOF
 INSERT INTO users (user_name, user_email, user_pass, admin, active)
@@ -735,8 +735,10 @@ try:
     zc = cfg['$DOOR_NAME']
     ssl_opts = {}
     ca_path = '$INSTALL_DIR/conf/ca.pem'
-    if os.path.isfile(ca_path):
+    if os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
         ssl_opts = {'ssl': {'ca': ca_path}}
+    else:
+        ssl_opts = {'ssl_disabled': True}
     db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5, **ssl_opts)
     cursor = db.cursor()
     cursor.execute('SELECT name, status FROM doors WHERE name = %s', ('$DOOR_NAME',))

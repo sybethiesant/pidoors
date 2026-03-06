@@ -126,8 +126,10 @@ def get_db_connection(timeout=5):
         'connect_timeout': timeout,
     }
 
-    if os.path.isfile(SSL_CA_PATH):
+    if os.path.isfile(SSL_CA_PATH) and os.path.getsize(SSL_CA_PATH) > 0:
         kwargs['ssl'] = {'ca': SSL_CA_PATH}
+    else:
+        kwargs['ssl_disabled'] = True
 
     return pymysql.connect(**kwargs)
 

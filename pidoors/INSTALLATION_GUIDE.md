@@ -197,6 +197,8 @@ sudo ./install.sh
    - Enter a username, email address, and strong password for the admin account — **write these down**
    - You can log in with either the username or email
 
+   The installer also generates TLS certificates for encrypted database connections and configures MariaDB to use them. Door controllers will download the CA certificate automatically during their installation.
+
 4. **Wait for completion**. You'll see a success message with the web interface URL.
 
 ### Step 2.3: Configure the Application
@@ -302,6 +304,8 @@ sudo ./install.sh
      - **2) OSDP** - RS-485 encrypted readers
      - **3) NFC PN532** - PN532 NFC reader via I2C
      - **4) NFC MFRC522** - MFRC522 NFC reader via SPI
+
+   The installer automatically downloads the TLS certificate from the server to encrypt database connections. If the server hasn't been updated to v2.6.0+ yet, the controller will still work with unencrypted connections.
 
 ### Step 3.3: Enable Required Interfaces
 
@@ -1027,7 +1031,7 @@ sudo systemctl restart php*-fpm
 cd ~/pidoors
 git pull
 sudo cp pidoors/pidoors.py /opt/pidoors/
-sudo cp pidoors/VERSION /opt/pidoors/
+sudo cp VERSION /opt/pidoors/
 sudo cp -r pidoors/readers/* /opt/pidoors/readers/
 sudo cp -r pidoors/formats/* /opt/pidoors/formats/
 sudo systemctl restart pidoors
@@ -1172,7 +1176,7 @@ Door controllers can be updated from the **Doors** page in the web UI, or manual
 ```bash
 cd ~/pidoors && git pull
 sudo cp pidoors/pidoors.py /opt/pidoors/
-sudo cp pidoors/VERSION /opt/pidoors/
+sudo cp VERSION /opt/pidoors/
 sudo cp -r pidoors/readers/* /opt/pidoors/readers/
 sudo cp -r pidoors/formats/* /opt/pidoors/formats/
 sudo systemctl restart pidoors
@@ -1200,6 +1204,10 @@ sudo /opt/pidoors/venv/bin/pip install rpi-lgpio -q
 
 | Version | Date | Migration Required | Notes |
 |---------|------|-------------------|-------|
+| v2.6.1 | Mar 2026 | No | Fix fresh install login, fix controller SSL errors |
+| v2.6.0 | Mar 2026 | No | TLS database encryption, centralized DB helper |
+| v2.5.20 | Mar 2026 | No | Remote door unlock from web UI, command poll loop |
+| v2.5.19 | Mar 2026 | No | Fix controller self-update script |
 | v2.5.18 | Mar 2026 | No | Upgrade Bootstrap to 5.3.8 |
 | v2.5.17 | Mar 2026 | No | Audit log detail modals, rich change logging, card audit trails |
 | v2.5.16 | Mar 2026 | No | Fix white-page on redirects, fix CSV exports |

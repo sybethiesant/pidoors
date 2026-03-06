@@ -37,8 +37,10 @@ cfg = json.load(open(os.environ['PIDOORS_CONFIG']))
 zc = cfg[os.environ['PIDOORS_ZONE']]
 ssl_opts = {}
 ca_path = os.path.join(os.path.dirname(os.environ['PIDOORS_CONFIG']), 'ca.pem')
-if os.path.isfile(ca_path):
+if os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
     ssl_opts = {'ssl': {'ca': ca_path}}
+else:
+    ssl_opts = {'ssl_disabled': True}
 db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5, **ssl_opts)
 c = db.cursor()
 version = os.environ.get('PIDOORS_VERSION', '')
