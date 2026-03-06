@@ -207,6 +207,57 @@ if [ "$INSTALL_SERVER" = true ]; then
         fi
     fi
 
+    # ── MariaDB TLS ──
+
+    setup_mariadb_tls() {
+        local CERT_DIR="/etc/mysql/ssl"
+        mkdir -p "$CERT_DIR"
+
+        if [ -f "$CERT_DIR/ca.pem" ] && [ -f "$CERT_DIR/server-cert.pem" ]; then
+            info "MariaDB TLS certificates already exist, skipping generation"
+        else
+            info "Generating MariaDB TLS certificates..."
+
+            # Generate CA key and cert
+            openssl genrsa 2048 > "$CERT_DIR/ca-key.pem" 2>/dev/null
+            openssl req -new -x509 -nodes -days 3650 \
+                -key "$CERT_DIR/ca-key.pem" \
+                -out "$CERT_DIR/ca.pem" \
+                -subj "/CN=PiDoors CA" 2>/dev/null
+
+            # Generate server key and cert signed by CA
+            openssl genrsa 2048 > "$CERT_DIR/server-key.pem" 2>/dev/null
+            openssl req -new -key "$CERT_DIR/server-key.pem" \
+                -out "$CERT_DIR/server-req.pem" \
+                -subj "/CN=PiDoors DB Server" 2>/dev/null
+            openssl x509 -req -days 3650 \
+                -in "$CERT_DIR/server-req.pem" \
+                -CA "$CERT_DIR/ca.pem" \
+                -CAkey "$CERT_DIR/ca-key.pem" \
+                -CAcreateserial \
+                -out "$CERT_DIR/server-cert.pem" 2>/dev/null
+
+            # Permissions
+            chown mysql:mysql "$CERT_DIR"/*
+            chmod 600 "$CERT_DIR"/*-key.pem
+            chmod 644 "$CERT_DIR/ca.pem" "$CERT_DIR/server-cert.pem"
+
+            rm -f "$CERT_DIR/server-req.pem" "$CERT_DIR/ca.srl"
+
+            ok "TLS certificates generated"
+        fi
+
+        # Add TLS config to MariaDB if not already present
+        if [ -f "$MARIADB_CNF" ] && ! grep -q "ssl-ca" "$MARIADB_CNF"; then
+            info "Configuring MariaDB TLS..."
+            sed -i '/^\[mysqld\]/a ssl-ca = /etc/mysql/ssl/ca.pem\nssl-cert = /etc/mysql/ssl/server-cert.pem\nssl-key = /etc/mysql/ssl/server-key.pem' "$MARIADB_CNF"
+            systemctl restart mariadb
+            ok "MariaDB TLS enabled"
+        fi
+    }
+
+    setup_mariadb_tls
+
     echo
     prompt_secret MYSQL_ROOT_PASS "MySQL root password"
 
@@ -305,6 +356,11 @@ EOF
     cp -r "$SCRIPT_DIR/pidoorserv/"* "$WEB_ROOT/"
     # Copy VERSION file to web root for footer/update page
     [ -f "$SCRIPT_DIR/VERSION" ] && cp "$SCRIPT_DIR/VERSION" "$WEB_ROOT/"
+    # Copy CA cert to web root for door controllers to download
+    if [ -f "/etc/mysql/ssl/ca.pem" ]; then
+        cp /etc/mysql/ssl/ca.pem "$WEB_ROOT/ca.pem"
+        chmod 644 "$WEB_ROOT/ca.pem"
+    fi
     ok "Web files copied"
 
     # Download vendor assets
@@ -613,6 +669,17 @@ EOF
 EOF
     ok "Zone file written"
 
+    # Download CA cert from server for TLS database connections
+    info "Downloading database TLS certificate..."
+    if curl -sf "http://$DB_HOST/ca.pem" -o "$INSTALL_DIR/conf/ca.pem" 2>/dev/null; then
+        chown pidoors:pidoors "$INSTALL_DIR/conf/ca.pem"
+        chmod 600 "$INSTALL_DIR/conf/ca.pem"
+        ok "TLS certificate downloaded — database connections will be encrypted"
+    else
+        warn "Could not download CA certificate from server (http://$DB_HOST/ca.pem)"
+        warn "Database connections will be unencrypted. You can add TLS later by placing ca.pem in $INSTALL_DIR/conf/"
+    fi
+
     # Permissions
     chown -R pidoors:pidoors "$INSTALL_DIR"
     chmod +x "$INSTALL_DIR/pidoors.py"
@@ -660,13 +727,17 @@ EOF
     step "Door Controller: Verification"
 
     VERIFY_RESULT=$("$INSTALL_DIR/venv/bin/python3" -c "
-import sys, json
+import sys, json, os
 try:
     import pymysql
     with open('$INSTALL_DIR/conf/config.json') as f:
         cfg = json.load(f)
     zc = cfg['$DOOR_NAME']
-    db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5)
+    ssl_opts = {}
+    ca_path = '$INSTALL_DIR/conf/ca.pem'
+    if os.path.isfile(ca_path):
+        ssl_opts = {'ssl': {'ca': ca_path}}
+    db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5, **ssl_opts)
     cursor = db.cursor()
     cursor.execute('SELECT name, status FROM doors WHERE name = %s', ('$DOOR_NAME',))
     row = cursor.fetchone()

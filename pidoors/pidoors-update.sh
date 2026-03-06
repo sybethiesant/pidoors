@@ -35,7 +35,11 @@ update_db_status() {
 import os, json, pymysql
 cfg = json.load(open(os.environ['PIDOORS_CONFIG']))
 zc = cfg[os.environ['PIDOORS_ZONE']]
-db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5)
+ssl_opts = {}
+ca_path = os.path.join(os.path.dirname(os.environ['PIDOORS_CONFIG']), 'ca.pem')
+if os.path.isfile(ca_path):
+    ssl_opts = {'ssl': {'ca': ca_path}}
+db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5, **ssl_opts)
 c = db.cursor()
 version = os.environ.get('PIDOORS_VERSION', '')
 detail = os.environ.get('PIDOORS_DETAIL', '')

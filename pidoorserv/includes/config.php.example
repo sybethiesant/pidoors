@@ -11,6 +11,7 @@ return [
     'sqldb2' => 'access',
     'sqluser' => 'pidoors',
     'sqlpass' => '', // Set your database password here
+    'sql_ssl_ca' => '', // Path to CA cert for TLS database connections (leave empty for local/Docker)
 
     // Application Paths
     'apppath' => '/var/www/pidoors/',

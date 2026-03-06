@@ -73,6 +73,7 @@ CACHE_DIR = os.path.join(INSTALL_DIR, 'cache') + '/'
 MASTER_CARDS_FILE = os.path.join(CACHE_DIR, 'master_cards.json')
 _OLD_MASTER_CARDS_FILE = os.path.join(CONF_DIR, 'master_cards.json')
 CUSTOM_FORMATS_FILE = os.path.join(CONF_DIR, 'formats.json')
+SSL_CA_PATH = os.path.join(CONF_DIR, 'ca.pem')
 CACHE_DURATION = 86400  # 24 hours in seconds
 HEARTBEAT_INTERVAL = 60  # seconds
 DB_RETRY_INTERVAL = 30  # seconds
@@ -101,6 +102,34 @@ cache_lock = threading.Lock()  # For local_cache access
 card_lock = threading.Lock()   # For last_card, repeat_read_count, repeat_read_timeout
 master_lock = threading.Lock() # For master_cards access
 wiegand_lock = threading.Lock() # For legacy Wiegand stream access
+
+
+def get_db_connection(timeout=5):
+    """Create a database connection with optional TLS."""
+    if not MYSQL_AVAILABLE:
+        return None
+
+    zone_config = config.get(zone, {})
+    sqladdr = zone_config.get("sqladdr")
+    sqluser = zone_config.get("sqluser")
+    sqlpass = zone_config.get("sqlpass")
+    sqldb = zone_config.get("sqldb")
+
+    if not all([sqladdr, sqluser, sqlpass, sqldb]):
+        return None
+
+    kwargs = {
+        'host': sqladdr,
+        'user': sqluser,
+        'password': sqlpass,
+        'database': sqldb,
+        'connect_timeout': timeout,
+    }
+
+    if os.path.isfile(SSL_CA_PATH):
+        kwargs['ssl'] = {'ca': SSL_CA_PATH}
+
+    return pymysql.connect(**kwargs)
 
 
 def get_local_ip():
@@ -438,24 +467,12 @@ def verify_master_card_online(card_id, facility, user_id):
     """
     global db_connected
 
-    zone_config = config.get(zone, {})
-    sqladdr = zone_config.get("sqladdr")
-    sqluser = zone_config.get("sqluser")
-    sqlpass = zone_config.get("sqlpass")
-    sqldb = zone_config.get("sqldb")
-
-    if not all([sqladdr, sqluser, sqlpass, sqldb]):
-        return True  # Can't verify, allow access
-
     db = None
     try:
-        db = pymysql.connect(
-            host=sqladdr,
-            user=sqluser,
-            password=sqlpass,
-            database=sqldb,
-            connect_timeout=3  # Short timeout for quick check
-        )
+        db = get_db_connection(timeout=3)
+        if db is None:
+            return True  # Can't verify, allow access
+
         cursor = db.cursor(pymysql.cursors.DictCursor)
 
         result = verify_master_card_in_db(cursor, facility, user_id, card_id)
@@ -480,25 +497,13 @@ def sync_cache_from_server():
     if not MYSQL_AVAILABLE:
         return
 
-    zone_config = config.get(zone, {})
-    sqladdr = zone_config.get("sqladdr")
-    sqluser = zone_config.get("sqluser")
-    sqlpass = zone_config.get("sqlpass")
-    sqldb = zone_config.get("sqldb")
-
-    if not all([sqladdr, sqluser, sqlpass, sqldb]):
-        debug("Database configuration incomplete")
-        return
-
     db = None
     try:
-        db = pymysql.connect(
-            host=sqladdr,
-            user=sqluser,
-            password=sqlpass,
-            database=sqldb,
-            connect_timeout=10
-        )
+        db = get_db_connection(timeout=10)
+        if db is None:
+            debug("Database configuration incomplete")
+            return
+
         cursor = db.cursor(pymysql.cursors.DictCursor)
 
         # Fetch all cards that have access to this zone
@@ -994,25 +999,13 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
             return False
         last_db_attempt = time.time()
 
-    zone_config = config.get(zone, {})
-    sqladdr = zone_config.get("sqladdr")
-    sqluser = zone_config.get("sqluser")
-    sqlpass = zone_config.get("sqlpass")
-    sqldb = zone_config.get("sqldb")
-
-    if not all([sqladdr, sqluser, sqlpass, sqldb]):
-        return False
-
     db = None
     result = False
     try:
-        db = pymysql.connect(
-            host=sqladdr,
-            user=sqluser,
-            password=sqlpass,
-            database=sqldb,
-            connect_timeout=5
-        )
+        db = get_db_connection(timeout=5)
+        if db is None:
+            return False
+
         cursor = db.cursor(pymysql.cursors.DictCursor)
         with state_lock:
             db_connected = True
@@ -1416,26 +1409,15 @@ def send_heartbeat():
     if not MYSQL_AVAILABLE:
         return
 
-    zone_config = config.get(zone, {})
-    sqladdr = zone_config.get("sqladdr")
-    sqluser = zone_config.get("sqluser")
-    sqlpass = zone_config.get("sqlpass")
-    sqldb = zone_config.get("sqldb")
-
-    if not all([sqladdr, sqluser, sqlpass, sqldb]):
-        return
-
     db = None
     try:
-        db = pymysql.connect(
-            host=sqladdr,
-            user=sqluser,
-            password=sqlpass,
-            database=sqldb,
-            connect_timeout=5
-        )
+        db = get_db_connection(timeout=5)
+        if db is None:
+            return
+
         cursor = db.cursor(pymysql.cursors.DictCursor)
 
+        zone_config = config.get(zone, {})
         with state_lock:
             locked_status = 0 if door_unlocked else 1
         reader = zone_config.get("reader_type", "wiegand")
@@ -1512,14 +1494,6 @@ def command_poll_loop():
         return
 
     zone_config = config.get(zone, {})
-    sqladdr = zone_config.get("sqladdr")
-    sqluser = zone_config.get("sqluser")
-    sqlpass = zone_config.get("sqlpass")
-    sqldb = zone_config.get("sqldb")
-
-    if not all([sqladdr, sqluser, sqlpass, sqldb]):
-        return
-
     db = None
     poll_interval = 3  # default, updated dynamically from DB
 
@@ -1527,13 +1501,9 @@ def command_poll_loop():
         try:
             # Reconnect if needed
             if db is None:
-                db = pymysql.connect(
-                    host=sqladdr,
-                    user=sqluser,
-                    password=sqlpass,
-                    database=sqldb,
-                    connect_timeout=5
-                )
+                db = get_db_connection(timeout=5)
+                if db is None:
+                    return
                 debug("Command poll: connected to database")
 
             cursor = db.cursor(pymysql.cursors.DictCursor)
@@ -1652,24 +1622,12 @@ def send_offline_status():
     if not MYSQL_AVAILABLE:
         return
 
-    zone_config = config.get(zone, {})
-    sqladdr = zone_config.get("sqladdr")
-    sqluser = zone_config.get("sqluser")
-    sqlpass = zone_config.get("sqlpass")
-    sqldb = zone_config.get("sqldb")
-
-    if not all([sqladdr, sqluser, sqlpass, sqldb]):
-        return
-
     db = None
     try:
-        db = pymysql.connect(
-            host=sqladdr,
-            user=sqluser,
-            password=sqlpass,
-            database=sqldb,
-            connect_timeout=3
-        )
+        db = get_db_connection(timeout=3)
+        if db is None:
+            return
+
         cursor = db.cursor()
         cursor.execute("UPDATE doors SET status = 'offline' WHERE name = %s", (zone,))
         db.commit()

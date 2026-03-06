@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.5.20-green)
+![Version](https://img.shields.io/badge/version-2.6.0-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -571,7 +571,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.5.20** - Production Ready
+**Current Version: 2.6.0** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -583,6 +583,14 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.6.0 (March 2026)
+- **TLS Database Encryption**: All controller-to-server database connections can now be encrypted with TLS
+- **Automatic cert generation**: Server install generates a self-signed CA and server certificate for MariaDB TLS
+- **Automatic cert distribution**: Controller install downloads the CA cert from the server automatically
+- **Centralized DB helper**: All 6 duplicate `pymysql.connect()` calls consolidated into `get_db_connection()` with optional TLS
+- **PHP TLS support**: Web UI database connections support optional TLS via `sql_ssl_ca` config key
+- **Backward compatible**: Existing installs without TLS certs continue to work unencrypted
 
 ### Version 2.5.20 (March 2026)
 - **Remote Door Unlock**: Unlock doors remotely from the web UI with a new Unlock button on door cards
