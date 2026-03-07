@@ -4,25 +4,102 @@
  * PiDoors Access Control System
  */
 
+require_once __DIR__ . '/smtp.php';
+
+/**
+ * Get all notification/SMTP settings from the database (static cached)
+ */
+function get_notification_settings($pdo_access) {
+    static $cached = null;
+    if ($cached !== null) return $cached;
+
+    try {
+        $stmt = $pdo_access->query(
+            "SELECT setting_key, setting_value FROM settings
+             WHERE setting_key IN (
+                'email_notifications', 'notification_email',
+                'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from',
+                'site_name', 'heartbeat_interval'
+             )"
+        );
+        $cached = [];
+        while ($row = $stmt->fetch()) {
+            $cached[$row['setting_key']] = $row['setting_value'];
+        }
+    } catch (Exception $e) {
+        error_log("get_notification_settings error: " . $e->getMessage());
+        $cached = [];
+    }
+
+    return $cached;
+}
+
+/**
+ * Check if a notification was recently sent (dedup)
+ */
+function was_recently_notified($pdo_access, $event_type, $event_key, $cooldown_seconds) {
+    try {
+        $stmt = $pdo_access->prepare(
+            "SELECT COUNT(*) FROM notification_log
+             WHERE event_type = ? AND event_key = ?
+             AND sent_at > NOW() - INTERVAL ? SECOND"
+        );
+        $stmt->execute([$event_type, $event_key, $cooldown_seconds]);
+        return (int)$stmt->fetchColumn() > 0;
+    } catch (Exception $e) {
+        // Table may not exist yet - allow the notification
+        return false;
+    }
+}
+
+/**
+ * Log a sent notification to prevent duplicates
+ */
+function log_notification($pdo_access, $event_type, $event_key) {
+    try {
+        $stmt = $pdo_access->prepare(
+            "INSERT INTO notification_log (event_type, event_key, sent_at) VALUES (?, ?, NOW())"
+        );
+        $stmt->execute([$event_type, $event_key]);
+    } catch (Exception $e) {
+        error_log("log_notification error: " . $e->getMessage());
+    }
+}
+
 /**
  * Send an email notification
- *
- * @param string $to Recipient email
- * @param string $subject Email subject
- * @param string $body HTML email body
- * @param array $config Application config
- * @return bool Success status
+ * Uses SMTP when configured, falls back to PHP mail()
  */
 function send_notification($to, $subject, $body, $config) {
-    // Check if notifications are enabled
     if (empty($to)) {
         return false;
     }
 
-    $from = $config['notification_from'] ?? 'noreply@pidoors.local';
     $site_name = $config['site_name'] ?? 'PiDoors';
+    $full_subject = "[{$site_name}] {$subject}";
+    $html_body = notification_template($subject, $body, $site_name);
 
-    // Build email headers
+    // Use SMTP if configured
+    $smtp_host = $config['smtp_host'] ?? '';
+    if (!empty($smtp_host)) {
+        $smtp_settings = [
+            'host' => $smtp_host,
+            'port' => $config['smtp_port'] ?? 587,
+            'user' => $config['smtp_user'] ?? '',
+            'pass' => $config['smtp_pass'] ?? '',
+            'from' => $config['smtp_from'] ?? $config['notification_from'] ?? '',
+        ];
+
+        $result = smtp_send($to, $full_subject, $html_body, $smtp_settings);
+        if ($result === true) {
+            return true;
+        }
+        error_log("SMTP send failed: {$result}");
+        return false;
+    }
+
+    // Fallback to PHP mail()
+    $from = $config['smtp_from'] ?? $config['notification_from'] ?? 'noreply@pidoors.local';
     $headers = [
         'MIME-Version: 1.0',
         'Content-type: text/html; charset=UTF-8',
@@ -31,11 +108,7 @@ function send_notification($to, $subject, $body, $config) {
         'X-Mailer: PiDoors Notification System',
     ];
 
-    // Wrap body in HTML template
-    $html_body = notification_template($subject, $body, $site_name);
-
-    // Send email
-    return mail($to, "[{$site_name}] {$subject}", $html_body, implode("\r\n", $headers));
+    return mail($to, $full_subject, $html_body, implode("\r\n", $headers));
 }
 
 /**
@@ -72,19 +145,11 @@ HTML;
  */
 function notify_security_alert($event_type, $details, $config, $pdo_access) {
     try {
-        // Get notification email from settings
-        $stmt = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'notification_email'");
-        $result = $stmt->fetch();
-        $notification_email = $result['setting_value'] ?? '';
+        $ns = get_notification_settings($pdo_access);
+        if (empty($ns['email_notifications']) || $ns['email_notifications'] !== '1') return false;
+        if (empty($ns['notification_email'])) return false;
 
-        $stmt = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'email_notifications'");
-        $result = $stmt->fetch();
-        $notifications_enabled = ($result['setting_value'] ?? '0') === '1';
-
-        if (!$notifications_enabled || empty($notification_email)) {
-            return false;
-        }
-
+        $merged = array_merge($config, $ns);
         $subject = "Security Alert: " . ucfirst(str_replace('_', ' ', $event_type));
 
         $body = "<p><strong>Event Type:</strong> " . htmlspecialchars($event_type) . "</p>";
@@ -95,7 +160,7 @@ function notify_security_alert($event_type, $details, $config, $pdo_access) {
         $body .= "</div>";
         $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/audit.php' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Audit Log</a></p>";
 
-        return send_notification($notification_email, $subject, $body, $config);
+        return send_notification($ns['notification_email'], $subject, $body, $merged);
     } catch (Exception $e) {
         error_log("Notification error: " . $e->getMessage());
         return false;
@@ -107,20 +172,12 @@ function notify_security_alert($event_type, $details, $config, $pdo_access) {
  */
 function notify_door_status($door_name, $status, $config, $pdo_access) {
     try {
-        $stmt = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'notification_email'");
-        $result = $stmt->fetch();
-        $notification_email = $result['setting_value'] ?? '';
+        $ns = get_notification_settings($pdo_access);
+        if (empty($ns['email_notifications']) || $ns['email_notifications'] !== '1') return false;
+        if (empty($ns['notification_email'])) return false;
 
-        $stmt = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'email_notifications'");
-        $result = $stmt->fetch();
-        $notifications_enabled = ($result['setting_value'] ?? '0') === '1';
-
-        if (!$notifications_enabled || empty($notification_email)) {
-            return false;
-        }
-
+        $merged = array_merge($config, $ns);
         $subject = "Door Alert: " . htmlspecialchars($door_name) . " is " . ucfirst($status);
-
         $status_color = $status === 'offline' ? '#dc3545' : '#28a745';
 
         $body = "<p>The door controller status has changed:</p>";
@@ -131,7 +188,7 @@ function notify_door_status($door_name, $status, $config, $pdo_access) {
         $body .= "</div>";
         $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/doors.php' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Doors</a></p>";
 
-        return send_notification($notification_email, $subject, $body, $config);
+        return send_notification($ns['notification_email'], $subject, $body, $merged);
     } catch (Exception $e) {
         error_log("Door notification error: " . $e->getMessage());
         return false;
@@ -143,18 +200,11 @@ function notify_door_status($door_name, $status, $config, $pdo_access) {
  */
 function notify_access_denied($card_id, $door_name, $attempt_count, $config, $pdo_access) {
     try {
-        $stmt = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'notification_email'");
-        $result = $stmt->fetch();
-        $notification_email = $result['setting_value'] ?? '';
+        $ns = get_notification_settings($pdo_access);
+        if (empty($ns['email_notifications']) || $ns['email_notifications'] !== '1') return false;
+        if (empty($ns['notification_email'])) return false;
 
-        $stmt = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'email_notifications'");
-        $result = $stmt->fetch();
-        $notifications_enabled = ($result['setting_value'] ?? '0') === '1';
-
-        if (!$notifications_enabled || empty($notification_email)) {
-            return false;
-        }
-
+        $merged = array_merge($config, $ns);
         $subject = "Access Alert: Repeated Denied Attempts";
 
         $body = "<p style='color: #dc3545; font-weight: bold;'>Multiple access denied events detected!</p>";
@@ -167,7 +217,7 @@ function notify_access_denied($card_id, $door_name, $attempt_count, $config, $pd
         $body .= "<p>This may indicate a lost or stolen card, or an attempted breach.</p>";
         $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/logs.php' style='background: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Access Logs</a></p>";
 
-        return send_notification($notification_email, $subject, $body, $config);
+        return send_notification($ns['notification_email'], $subject, $body, $merged);
     } catch (Exception $e) {
         error_log("Access denied notification error: " . $e->getMessage());
         return false;
@@ -179,17 +229,11 @@ function notify_access_denied($card_id, $door_name, $attempt_count, $config, $pd
  */
 function send_daily_summary($config, $pdo_access) {
     try {
-        $stmt = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'notification_email'");
-        $result = $stmt->fetch();
-        $notification_email = $result['setting_value'] ?? '';
+        $ns = get_notification_settings($pdo_access);
+        if (empty($ns['email_notifications']) || $ns['email_notifications'] !== '1') return false;
+        if (empty($ns['notification_email'])) return false;
 
-        $stmt = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'email_notifications'");
-        $result = $stmt->fetch();
-        $notifications_enabled = ($result['setting_value'] ?? '0') === '1';
-
-        if (!$notifications_enabled || empty($notification_email)) {
-            return false;
-        }
+        $merged = array_merge($config, $ns);
 
         // Get yesterday's date
         $yesterday = date('Y-m-d', strtotime('-1 day'));
@@ -212,9 +256,9 @@ function send_daily_summary($config, $pdo_access) {
 
         $body = "<h3>Access Summary for {$yesterday}</h3>";
         $body .= "<table style='width: 100%; border-collapse: collapse;'>";
-        $body .= "<tr><td style='padding: 10px; border: 1px solid #dee2e6; background: #e7f5ff;'><strong>Total Access Events</strong></td><td style='padding: 10px; border: 1px solid #dee2e6; text-align: right;'>{$stats['total']}</td></tr>";
-        $body .= "<tr><td style='padding: 10px; border: 1px solid #dee2e6; background: #d3f9d8;'><strong>Access Granted</strong></td><td style='padding: 10px; border: 1px solid #dee2e6; text-align: right;'>{$stats['granted']}</td></tr>";
-        $body .= "<tr><td style='padding: 10px; border: 1px solid #dee2e6; background: #ffe3e3;'><strong>Access Denied</strong></td><td style='padding: 10px; border: 1px solid #dee2e6; text-align: right;'>{$stats['denied']}</td></tr>";
+        $body .= "<tr><td style='padding: 10px; border: 1px solid #dee2e6; background: #e7f5ff;'><strong>Total Access Events</strong></td><td style='padding: 10px; border: 1px solid #dee2e6; text-align: right;'>" . ($stats['total'] ?? 0) . "</td></tr>";
+        $body .= "<tr><td style='padding: 10px; border: 1px solid #dee2e6; background: #d3f9d8;'><strong>Access Granted</strong></td><td style='padding: 10px; border: 1px solid #dee2e6; text-align: right;'>" . ($stats['granted'] ?? 0) . "</td></tr>";
+        $body .= "<tr><td style='padding: 10px; border: 1px solid #dee2e6; background: #ffe3e3;'><strong>Access Denied</strong></td><td style='padding: 10px; border: 1px solid #dee2e6; text-align: right;'>" . ($stats['denied'] ?? 0) . "</td></tr>";
         $body .= "</table>";
 
         $body .= "<h3 style='margin-top: 20px;'>Door Controller Status</h3>";
@@ -240,7 +284,7 @@ function send_daily_summary($config, $pdo_access) {
 
         $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/reports.php' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Full Reports</a></p>";
 
-        return send_notification($notification_email, $subject, $body, $config);
+        return send_notification($ns['notification_email'], $subject, $body, $merged);
     } catch (Exception $e) {
         error_log("Daily summary error: " . $e->getMessage());
         return false;

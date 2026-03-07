@@ -35,13 +35,28 @@ update_db_status() {
 import os, json, pymysql
 cfg = json.load(open(os.environ['PIDOORS_CONFIG']))
 zc = cfg[os.environ['PIDOORS_ZONE']]
-ssl_opts = {}
 ca_path = os.path.join(os.path.dirname(os.environ['PIDOORS_CONFIG']), 'ca.pem')
-if os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
-    ssl_opts = {'ssl': {'ca': ca_path}}
-else:
-    ssl_opts = {'ssl_disabled': True}
-db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5, **ssl_opts)
+db = None
+# Try TLS first, fall back to plain
+for use_tls in [True, False]:
+    try:
+        kw = dict(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'],
+                  database=zc['sqldb'], connect_timeout=5)
+        if use_tls and os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
+            kw['ssl'] = {'ca': ca_path}
+        else:
+            kw['ssl_disabled'] = True
+            if use_tls:
+                continue  # No cert, skip straight to plain
+        db = pymysql.connect(**kw)
+        break
+    except Exception as e:
+        err = str(e).upper()
+        if use_tls and ('SSL' in err or 'CERTIFICATE' in err or 'TLS' in err):
+            continue  # TLS failed, try plain
+        raise
+if db is None:
+    raise RuntimeError('Could not connect to database')
 c = db.cursor()
 version = os.environ.get('PIDOORS_VERSION', '')
 detail = os.environ.get('PIDOORS_DETAIL', '')

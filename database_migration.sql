@@ -596,4 +596,20 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- --------------------------------------------------------
+-- Notification log table for deduplication
+-- --------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `notification_log` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `event_type` varchar(50) NOT NULL,
+  `event_key` varchar(100) NOT NULL,
+  `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_event_lookup` (`event_type`, `event_key`, `sent_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
+('smtp_from', '', 'SMTP from email address for notifications');
+
 COMMIT;

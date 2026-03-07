@@ -733,31 +733,51 @@ try:
     with open('$INSTALL_DIR/conf/config.json') as f:
         cfg = json.load(f)
     zc = cfg['$DOOR_NAME']
-    ssl_opts = {}
     ca_path = '$INSTALL_DIR/conf/ca.pem'
-    if os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
-        ssl_opts = {'ssl': {'ca': ca_path}}
-    else:
-        ssl_opts = {'ssl_disabled': True}
-    db = pymysql.connect(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'], database=zc['sqldb'], connect_timeout=5, **ssl_opts)
+    db = None
+    tls_used = False
+    for use_tls in [True, False]:
+        try:
+            kw = dict(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'],
+                      database=zc['sqldb'], connect_timeout=5)
+            if use_tls and os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
+                kw['ssl'] = {'ca': ca_path}
+            else:
+                kw['ssl_disabled'] = True
+                if use_tls:
+                    continue
+            db = pymysql.connect(**kw)
+            tls_used = use_tls and 'ssl' in kw
+            break
+        except Exception as e:
+            err = str(e).upper()
+            if use_tls and ('SSL' in err or 'CERTIFICATE' in err or 'TLS' in err):
+                continue
+            raise
+    if db is None:
+        raise RuntimeError('Could not connect')
     cursor = db.cursor()
     cursor.execute('SELECT name, status FROM doors WHERE name = %s', ('$DOOR_NAME',))
     row = cursor.fetchone()
+    mode = 'TLS' if tls_used else 'plain'
     if row:
-        print(f'EXISTS:{row[1]}')
+        print(f'EXISTS:{row[1]}:{mode}')
     else:
-        print('NOT_FOUND')
+        print(f'NOT_FOUND:{mode}')
     db.close()
 except Exception as e:
     print(f'ERROR:{e}')
 " 2>&1)
 
     if [[ "$VERIFY_RESULT" == EXISTS:* ]]; then
-        STATUS="${VERIFY_RESULT#EXISTS:}"
-        ok "Database connection: working"
+        PARTS="${VERIFY_RESULT#EXISTS:}"
+        STATUS="${PARTS%%:*}"
+        MODE="${PARTS##*:}"
+        ok "Database connection: working ($MODE)"
         ok "Door '$DOOR_NAME' found in database (status: $STATUS)"
-    elif [[ "$VERIFY_RESULT" == "NOT_FOUND" ]]; then
-        ok "Database connection: working"
+    elif [[ "$VERIFY_RESULT" == NOT_FOUND:* ]]; then
+        MODE="${VERIFY_RESULT#NOT_FOUND:}"
+        ok "Database connection: working ($MODE)"
         info "Door '$DOOR_NAME' will auto-register on first heartbeat"
     elif [[ "$VERIFY_RESULT" == ERROR:* ]]; then
         ERROR="${VERIFY_RESULT#ERROR:}"
@@ -844,6 +864,13 @@ echo "Backup completed: $DATE"
 BACKUP
     chmod +x /usr/local/bin/pidoors-backup.sh
     ok "Backup script installed"
+
+    # Notification cron job (runs every 5 minutes)
+    cat > /etc/cron.d/pidoors <<'CRON'
+*/5 * * * * www-data php /var/www/pidoors/cron/notify.php > /dev/null 2>&1
+CRON
+    chmod 644 /etc/cron.d/pidoors
+    ok "Notification cron job installed"
 fi
 
 # ============================================================

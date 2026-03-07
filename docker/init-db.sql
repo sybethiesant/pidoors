@@ -215,7 +215,8 @@ INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VA
 ('server_version', '', 'Current server software version'),
 ('target_controller_version', '', 'Target version for door controllers'),
 ('github_latest_version', '', 'Latest version available on GitHub'),
-('github_check_time', '', 'Last time GitHub was checked for updates');
+('github_check_time', '', 'Last time GitHub was checked for updates'),
+('smtp_from', '', 'SMTP from email address for notifications');
 
 -- Audit logs (in access DB too)
 CREATE TABLE IF NOT EXISTS `audit_logs` (
@@ -269,6 +270,16 @@ CREATE TABLE IF NOT EXISTS `door_groups` (
   UNIQUE KEY `door_group` (`door_name`, `group_id`),
   KEY `door_name` (`door_name`),
   KEY `group_id` (`group_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Notification log for deduplication
+CREATE TABLE IF NOT EXISTS `notification_log` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `event_type` varchar(50) NOT NULL,
+  `event_key` varchar(100) NOT NULL,
+  `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_event_lookup` (`event_type`, `event_key`, `sent_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Add extended columns to cards table

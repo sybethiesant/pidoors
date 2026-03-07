@@ -74,6 +74,7 @@ MASTER_CARDS_FILE = os.path.join(CACHE_DIR, 'master_cards.json')
 _OLD_MASTER_CARDS_FILE = os.path.join(CONF_DIR, 'master_cards.json')
 CUSTOM_FORMATS_FILE = os.path.join(CONF_DIR, 'formats.json')
 SSL_CA_PATH = os.path.join(CONF_DIR, 'ca.pem')
+SSL_CA_STALE_PATH = os.path.join(CONF_DIR, 'ca.pem.stale')
 CACHE_DURATION = 86400  # 24 hours in seconds
 HEARTBEAT_INTERVAL = 60  # seconds
 DB_RETRY_INTERVAL = 30  # seconds
@@ -87,6 +88,7 @@ repeat_read_count = 0
 repeat_read_timeout = time.time()
 db_connected = False
 last_db_attempt = 0
+ssl_mode = None  # None = not determined, 'tls' = using ca.pem, 'plain' = ssl_disabled
 local_cache = {}
 cache_last_sync = 0
 heartbeat_thread = None
@@ -104,8 +106,60 @@ master_lock = threading.Lock() # For master_cards access
 wiegand_lock = threading.Lock() # For legacy Wiegand stream access
 
 
+def _try_db_connect(kwargs, use_tls):
+    """Attempt a database connection with or without TLS."""
+    kw = dict(kwargs)
+    if use_tls and os.path.isfile(SSL_CA_PATH) and os.path.getsize(SSL_CA_PATH) > 0:
+        kw['ssl'] = {'ca': SSL_CA_PATH}
+    else:
+        kw['ssl_disabled'] = True
+    return pymysql.connect(**kw)
+
+
+def _fetch_server_ca(sqladdr):
+    """Download ca.pem from the server's web root. Returns True if saved."""
+    import urllib.request
+    url = f"http://{sqladdr}/ca.pem"
+    try:
+        req = urllib.request.Request(url, method='GET')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+            # Sanity check: must look like a PEM certificate
+            if b'-----BEGIN CERTIFICATE-----' not in data:
+                debug(f"TLS: {url} returned non-certificate data, ignoring")
+                return False
+            with open(SSL_CA_PATH, 'wb') as f:
+                f.write(data)
+            # Fix ownership if running as root (install/update context)
+            try:
+                import pwd
+                pw = pwd.getpwnam('pidoors')
+                os.chown(SSL_CA_PATH, pw.pw_uid, pw.pw_gid)
+            except Exception:
+                pass
+            os.chmod(SSL_CA_PATH, 0o600)
+            report(f"TLS: downloaded fresh ca.pem from server")
+            return True
+    except Exception as e:
+        debug(f"TLS: could not fetch {url}: {e}")
+        return False
+
+
 def get_db_connection(timeout=5):
-    """Create a database connection with optional TLS."""
+    """
+    Create a database connection with self-healing TLS.
+
+    Flow:
+    1. If ssl_mode is already determined, use it directly.
+    2. If ca.pem exists, try TLS. On SSL error:
+       a. Fetch fresh ca.pem from http://<server>/ca.pem
+       b. If new cert works, use TLS going forward.
+       c. If fetch fails or still errors, fall back to plain.
+    3. If no ca.pem, try to fetch one from server.
+       If fetched, use TLS. Otherwise, use plain.
+    """
+    global ssl_mode
+
     if not MYSQL_AVAILABLE:
         return None
 
@@ -126,12 +180,74 @@ def get_db_connection(timeout=5):
         'connect_timeout': timeout,
     }
 
-    if os.path.isfile(SSL_CA_PATH) and os.path.getsize(SSL_CA_PATH) > 0:
-        kwargs['ssl'] = {'ca': SSL_CA_PATH}
-    else:
-        kwargs['ssl_disabled'] = True
+    # Fast path: mode already determined from a previous connection
+    if ssl_mode == 'tls':
+        try:
+            return _try_db_connect(kwargs, use_tls=True)
+        except Exception as e:
+            err = str(e).upper()
+            if 'SSL' in err or 'CERTIFICATE' in err or 'TLS' in err:
+                report(f"TLS: connection failed with cached cert, re-negotiating: {e}")
+                ssl_mode = None  # Reset and fall through to negotiation
+            else:
+                raise  # Non-TLS error, propagate normally
 
-    return pymysql.connect(**kwargs)
+    if ssl_mode == 'plain':
+        return _try_db_connect(kwargs, use_tls=False)
+
+    # ── First connection or re-negotiation ──
+
+    has_cert = os.path.isfile(SSL_CA_PATH) and os.path.getsize(SSL_CA_PATH) > 0
+
+    # Step 1: If we have a cert, try TLS
+    if has_cert:
+        try:
+            conn = _try_db_connect(kwargs, use_tls=True)
+            ssl_mode = 'tls'
+            report("TLS: connected with existing ca.pem")
+            return conn
+        except Exception as e:
+            err = str(e).upper()
+            if 'SSL' not in err and 'CERTIFICATE' not in err and 'TLS' not in err:
+                raise  # Non-TLS error, don't try to heal
+
+            report(f"TLS: existing ca.pem failed: {e}")
+
+            # Move stale cert out of the way
+            try:
+                os.rename(SSL_CA_PATH, SSL_CA_STALE_PATH)
+                debug("TLS: moved stale ca.pem to ca.pem.stale")
+            except OSError:
+                pass
+
+    # Step 2: Try to fetch a (fresh) cert from the server
+    if _fetch_server_ca(sqladdr):
+        try:
+            conn = _try_db_connect(kwargs, use_tls=True)
+            ssl_mode = 'tls'
+            report("TLS: connected with fresh ca.pem from server")
+            # Clean up stale cert
+            try:
+                os.remove(SSL_CA_STALE_PATH)
+            except OSError:
+                pass
+            return conn
+        except Exception as e:
+            report(f"TLS: fresh ca.pem also failed: {e}")
+            # Remove the bad cert
+            try:
+                os.remove(SSL_CA_PATH)
+            except OSError:
+                pass
+
+    # Step 3: Fall back to plain (no TLS)
+    try:
+        conn = _try_db_connect(kwargs, use_tls=False)
+        ssl_mode = 'plain'
+        report("TLS: server has no TLS, using plain connection")
+        return conn
+    except Exception:
+        raise  # Genuine connection failure, propagate
 
 
 def get_local_ip():

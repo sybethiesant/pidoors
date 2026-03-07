@@ -40,6 +40,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'cache_duration' => validate_int($_POST['cache_duration'] ?? 86400, 3600, 604800) ?: 86400,
             'email_notifications' => isset($_POST['email_notifications']) ? '1' : '0',
             'notification_email' => filter_var($_POST['notification_email'] ?? '', FILTER_VALIDATE_EMAIL) ?: '',
+            'smtp_host' => sanitize_string($_POST['smtp_host'] ?? ''),
+            'smtp_port' => validate_int($_POST['smtp_port'] ?? 587, 25, 65535) ?: 587,
+            'smtp_user' => sanitize_string($_POST['smtp_user'] ?? ''),
+            'smtp_pass' => ($_POST['smtp_pass'] ?? '') !== '' ? $_POST['smtp_pass'] : ($db_settings['smtp_pass'] ?? ''),
+            'smtp_from' => filter_var($_POST['smtp_from'] ?? '', FILTER_VALIDATE_EMAIL) ?: '',
             'log_retention_days' => validate_int($_POST['log_retention_days'] ?? 365, 30, 3650) ?: 365,
             'timezone' => sanitize_string($_POST['timezone'] ?? 'UTC'),
         ];
@@ -50,7 +55,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach ($settings_to_save as $key => $value) {
                 $old = $db_settings[$key] ?? '';
                 if ((string)$old !== (string)$value) {
-                    $changes[] = "$key ($old → $value)";
+                    if ($key === 'smtp_pass') {
+                        $changes[] = "smtp_pass (changed)";
+                    } else {
+                        $changes[] = "$key ($old → $value)";
+                    }
                 }
             }
 
@@ -92,6 +101,11 @@ $settings = [
     'cache_duration' => $db_settings['cache_duration'] ?? 86400,
     'email_notifications' => $db_settings['email_notifications'] ?? '0',
     'notification_email' => $db_settings['notification_email'] ?? '',
+    'smtp_host' => $db_settings['smtp_host'] ?? '',
+    'smtp_port' => $db_settings['smtp_port'] ?? '587',
+    'smtp_user' => $db_settings['smtp_user'] ?? '',
+    'smtp_pass' => $db_settings['smtp_pass'] ?? '',
+    'smtp_from' => $db_settings['smtp_from'] ?? '',
     'log_retention_days' => $db_settings['log_retention_days'] ?? 365,
     'timezone' => $db_settings['timezone'] ?? 'UTC',
 ];
@@ -233,6 +247,48 @@ $timezones = DateTimeZone::listIdentifiers();
                                value="<?php echo htmlspecialchars($settings['notification_email']); ?>">
                         <div class="form-text">Email address to receive security alerts and notifications.</div>
                     </div>
+
+                    <hr>
+                    <h6 class="fw-bold mb-3">SMTP Configuration</h6>
+                    <div class="row">
+                        <div class="col-md-8 mb-3">
+                            <label for="smtp_host" class="form-label">SMTP Server</label>
+                            <input type="text" class="form-control" id="smtp_host" name="smtp_host"
+                                   value="<?php echo htmlspecialchars($settings['smtp_host']); ?>"
+                                   placeholder="smtp.gmail.com">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="smtp_port" class="form-label">Port</label>
+                            <input type="number" class="form-control" id="smtp_port" name="smtp_port"
+                                   min="25" max="65535" value="<?php echo htmlspecialchars($settings['smtp_port']); ?>">
+                            <div class="form-text">587 STARTTLS, 465 SSL, 25 plain</div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="smtp_user" class="form-label">Username</label>
+                            <input type="text" class="form-control" id="smtp_user" name="smtp_user"
+                                   value="<?php echo htmlspecialchars($settings['smtp_user']); ?>"
+                                   placeholder="user@gmail.com" autocomplete="off">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="smtp_pass" class="form-label">Password</label>
+                            <input type="password" class="form-control" id="smtp_pass" name="smtp_pass"
+                                   value="" placeholder="<?php echo !empty($settings['smtp_pass']) ? '••••••••' : ''; ?>" autocomplete="new-password">
+                            <div class="form-text">For Gmail, use an App Password. Leave blank to keep existing.</div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="smtp_from" class="form-label">From Address</label>
+                        <input type="email" class="form-control" id="smtp_from" name="smtp_from"
+                               value="<?php echo htmlspecialchars($settings['smtp_from']); ?>"
+                               placeholder="noreply@yourdomain.com">
+                        <div class="form-text">The sender address for notification emails.</div>
+                    </div>
+                    <div class="d-flex align-items-center gap-3">
+                        <button type="button" class="btn btn-outline-primary" id="btn-test-email">Send Test Email</button>
+                        <span id="test-email-result" class="small"></span>
+                    </div>
                 </div>
             </div>
 
@@ -277,5 +333,41 @@ $timezones = DateTimeZone::listIdentifiers();
         </form>
     </div>
 </div>
+
+<script>
+document.getElementById('btn-test-email')?.addEventListener('click', function() {
+    const btn = this;
+    const result = document.getElementById('test-email-result');
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    result.textContent = '';
+    result.className = 'small';
+
+    const formData = new FormData();
+    formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+    formData.append('notification_email', document.getElementById('notification_email').value);
+    formData.append('smtp_host', document.getElementById('smtp_host').value);
+    formData.append('smtp_port', document.getElementById('smtp_port').value);
+    formData.append('smtp_user', document.getElementById('smtp_user').value);
+    formData.append('smtp_pass', document.getElementById('smtp_pass').value);
+    formData.append('smtp_from', document.getElementById('smtp_from').value);
+    formData.append('site_name', document.getElementById('site_name').value);
+
+    fetch('test_email.php', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            result.textContent = data.message;
+            result.className = 'small ' + (data.success ? 'text-success fw-bold' : 'text-danger');
+        })
+        .catch(err => {
+            result.textContent = 'Request failed: ' + err.message;
+            result.className = 'small text-danger';
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.textContent = 'Send Test Email';
+        });
+});
+</script>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>
