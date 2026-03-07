@@ -158,16 +158,29 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                     $sub = $iterator->getSubPathName();
                     $target = $apppath . '/' . $sub;
                     if ($item->isDir()) {
-                        // Check that parent dir exists or is creatable
-                        if (!is_dir($target) && !is_writable(dirname($target))) {
-                            $preflight_errors[] = "Cannot create directory: $sub";
+                        // Check that the directory exists or an existing ancestor is writable
+                        if (!is_dir($target)) {
+                            $check_dir = dirname($target);
+                            while ($check_dir !== $apppath && !is_dir($check_dir)) {
+                                $check_dir = dirname($check_dir);
+                            }
+                            if (!is_writable($check_dir)) {
+                                $preflight_errors[] = "Cannot create directory: $sub";
+                            }
                         }
                     } else {
                         if ($sub === 'includes/config.php') continue;
                         if (file_exists($target) && !is_writable($target)) {
                             $preflight_errors[] = $sub;
-                        } elseif (!file_exists($target) && !is_writable(dirname($target))) {
-                            $preflight_errors[] = "$sub (parent dir not writable)";
+                        } elseif (!file_exists($target)) {
+                            // Find the nearest existing ancestor directory
+                            $check_dir = dirname($target);
+                            while ($check_dir !== $apppath && !is_dir($check_dir)) {
+                                $check_dir = dirname($check_dir);
+                            }
+                            if (!is_writable($check_dir)) {
+                                $preflight_errors[] = "$sub (parent dir not writable)";
+                            }
                         }
                         $files_to_copy[] = ['src' => $item->getPathname(), 'sub' => $sub, 'target' => $target];
                     }
