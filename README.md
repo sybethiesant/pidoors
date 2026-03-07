@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.7.0-green)
+![Version](https://img.shields.io/badge/version-2.6.2-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -569,7 +569,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.7.0** - Production Ready
+**Current Version: 2.6.2** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -582,7 +582,7 @@ Contributions welcome! Please:
 
 ## Changelog
 
-### Version 2.7.0 (March 2026)
+### Version 2.6.2 (March 2026)
 - **Email notifications**: Working SMTP email system — door offline/online alerts, repeated access denial alerts, daily summary reports
 - **SMTP settings UI**: Configure SMTP server, port, username, password, and from address directly in Settings with a "Send Test Email" button
 - **Custom SMTP sender**: Lightweight ~130-line SMTP function supporting AUTH LOGIN, STARTTLS (587), implicit SSL (465), and plain relay (25) — no PHPMailer dependency
