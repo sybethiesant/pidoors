@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.6.2-green)
+![Version](https://img.shields.io/badge/version-2.6.3-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -569,7 +569,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.6.2** - Production Ready
+**Current Version: 2.6.3** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -581,6 +581,12 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.6.3 (March 2026)
+- **Fix**: "Failed to update door" when editing door settings — missing `unlock_requested` and `poll_interval` column migrations in `database_migration.sql` caused the UPDATE query in editdoor.php to fail on upgraded installs
+- **Fix**: Door unlock duration stuck at 5 seconds despite UI changes — same root cause; the failed UPDATE prevented any door settings from being saved
+- **Fix**: Remote unlock from web UI broken on upgraded installs — `unlock_requested` column didn't exist
+- **Fix**: Controller command poll thread errors on upgraded installs — `poll_interval` column didn't exist, causing repeated query failures
 
 ### Version 2.6.2 (March 2026)
 - **Email notifications**: Working SMTP email system — door offline/online alerts, repeated access denial alerts, daily summary reports
