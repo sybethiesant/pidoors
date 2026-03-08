@@ -88,6 +88,11 @@ cleanup() {
     if [ -n "$TMPDIR" ] && [ -d "$TMPDIR" ]; then
         rm -rf "$TMPDIR"
     fi
+    # Always ensure the service is running when the script exits
+    if ! systemctl is-active --quiet pidoors 2>/dev/null; then
+        log "Ensuring pidoors service is running..."
+        systemctl start pidoors 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
