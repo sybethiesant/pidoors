@@ -284,6 +284,30 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                     }
                 }
 
+                // Run database migration to add any new columns/tables
+                $db_migrated = false;
+                $migration_warning = '';
+                $migration_file = $extracted . '/database_migration.sql';
+                if (file_exists($migration_file)) {
+                    putenv('MYSQL_PWD=' . $config['sqlpass']);
+                    $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
+                        escapeshellarg($config['sqladdr']),
+                        escapeshellarg($config['sqluser']),
+                        escapeshellarg($config['sqldb2']),
+                        escapeshellarg($migration_file)
+                    );
+                    $mig_output = [];
+                    $mig_code = 0;
+                    exec($mig_cmd, $mig_output, $mig_code);
+                    putenv('MYSQL_PWD');
+                    if ($mig_code === 0) {
+                        $db_migrated = true;
+                    } else {
+                        $migration_warning = ' Database migration had errors — you may need to run database_migration.sql manually.';
+                        error_log("Database migration failed (exit $mig_code): " . implode(' ', $mig_output));
+                    }
+                }
+
                 // Only update DB version after everything succeeded
                 try {
                     $stmt = $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value) VALUES ('server_version', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
@@ -295,7 +319,8 @@ if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? 
                 log_security_event($pdo, 'server_update', $_SESSION['user_id'] ?? null, "Server updated to version $current_version ($copied files)");
 
                 $cleanup_msg = $removed > 0 ? " $removed orphaned file(s) removed." : "";
-                $success_message = "Server updated to version $current_version. $copied files copied successfully.{$cleanup_msg} Refresh the page to see updated code.";
+                $db_msg = $db_migrated ? ' Database schema updated.' : $migration_warning;
+                $success_message = "Server updated to version $current_version. $copied files copied successfully.{$cleanup_msg}{$db_msg} Refresh the page to see updated code.";
             }
 
             // Cleanup temp files

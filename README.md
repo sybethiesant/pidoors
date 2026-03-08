@@ -587,6 +587,7 @@ Contributions welcome! Please:
 - **Fix**: Door unlock duration stuck at 5 seconds despite UI changes — same root cause; the failed UPDATE prevented any door settings from being saved
 - **Fix**: Remote unlock from web UI broken on upgraded installs — `unlock_requested` column didn't exist
 - **Fix**: Controller command poll thread errors on upgraded installs — `poll_interval` column didn't exist, causing repeated query failures
+- **Auto-migration**: Server update now automatically runs `database_migration.sql` after copying files, so database schema stays in sync with code
 
 ### Version 2.6.2 (March 2026)
 - **Email notifications**: Working SMTP email system — door offline/online alerts, repeated access denial alerts, daily summary reports
