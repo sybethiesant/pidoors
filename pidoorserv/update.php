@@ -32,6 +32,23 @@ try {
 
 // Update server_version in DB if it doesn't match the VERSION file
 if (($update_settings['server_version'] ?? '') !== $current_version) {
+    // Run database migration for any missing columns/tables
+    $migration_file = $config['apppath'] . 'database_migration.sql';
+    if (file_exists($migration_file)) {
+        putenv('MYSQL_PWD=' . $config['sqlpass']);
+        $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
+            escapeshellarg($config['sqladdr']),
+            escapeshellarg($config['sqluser']),
+            escapeshellarg($config['sqldb2']),
+            escapeshellarg($migration_file)
+        );
+        exec($mig_cmd, $mig_output, $mig_code);
+        putenv('MYSQL_PWD');
+        if ($mig_code !== 0) {
+            error_log("Auto-migration failed (exit $mig_code): " . implode(' ', $mig_output));
+        }
+    }
+
     try {
         $stmt = $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value, description) VALUES ('server_version', ?, 'Current server software version') ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
         $stmt->execute([$current_version]);

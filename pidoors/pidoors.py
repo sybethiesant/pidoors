@@ -1559,6 +1559,13 @@ def send_heartbeat():
             """, (zone, myip, locked_status, reader, VERSION))
             report(f"Door '{zone}' auto-registered in database")
 
+        # Clear stale "updating" status — if we're heartbeating, the update finished
+        cursor.execute("""
+            UPDATE doors
+            SET update_status = %s, update_status_time = NOW()
+            WHERE name = %s AND update_status LIKE 'updating%%'
+        """, (f'success: running {VERSION}', zone))
+
         db.commit()
 
         # Check if an update has been requested

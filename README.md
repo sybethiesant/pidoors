@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.6.3-green)
+![Version](https://img.shields.io/badge/version-2.6.4-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -569,7 +569,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.6.3** - Production Ready
+**Current Version: 2.6.4** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -581,6 +581,12 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.6.4 (March 2026)
+- **Fix**: "Failed to update door" self-heals — editdoor.php auto-adds missing columns and retries if the UPDATE fails due to missing schema
+- **Fix**: Stale "updating" status on controllers — heartbeat now clears "updating" flag when controller is back online
+- **Fix**: Auto-migration on version change — visiting the Updates page after a server update now auto-runs `database_migration.sql`
+- **Fix**: Controller update script always restarts service — cleanup trap ensures pidoors service comes back online even if the update fails mid-way
 
 ### Version 2.6.3 (March 2026)
 - **Fix**: "Failed to update door" when editing door settings — missing `unlock_requested` and `poll_interval` column migrations in `database_migration.sql` caused the UPDATE query in editdoor.php to fail on upgraded installs

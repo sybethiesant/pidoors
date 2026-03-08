@@ -69,7 +69,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit();
         } catch (PDOException $e) {
             error_log("Update door error: " . $e->getMessage());
-            $error_message = 'Failed to update door.';
+            // Auto-fix missing columns and retry once
+            if (stripos($e->getMessage(), 'Unknown column') !== false) {
+                try {
+                    $pdo_access->exec("ALTER TABLE doors ADD COLUMN IF NOT EXISTS unlock_requested tinyint(1) NOT NULL DEFAULT 0");
+                    $pdo_access->exec("ALTER TABLE doors ADD COLUMN IF NOT EXISTS poll_interval int(11) NOT NULL DEFAULT 3");
+                    $stmt = $pdo_access->prepare("
+                        UPDATE doors SET location = ?, doornum = ?, description = ?,
+                            schedule_id = ?, unlock_duration = ?, poll_interval = ?, reader_type = ?
+                        WHERE name = ?
+                    ");
+                    $stmt->execute([$location, $doornum, $description, $schedule_id, $unlock_duration, $poll_interval, $reader_type, $door_name]);
+                    header("Location: {$config['url']}/doors.php?success=Door updated successfully.");
+                    exit();
+                } catch (PDOException $e2) {
+                    error_log("Update door retry error: " . $e2->getMessage());
+                    $error_message = 'Failed to update door: ' . $e2->getMessage();
+                }
+            } else {
+                $error_message = 'Failed to update door: ' . $e->getMessage();
+            }
         }
     }
 }
