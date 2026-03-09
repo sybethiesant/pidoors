@@ -120,9 +120,10 @@ function secure_session_start($config) {
             $_SESSION['created'] = time();
         }
 
-        // Check session timeout
-        if (isset($_SESSION['last_activity']) &&
-            (time() - $_SESSION['last_activity'] > $config['session_timeout'])) {
+        // Check session timeout (0 = unlimited / no idle timeout)
+        $idle_timeout = (int)($config['session_timeout'] ?? 3600);
+        if ($idle_timeout > 0 && isset($_SESSION['last_activity']) &&
+            (time() - $_SESSION['last_activity'] > $idle_timeout)) {
             session_unset();
             session_destroy();
             session_start();

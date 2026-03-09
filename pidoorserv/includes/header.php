@@ -12,11 +12,76 @@ require_once $config['apppath'] . 'database/db_connection.php';
 // Set timezone
 date_default_timezone_set($config['timezone']);
 
+// Override session_timeout from DB setting (allows 0 = unlimited)
+try {
+    $st_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'session_timeout'");
+    $st_stmt->execute();
+    $db_timeout = $st_stmt->fetchColumn();
+    if ($db_timeout !== false) {
+        $config['session_timeout'] = (int)$db_timeout;
+    }
+} catch (PDOException $e) {
+    // use config.php default
+}
+
 // Start secure session
 secure_session_start($config);
 
 // Generate CSRF token for forms
 $csrf_token = generate_csrf_token();
+
+// Auto-check for updates (for admins, every 6 hours)
+$update_banner = '';
+if (is_logged_in() && is_admin()) {
+    try {
+        $uc_stmt = $pdo_access->query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('github_latest_version', 'github_check_time')");
+        $uc_data = [];
+        while ($uc_row = $uc_stmt->fetch()) { $uc_data[$uc_row['setting_key']] = $uc_row['setting_value']; }
+
+        $uc_check_time = $uc_data['github_check_time'] ?? '';
+        $uc_stale = !$uc_check_time || (time() - strtotime($uc_check_time)) > 21600; // 6 hours
+
+        if ($uc_stale) {
+            // Auto-check GitHub
+            $uc_ch = curl_init('https://api.github.com/repos/sybethiesant/pidoors/releases/latest');
+            curl_setopt_array($uc_ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 5,
+                CURLOPT_HTTPHEADER => ['User-Agent: PiDoors-Update-Check'],
+            ]);
+            $uc_response = curl_exec($uc_ch);
+            $uc_http = curl_getinfo($uc_ch, CURLINFO_HTTP_CODE);
+            curl_close($uc_ch);
+
+            if ($uc_http === 200 && $uc_response) {
+                $uc_json = json_decode($uc_response, true);
+                if (isset($uc_json['tag_name'])) {
+                    $uc_latest = ltrim($uc_json['tag_name'], 'v');
+                    $uc_now = date('Y-m-d H:i:s');
+                    $uc_save = $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+                    $uc_save->execute(['github_latest_version', $uc_latest]);
+                    $uc_save->execute(['github_check_time', $uc_now]);
+                    $uc_data['github_latest_version'] = $uc_latest;
+                }
+            }
+        }
+
+        // Check if update available
+        $uc_server_version = '';
+        $vf = ($config['apppath'] ?? '') . 'VERSION';
+        if (file_exists($vf)) { $uc_server_version = trim(file_get_contents($vf)); }
+        $uc_latest = $uc_data['github_latest_version'] ?? '';
+        if ($uc_latest && $uc_server_version && version_compare($uc_latest, $uc_server_version, '>')) {
+            $update_banner = '<div class="alert alert-warning alert-dismissible mb-0 rounded-0 text-center py-2" role="alert">'
+                . 'A new version of PiDoors is available: <strong>v' . htmlspecialchars($uc_latest) . '</strong> '
+                . '(current: v' . htmlspecialchars($uc_server_version) . ') &mdash; '
+                . '<a href="' . htmlspecialchars($config['url']) . '/update.php" class="alert-link">Go to Updates</a>'
+                . '<button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button></div>';
+        }
+    } catch (PDOException $e) {
+        // ignore — don't break pages for update check failures
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -36,6 +101,7 @@ $csrf_token = generate_csrf_token();
     <link rel="stylesheet" href="<?php echo htmlspecialchars($config['url']); ?>/css/dashboard.css?v=3">
 </head>
 <body>
+    <?php if ($update_banner): echo $update_banner; endif; ?>
     <nav class="navbar navbar-light bg-light">
         <div class="container-fluid">
             <a class="navbar-brand" href="<?php echo htmlspecialchars($config['url']); ?>/">

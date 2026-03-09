@@ -3,6 +3,40 @@
  * Doors Management
  * PiDoors Access Control System
  */
+
+// AJAX endpoint: return door status as JSON (no HTML)
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'door_status') {
+    $config = include(__DIR__ . '/includes/config.php');
+    require_once __DIR__ . '/includes/security.php';
+    require_once $config['apppath'] . 'database/db_connection.php';
+    secure_session_start($config);
+
+    if (!is_logged_in() || !is_admin()) {
+        http_response_code(403);
+        exit();
+    }
+
+    header('Content-Type: application/json');
+
+    $version_file = $config['apppath'] . 'VERSION';
+    $target = file_exists($version_file) ? trim(file_get_contents($version_file)) : '';
+
+    try {
+        $stmt = $pdo_access->query("
+            SELECT d.*, s.name as schedule_name
+            FROM doors d
+            LEFT JOIN access_schedules s ON d.schedule_id = s.id
+            ORDER BY d.name
+        ");
+        $doors = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        $doors = [];
+    }
+
+    echo json_encode(['target_version' => $target, 'doors' => $doors]);
+    exit();
+}
+
 $title = 'Doors';
 require_once './includes/header.php';
 
@@ -156,8 +190,8 @@ try {
 }
 ?>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <div><span class="text-muted"><?php echo count($doors); ?> doors configured</span></div>
+<div class="d-flex justify-content-between align-items-center mb-3" id="doors-header">
+    <div><span class="text-muted" id="doors-count"><?php echo count($doors); ?> doors configured</span></div>
     <div class="d-flex gap-2">
         <?php
         // Check if any online doors are outdated
@@ -186,7 +220,7 @@ try {
     </div>
 </div>
 
-<div class="row">
+<div class="row" id="doors-container">
     <?php foreach ($doors as $door): ?>
         <div class="col-md-6 col-lg-4 mb-4">
             <div class="card shadow-sm h-100">
@@ -406,5 +440,165 @@ try {
     });
 </script>
 <?php endif; ?>
+
+<script>
+(function() {
+    var csrfToken = '<?php echo htmlspecialchars(generate_csrf_token()); ?>';
+    var pollTimer = null;
+
+    function versionCompare(a, b) {
+        var pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+        for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+            var na = pa[i] || 0, nb = pb[i] || 0;
+            if (na < nb) return -1;
+            if (na > nb) return 1;
+        }
+        return 0;
+    }
+
+    function escHtml(s) {
+        if (!s) return '';
+        var d = document.createElement('div');
+        d.appendChild(document.createTextNode(s));
+        return d.innerHTML;
+    }
+
+    function ucfirst(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+
+    function statusBadgeClass(status) {
+        switch (status) {
+            case 'online': return 'success';
+            case 'offline': return 'danger';
+            default: return 'secondary';
+        }
+    }
+
+    function readerLabel(type) {
+        var labels = {wiegand:'Wiegand', osdp:'OSDP', nfc_pn532:'NFC PN532', nfc_mfrc522:'NFC MFRC522'};
+        return labels[type] || type || 'wiegand';
+    }
+
+    function formatDate(str) {
+        if (!str) return '';
+        var d = new Date(str);
+        return d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+    }
+
+    function refreshDoors() {
+        $.getJSON('doors.php?ajax=door_status', function(data) {
+            if (!data.doors) return;
+            var targetVersion = data.target_version || '';
+            var container = $('#doors-container');
+            var hasOutdated = false;
+            var html = '';
+
+            $.each(data.doors, function(i, door) {
+                var status = door.status || 'unknown';
+                var cv = door.controller_version || '';
+                var isOutdated = cv && targetVersion && versionCompare(cv, targetVersion) < 0;
+                if (isOutdated && status === 'online') hasOutdated = true;
+
+                html += '<div class="col-md-6 col-lg-4 mb-4">';
+                html += '<div class="card shadow-sm h-100">';
+
+                // Card header
+                html += '<div class="card-header d-flex justify-content-between align-items-center">';
+                html += '<h5 class="mb-0">' + escHtml(door.name) + '</h5>';
+                html += '<span class="badge bg-' + statusBadgeClass(status) + '">' + ucfirst(status) + '</span>';
+                html += '</div>';
+
+                // Card body
+                html += '<div class="card-body">';
+                html += '<p class="mb-1"><strong>Location:</strong> ' + escHtml(door.location || 'N/A') + '</p>';
+                html += '<p class="mb-1"><strong>Description:</strong> ' + escHtml(door.description || 'N/A') + '</p>';
+                if (door.ip_address) html += '<p class="mb-1"><strong>IP:</strong> ' + escHtml(door.ip_address) + '</p>';
+                if (door.last_seen) html += '<p class="mb-1"><strong>Last Seen:</strong> ' + formatDate(door.last_seen) + '</p>';
+
+                // Lock status
+                html += '<p class="mb-1"><strong>Lock Status:</strong> ';
+                if (door.locked !== null && door.locked !== undefined) {
+                    var locked = parseInt(door.locked);
+                    html += '<span class="badge ' + (locked ? 'bg-success' : 'bg-warning') + '">' + (locked ? 'Locked' : 'Unlocked') + '</span>';
+                } else {
+                    html += '<span class="badge bg-secondary">Unknown</span>';
+                }
+                html += '</p>';
+
+                if (door.schedule_name) html += '<p class="mb-1"><strong>Schedule:</strong> ' + escHtml(door.schedule_name) + '</p>';
+                html += '<p class="mb-1"><strong>Reader:</strong> ' + escHtml(readerLabel(door.reader_type)) + '</p>';
+
+                // Version
+                html += '<p class="mb-0"><strong>Version:</strong> ';
+                if (cv) {
+                    html += escHtml(cv);
+                    if (isOutdated) html += ' <span class="badge bg-warning text-dark">Outdated</span>';
+                } else {
+                    html += '<span class="text-muted">Not reported</span>';
+                }
+
+                // Update status
+                var us = door.update_status || '';
+                if (us) {
+                    var parts = us.split(':', 2);
+                    var usBase = parts[0].trim();
+                    var usDetail = parts.length > 1 ? parts.slice(1).join(':').trim() : '';
+                    var usBadge = usBase === 'success' ? 'success' : usBase === 'failed' ? 'danger' : usBase === 'updating' ? 'info' : 'secondary';
+                    html += ' <span class="badge bg-' + usBadge + '"';
+                    if (usDetail) html += ' title="' + escHtml(usDetail) + '" data-bs-toggle="tooltip"';
+                    html += '>' + ucfirst(escHtml(usBase)) + '</span>';
+                }
+                html += '</p>';
+                html += '</div>';
+
+                // Card footer
+                html += '<div class="card-footer d-flex justify-content-between">';
+                html += '<div>';
+                html += '<a href="editdoor.php?name=' + encodeURIComponent(door.name) + '" class="btn btn-sm btn-outline-primary">Edit</a> ';
+                if (status === 'online') {
+                    html += '<form method="post" class="d-inline" onsubmit="return confirm(\'Unlock this door remotely?\');">';
+                    html += '<input type="hidden" name="csrf_token" value="' + csrfToken + '">';
+                    html += '<input type="hidden" name="action" value="unlock">';
+                    html += '<input type="hidden" name="door" value="' + escHtml(door.name) + '">';
+                    html += '<button type="submit" class="btn btn-sm btn-outline-warning">';
+                    html += '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Unlock</button>';
+                    html += '</form> ';
+                }
+                if (isOutdated && status === 'online' && !parseInt(door.update_requested)) {
+                    html += '<form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="' + csrfToken + '">';
+                    html += '<button type="submit" name="request_update" value="' + escHtml(door.name) + '" class="btn btn-sm btn-outline-warning">Request Update</button></form>';
+                } else if (parseInt(door.update_requested)) {
+                    html += '<span class="badge bg-info">Update Pending</span>';
+                }
+                html += '</div>';
+                html += '<a href="doors.php?delete=' + encodeURIComponent(door.name) + '&token=' + csrfToken + '" class="btn btn-sm btn-outline-danger" onclick="return confirmDelete(\'Delete this door?\');">Delete</a>';
+                html += '</div>';
+
+                html += '</div></div>';
+            });
+
+            if (data.doors.length === 0) {
+                html += '<div class="col-12"><div class="alert alert-info">No doors configured. Click "Add Door" to get started.</div></div>';
+            }
+
+            container.html(html);
+            $('#doors-count').text(data.doors.length + ' doors configured');
+
+            // Re-init tooltips
+            $('[data-bs-toggle="tooltip"]').each(function() { new bootstrap.Tooltip(this); });
+        });
+    }
+
+    pollTimer = setInterval(refreshDoors, 5000);
+
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            clearInterval(pollTimer);
+        } else {
+            refreshDoors();
+            pollTimer = setInterval(refreshDoors, 5000);
+        }
+    });
+})();
+</script>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>

@@ -3,6 +3,35 @@
  * System Updates
  * PiDoors Access Control System
  */
+
+// AJAX endpoint: return controller status as JSON (no HTML)
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'controller_status') {
+    $config = include(__DIR__ . '/includes/config.php');
+    require_once __DIR__ . '/includes/security.php';
+    require_once $config['apppath'] . 'database/db_connection.php';
+    secure_session_start($config);
+
+    if (!is_logged_in() || !is_admin()) {
+        http_response_code(403);
+        exit();
+    }
+
+    header('Content-Type: application/json');
+
+    $version_file = $config['apppath'] . 'VERSION';
+    $target = file_exists($version_file) ? trim(file_get_contents($version_file)) : '';
+
+    try {
+        $stmt = $pdo_access->query("SELECT name, controller_version, update_status, update_status_time, update_requested, status FROM doors ORDER BY name");
+        $doors = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        $doors = [];
+    }
+
+    echo json_encode(['target_version' => $target, 'doors' => $doors]);
+    exit();
+}
+
 $title = 'System Updates';
 require_once './includes/header.php';
 
@@ -63,9 +92,15 @@ $github_check_time = $update_settings['github_check_time'] ?? '';
 // Controllers should match the server version
 $target_controller_version = $current_version !== 'unknown' ? $current_version : '';
 
-// Handle "Check for Updates" button
+// Auto-check GitHub if cache is stale (>1 hour) or on manual button press
+$do_check = false;
 if (isset($_POST['check_updates']) && verify_csrf_token($_POST['csrf_token'] ?? '')) {
-    $github_latest = '';
+    $do_check = true;
+} elseif (!$github_check_time || (time() - strtotime($github_check_time)) > 3600) {
+    $do_check = true;
+}
+
+if ($do_check) {
     $ch = curl_init('https://api.github.com/repos/sybethiesant/pidoors/releases/latest');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -90,12 +125,18 @@ if (isset($_POST['check_updates']) && verify_csrf_token($_POST['csrf_token'] ?? 
                 // ignore
             }
 
-            $success_message = "Update check complete.";
+            if (isset($_POST['check_updates'])) {
+                $success_message = "Update check complete.";
+            }
         } else {
-            $error_message = 'Could not parse GitHub release data.';
+            if (isset($_POST['check_updates'])) {
+                $error_message = 'Could not parse GitHub release data.';
+            }
         }
     } else {
-        $error_message = 'Failed to reach GitHub API. HTTP code: ' . $http_code;
+        if (isset($_POST['check_updates'])) {
+            $error_message = 'Failed to reach GitHub API. HTTP code: ' . $http_code;
+        }
     }
 }
 
@@ -470,7 +511,7 @@ try {
                                     <th>Action</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody id="controller-table-body">
                                 <?php foreach ($doors as $door): ?>
                                     <tr>
                                         <td><?php echo htmlspecialchars($door['name']); ?></td>
@@ -544,6 +585,7 @@ try {
                         </table>
                     </div>
 
+                    <div id="update-all-container">
                     <?php
                     // Check if any online doors are outdated
                     $has_outdated = false;
@@ -562,6 +604,7 @@ try {
                             <button type="submit" name="request_update" value="all" class="btn btn-warning">Update All Controllers</button>
                         </form>
                     <?php endif; ?>
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -581,5 +624,126 @@ try {
         </div>
     </div>
 </div>
+
+<script>
+(function() {
+    var csrfToken = '<?php echo htmlspecialchars(generate_csrf_token()); ?>';
+    var targetVersion = '<?php echo htmlspecialchars($target_controller_version); ?>';
+    var pollTimer = null;
+
+    function versionCompare(a, b) {
+        var pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+        for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+            var na = pa[i] || 0, nb = pb[i] || 0;
+            if (na < nb) return -1;
+            if (na > nb) return 1;
+        }
+        return 0;
+    }
+
+    function statusBadgeClass(base) {
+        switch (base) {
+            case 'success': return 'success';
+            case 'failed': return 'danger';
+            case 'updating': return 'info';
+            default: return 'secondary';
+        }
+    }
+
+    function doorStatusClass(status) {
+        switch (status) {
+            case 'online': return 'success';
+            case 'offline': return 'danger';
+            default: return 'secondary';
+        }
+    }
+
+    function ucfirst(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+    function escHtml(s) {
+        var d = document.createElement('div');
+        d.appendChild(document.createTextNode(s));
+        return d.innerHTML;
+    }
+
+    function refreshControllers() {
+        $.getJSON('update.php?ajax=controller_status', function(data) {
+            var tbody = $('#controller-table-body');
+            if (!tbody.length || !data.doors) return;
+            targetVersion = data.target_version || targetVersion;
+
+            var hasOutdated = false;
+            var rows = '';
+            $.each(data.doors, function(i, door) {
+                var cv = door.controller_version || '';
+                var isOutdated = cv && targetVersion && versionCompare(cv, targetVersion) < 0;
+                var status = door.status || 'unknown';
+                if (isOutdated && status === 'online') hasOutdated = true;
+
+                rows += '<tr>';
+                // Name
+                rows += '<td>' + escHtml(door.name) + '</td>';
+                // Status
+                rows += '<td><span class="badge bg-' + doorStatusClass(status) + '">' + ucfirst(status) + '</span></td>';
+                // Version
+                rows += '<td>' + (cv ? escHtml(cv) : '<span class="text-muted">Not reported</span>');
+                if (isOutdated) rows += ' <span class="badge bg-warning text-dark">Outdated</span>';
+                rows += '</td>';
+                // Update Status
+                var us = door.update_status || '';
+                rows += '<td>';
+                if (us) {
+                    var parts = us.split(':', 2);
+                    var usBase = parts[0].trim();
+                    var usDetail = parts.length > 1 ? parts.slice(1).join(':').trim() : '';
+                    rows += '<span class="badge bg-' + statusBadgeClass(usBase) + '">' + ucfirst(escHtml(usBase)) + '</span>';
+                    if (usDetail) rows += ' <small class="text-muted">' + escHtml(usDetail) + '</small>';
+                    if (door.update_status_time) {
+                        var d = new Date(door.update_status_time);
+                        rows += ' <small class="text-muted">(' + d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) + ')</small>';
+                    }
+                } else {
+                    rows += '<span class="text-muted">-</span>';
+                }
+                rows += '</td>';
+                // Action
+                rows += '<td>';
+                if (door.update_requested == 1) {
+                    rows += '<span class="badge bg-info">Update Pending</span>';
+                } else if (isOutdated && status === 'online') {
+                    rows += '<form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="' + csrfToken + '">';
+                    rows += '<button type="submit" name="request_update" value="' + escHtml(door.name) + '" class="btn btn-sm btn-outline-warning">Request Update</button></form>';
+                } else {
+                    rows += '<span class="text-muted">-</span>';
+                }
+                rows += '</td>';
+                rows += '</tr>';
+            });
+            tbody.html(rows);
+
+            // Update the "Update All" button
+            var container = $('#update-all-container');
+            if (hasOutdated) {
+                container.html('<form method="post" class="mt-2" onsubmit="return confirm(\'Request update for all online controllers?\');"><input type="hidden" name="csrf_token" value="' + csrfToken + '"><button type="submit" name="request_update" value="all" class="btn btn-warning">Update All Controllers</button></form>');
+            } else {
+                container.html('');
+            }
+        });
+    }
+
+    // Poll every 5 seconds
+    pollTimer = setInterval(refreshControllers, 5000);
+
+    // Stop polling when page is hidden, resume when visible
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            clearInterval(pollTimer);
+        } else {
+            refreshControllers();
+            pollTimer = setInterval(refreshControllers, 5000);
+        }
+    });
+})();
+</script>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>

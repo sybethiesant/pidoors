@@ -3,6 +3,63 @@
  * Dashboard - Main Page
  * PiDoors Access Control System
  */
+
+// AJAX endpoint: return dashboard data as JSON (no HTML)
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard') {
+    $config = include(__DIR__ . '/includes/config.php');
+    require_once __DIR__ . '/includes/security.php';
+    require_once $config['apppath'] . 'database/db_connection.php';
+    secure_session_start($config);
+
+    if (!is_logged_in()) {
+        http_response_code(403);
+        exit();
+    }
+
+    header('Content-Type: application/json');
+
+    try {
+        $total_cards = (int)$pdo_access->query("SELECT COUNT(*) FROM cards")->fetchColumn();
+        $active_cards = (int)$pdo_access->query("SELECT COUNT(*) FROM cards WHERE active = 1")->fetchColumn();
+        $total_doors = (int)$pdo_access->query("SELECT COUNT(*) FROM doors")->fetchColumn();
+        $online_doors = (int)$pdo_access->query("SELECT COUNT(*) FROM doors WHERE status = 'online'")->fetchColumn();
+        $today_access = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE()")->fetchColumn();
+        $today_granted = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 1")->fetchColumn();
+        $today_denied = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 0")->fetchColumn();
+
+        $doors = $pdo_access->query("SELECT name, location, status, locked FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
+        $recent = $pdo_access->query("
+            SELECT l.Date, l.Location, l.Granted, l.user_id, c.firstname, c.lastname
+            FROM logs l LEFT JOIN cards c ON l.user_id = c.user_id
+            ORDER BY l.Date DESC LIMIT 10
+        ")->fetchAll(PDO::FETCH_ASSOC);
+
+        $hourly_stmt = $pdo_access->query("
+            SELECT HOUR(Date) as hour, COUNT(*) as count
+            FROM logs WHERE Date >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            GROUP BY HOUR(Date) ORDER BY hour
+        ");
+        $hours = array_fill(0, 24, 0);
+        foreach ($hourly_stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $hours[(int)$row['hour']] = (int)$row['count'];
+        }
+    } catch (PDOException $e) {
+        echo json_encode(['error' => 'Database error']);
+        exit();
+    }
+
+    echo json_encode([
+        'total_cards' => $total_cards, 'active_cards' => $active_cards,
+        'total_doors' => $total_doors, 'online_doors' => $online_doors,
+        'today_access' => $today_access, 'today_granted' => $today_granted,
+        'today_denied' => $today_denied,
+        'doors' => $doors, 'recent_logs' => $recent,
+        'hourly' => array_values($hours)
+    ]);
+    exit();
+}
+
 $title = 'Dashboard';
 require_once './includes/header.php';
 
@@ -85,8 +142,8 @@ try {
                 <div class="d-flex justify-content-between">
                     <div>
                         <h6 class="text-muted mb-1">Total Cards</h6>
-                        <h3 class="mb-0"><?php echo number_format($total_cards); ?></h3>
-                        <small class="text-success"><?php echo number_format($active_cards); ?> active</small>
+                        <h3 class="mb-0" id="stat-total-cards"><?php echo number_format($total_cards); ?></h3>
+                        <small class="text-success" id="stat-active-cards"><?php echo number_format($active_cards); ?> active</small>
                     </div>
                     <div class="align-self-center">
                         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#0d6efd" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
@@ -102,8 +159,8 @@ try {
                 <div class="d-flex justify-content-between">
                     <div>
                         <h6 class="text-muted mb-1">Doors</h6>
-                        <h3 class="mb-0"><?php echo number_format($total_doors); ?></h3>
-                        <small class="text-success"><?php echo number_format($online_doors); ?> online</small>
+                        <h3 class="mb-0" id="stat-total-doors"><?php echo number_format($total_doors); ?></h3>
+                        <small class="text-success" id="stat-online-doors"><?php echo number_format($online_doors); ?> online</small>
                     </div>
                     <div class="align-self-center">
                         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#28a745" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
@@ -119,8 +176,8 @@ try {
                 <div class="d-flex justify-content-between">
                     <div>
                         <h6 class="text-muted mb-1">Today's Access</h6>
-                        <h3 class="mb-0"><?php echo number_format($today_access); ?></h3>
-                        <small class="text-success"><?php echo number_format($today_granted); ?> granted</small>
+                        <h3 class="mb-0" id="stat-today-access"><?php echo number_format($today_access); ?></h3>
+                        <small class="text-success" id="stat-today-granted"><?php echo number_format($today_granted); ?> granted</small>
                     </div>
                     <div class="align-self-center">
                         <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ffc107" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
@@ -136,7 +193,7 @@ try {
                 <div class="d-flex justify-content-between">
                     <div>
                         <h6 class="text-muted mb-1">Denied Today</h6>
-                        <h3 class="mb-0"><?php echo number_format($today_denied); ?></h3>
+                        <h3 class="mb-0" id="stat-today-denied"><?php echo number_format($today_denied); ?></h3>
                         <small class="text-muted">access attempts</small>
                     </div>
                     <div class="align-self-center">
@@ -157,7 +214,7 @@ try {
                 <a href="doors.php" class="btn btn-sm btn-outline-primary">View All</a>
             </div>
             <div class="card-body p-0">
-                <ul class="list-group list-group-flush">
+                <ul class="list-group list-group-flush" id="door-status-list">
                     <?php if (empty($doors)): ?>
                         <li class="list-group-item text-muted">No doors configured</li>
                     <?php else: ?>
@@ -227,7 +284,7 @@ try {
                                 <th>Status</th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody id="recent-logs-body">
                             <?php if (empty($recent_logs)): ?>
                                 <tr><td colspan="4" class="text-center text-muted">No recent access logs</td></tr>
                             <?php else: ?>
@@ -260,47 +317,133 @@ try {
 </div>
 
 <script>
-// Access chart
-document.addEventListener('DOMContentLoaded', function() {
-    const ctx = document.getElementById('accessChart');
-    if (ctx && typeof Chart !== 'undefined') {
-        const hourLabels = [];
-        for (let i = 0; i < 24; i++) {
-            hourLabels.push(i + ':00');
-        }
+(function() {
+    var accessChart = null;
+    var pollTimer = null;
 
-        new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: hourLabels,
-                datasets: [{
-                    label: 'Access Events',
-                    data: <?php echo json_encode(array_values($hours)); ?>,
-                    backgroundColor: 'rgba(13, 110, 253, 0.5)',
-                    borderColor: 'rgba(13, 110, 253, 1)',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: {
-                            stepSize: 1
-                        }
-                    }
+    function escHtml(s) {
+        if (!s) return '';
+        var d = document.createElement('div');
+        d.appendChild(document.createTextNode(s));
+        return d.innerHTML;
+    }
+
+    function formatDate(str) {
+        if (!str) return '';
+        var d = new Date(str);
+        return d.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+    }
+
+    function numberFormat(n) { return n.toLocaleString(); }
+
+    // Initialize chart
+    document.addEventListener('DOMContentLoaded', function() {
+        var ctx = document.getElementById('accessChart');
+        if (ctx && typeof Chart !== 'undefined') {
+            var hourLabels = [];
+            for (var i = 0; i < 24; i++) hourLabels.push(i + ':00');
+
+            accessChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: hourLabels,
+                    datasets: [{
+                        label: 'Access Events',
+                        data: <?php echo json_encode(array_values($hours)); ?>,
+                        backgroundColor: 'rgba(13, 110, 253, 0.5)',
+                        borderColor: 'rgba(13, 110, 253, 1)',
+                        borderWidth: 1
+                    }]
                 },
-                plugins: {
-                    legend: {
-                        display: false
-                    }
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+                    plugins: { legend: { display: false } }
                 }
+            });
+        }
+    });
+
+    function refreshDashboard() {
+        $.getJSON('index.php?ajax=dashboard', function(data) {
+            if (data.error) return;
+
+            // Update stat cards
+            $('#stat-total-cards').text(numberFormat(data.total_cards));
+            $('#stat-active-cards').text(numberFormat(data.active_cards) + ' active');
+            $('#stat-total-doors').text(numberFormat(data.total_doors));
+            $('#stat-online-doors').text(numberFormat(data.online_doors) + ' online');
+            $('#stat-today-access').text(numberFormat(data.today_access));
+            $('#stat-today-granted').text(numberFormat(data.today_granted) + ' granted');
+            $('#stat-today-denied').text(numberFormat(data.today_denied));
+
+            // Update door status panel
+            var doorList = $('#door-status-list');
+            if (doorList.length) {
+                var html = '';
+                if (!data.doors || data.doors.length === 0) {
+                    html = '<li class="list-group-item text-muted">No doors configured</li>';
+                } else {
+                    $.each(data.doors, function(i, door) {
+                        var status = door.status || 'unknown';
+                        var statusClass = status === 'online' ? 'success' : status === 'offline' ? 'danger' : 'secondary';
+                        html += '<li class="list-group-item d-flex justify-content-between align-items-center">';
+                        html += '<div><strong>' + escHtml(door.name) + '</strong><br><small class="text-muted">' + escHtml(door.location || '') + '</small></div>';
+                        html += '<div class="text-end">';
+                        html += '<span class="badge bg-' + statusClass + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
+                        if (door.locked !== null && door.locked !== undefined) {
+                            var locked = parseInt(door.locked);
+                            html += '<br><small class="' + (locked ? 'text-success' : 'text-warning') + '">' + (locked ? 'Locked' : 'Unlocked') + '</small>';
+                        }
+                        html += '</div></li>';
+                    });
+                }
+                doorList.html(html);
+            }
+
+            // Update recent logs
+            var tbody = $('#recent-logs-body');
+            if (tbody.length) {
+                var rows = '';
+                if (!data.recent_logs || data.recent_logs.length === 0) {
+                    rows = '<tr><td colspan="4" class="text-center text-muted">No recent access logs</td></tr>';
+                } else {
+                    $.each(data.recent_logs, function(i, log) {
+                        var name = ((log.firstname || '') + ' ' + (log.lastname || '')).trim();
+                        if (!name) name = 'User #' + log.user_id;
+                        rows += '<tr>';
+                        rows += '<td>' + formatDate(log.Date) + '</td>';
+                        rows += '<td>' + escHtml(name) + '</td>';
+                        rows += '<td>' + escHtml(log.Location) + '</td>';
+                        rows += '<td>' + (parseInt(log.Granted) === 1
+                            ? '<span class="badge bg-success">Granted</span>'
+                            : '<span class="badge bg-danger">Denied</span>') + '</td>';
+                        rows += '</tr>';
+                    });
+                }
+                tbody.html(rows);
+            }
+
+            // Update chart
+            if (accessChart && data.hourly) {
+                accessChart.data.datasets[0].data = data.hourly;
+                accessChart.update();
             }
         });
     }
-});
+
+    pollTimer = setInterval(refreshDashboard, 5000);
+
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            clearInterval(pollTimer);
+        } else {
+            refreshDashboard();
+            pollTimer = setInterval(refreshDashboard, 5000);
+        }
+    });
+})();
 </script>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>

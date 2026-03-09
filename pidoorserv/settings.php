@@ -33,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'max_unlock_duration' => validate_int($_POST['max_unlock_duration'] ?? 3600, 60, 86400) ?: 3600,
             'default_unlock_duration' => validate_int($_POST['default_unlock_duration'] ?? 5, 1, 86400) ?: 5,
             'default_daily_scan_limit' => validate_int($_POST['default_daily_scan_limit'] ?? 0, 0, 999),
-            'session_timeout' => validate_int($_POST['session_timeout'] ?? 3600, 300, 86400) ?: 3600,
+            'session_timeout' => (($_POST['session_timeout'] ?? '') === '0') ? 0 : (validate_int($_POST['session_timeout'] ?? 3600, 300, 86400) ?: 3600),
             'max_login_attempts' => validate_int($_POST['max_login_attempts'] ?? 5, 3, 20) ?: 5,
             'lockout_duration' => validate_int($_POST['lockout_duration'] ?? 900, 60, 86400) ?: 900,
             'heartbeat_interval' => validate_int($_POST['heartbeat_interval'] ?? 60, 30, 600) ?: 60,
@@ -167,10 +167,10 @@ $timezones = DateTimeZone::listIdentifiers();
                 <div class="card-body">
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label for="session_timeout" class="form-label">Session Timeout (seconds)</label>
+                            <label for="session_timeout" class="form-label">Idle Timeout (seconds)</label>
                             <input type="number" class="form-control" id="session_timeout" name="session_timeout"
-                                   min="300" max="86400" value="<?php echo htmlspecialchars($settings['session_timeout']); ?>">
-                            <div class="form-text">Auto-logout after inactivity (5 min - 24 hours).</div>
+                                   min="0" max="86400" value="<?php echo htmlspecialchars($settings['session_timeout']); ?>">
+                            <div class="form-text">Auto-logout after inactivity. 0 = no idle timeout. (300-86400, or 0 for unlimited)</div>
                         </div>
                         <div class="col-md-6 mb-3">
                             <label for="max_login_attempts" class="form-label">Max Login Attempts</label>
