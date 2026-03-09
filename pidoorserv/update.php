@@ -99,6 +99,26 @@ if (isset($_POST['check_updates']) && verify_csrf_token($_POST['csrf_token'] ?? 
     }
 }
 
+// Handle "Request Controller Update" buttons
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['request_update'])) {
+    if (verify_csrf_token($_POST['csrf_token'] ?? '')) {
+        try {
+            if ($_POST['request_update'] === 'all') {
+                $pdo_access->exec("UPDATE doors SET update_requested = 1 WHERE status = 'online'");
+                $success_message = 'Update requested for all online controllers.';
+            } else {
+                $door_to_update = sanitize_string($_POST['request_update']);
+                $stmt = $pdo_access->prepare("UPDATE doors SET update_requested = 1 WHERE name = ?");
+                $stmt->execute([$door_to_update]);
+                $success_message = 'Update requested for ' . htmlspecialchars($door_to_update) . '.';
+            }
+        } catch (PDOException $e) {
+            error_log("Request update error: " . $e->getMessage());
+            $error_message = 'Failed to request controller update.';
+        }
+    }
+}
+
 // Handle "Update Server" button
 if (isset($_POST['update_server']) && verify_csrf_token($_POST['csrf_token'] ?? '')) {
     // Determine which version to download
@@ -364,7 +384,7 @@ if ($github_latest && $current_version !== 'unknown' && version_compare($github_
 
 // Fetch door controller versions
 try {
-    $doors_stmt = $pdo_access->query("SELECT name, controller_version, update_status, update_status_time, status FROM doors ORDER BY name");
+    $doors_stmt = $pdo_access->query("SELECT name, controller_version, update_status, update_status_time, update_requested, status FROM doors ORDER BY name");
     $doors = $doors_stmt->fetchAll();
 } catch (PDOException $e) {
     $doors = [];
@@ -447,6 +467,7 @@ try {
                                     <th>Status</th>
                                     <th>Version</th>
                                     <th>Update Status</th>
+                                    <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -501,11 +522,46 @@ try {
                                             }
                                             ?>
                                         </td>
+                                        <td>
+                                            <?php
+                                            $cv = $door['controller_version'] ?? '';
+                                            $is_outdated = $cv && $target_controller_version && version_compare($cv, $target_controller_version, '<');
+                                            if ($door['update_requested']):
+                                            ?>
+                                                <span class="badge bg-info">Update Pending</span>
+                                            <?php elseif ($is_outdated && $door['status'] === 'online'): ?>
+                                                <form method="post" class="d-inline">
+                                                    <?php echo csrf_field(); ?>
+                                                    <button type="submit" name="request_update" value="<?php echo htmlspecialchars($door['name']); ?>" class="btn btn-sm btn-outline-warning">Request Update</button>
+                                                </form>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
                     </div>
+
+                    <?php
+                    // Check if any online doors are outdated
+                    $has_outdated = false;
+                    if ($target_controller_version) {
+                        foreach ($doors as $d) {
+                            $cv = $d['controller_version'] ?? '';
+                            if ($d['status'] === 'online' && $cv && version_compare($cv, $target_controller_version, '<')) {
+                                $has_outdated = true;
+                                break;
+                            }
+                        }
+                    }
+                    if ($has_outdated): ?>
+                        <form method="post" class="mt-2" onsubmit="return confirm('Request update for all online controllers?');">
+                            <?php echo csrf_field(); ?>
+                            <button type="submit" name="request_update" value="all" class="btn btn-warning">Update All Controllers</button>
+                        </form>
+                    <?php endif; ?>
                 <?php endif; ?>
             </div>
         </div>
@@ -520,7 +576,7 @@ try {
                 <p>Click "Check for Updates" to query GitHub for the latest release. If a newer version is available, click "Update Server" to download and install the new web interface files. Your <code>config.php</code> is preserved.</p>
 
                 <h6>Controller Updates</h6>
-                <p>Controllers are expected to match the server version. After updating the server, use the "Request Update" button on the <a href="doors.php">Doors</a> page. On the next heartbeat (every 60 seconds), the controller will download and install the update, then restart itself.</p>
+                <p>Controllers are expected to match the server version. After updating the server, use the "Request Update" button above (or on the <a href="doors.php">Doors</a> page). On the next heartbeat (every 60 seconds), the controller will download and install the update, then restart itself.</p>
             </div>
         </div>
     </div>
