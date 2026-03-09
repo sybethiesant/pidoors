@@ -15,7 +15,7 @@ set -euo pipefail
 ZONE="${1:-}"
 INSTALL_DIR="/opt/pidoors"
 REPO="sybethiesant/pidoors"
-TMPDIR=""
+TMPDIR="${2:-}"  # May be passed by self-update re-exec
 
 log() {
     echo "[pidoors-update] $1"
@@ -77,38 +77,47 @@ fi
 
 log "Starting update for zone: $ZONE"
 
-# Fetch latest release tag from GitHub
-log "Checking latest release..."
-LATEST_TAG=$(curl -sf "https://api.github.com/repos/$REPO/releases/latest" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || {
-    fail "Could not reach GitHub API. Check internet connection."
-}
+# If TMPDIR was passed (from self-update re-exec), reuse the already-downloaded release
+if [ -n "$TMPDIR" ] && [ -d "$TMPDIR" ]; then
+    log "Reusing pre-downloaded release from $TMPDIR"
+    EXTRACTED=$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d | head -1)
+    if [ -z "$EXTRACTED" ]; then
+        fail "Could not find extracted directory in pre-downloaded temp dir."
+    fi
+else
+    # Fetch latest release tag from GitHub
+    log "Checking latest release..."
+    LATEST_TAG=$(curl -sf "https://api.github.com/repos/$REPO/releases/latest" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || {
+        fail "Could not reach GitHub API. Check internet connection."
+    }
 
-LATEST_VERSION="${LATEST_TAG#v}"
-log "Latest version: $LATEST_VERSION"
+    LATEST_VERSION="${LATEST_TAG#v}"
+    log "Latest version: $LATEST_VERSION"
 
-# Download tarball
-TMPDIR=$(mktemp -d /tmp/pidoors-update-XXX)
-TARBALL="$TMPDIR/release.tar.gz"
-log "Downloading release tarball..."
-curl -sfL "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
-curl -sfL "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
-    fail "Failed to download release $LATEST_TAG."
-}
+    # Download tarball
+    TMPDIR=$(mktemp -d /tmp/pidoors-update-XXX)
+    TARBALL="$TMPDIR/release.tar.gz"
+    log "Downloading release tarball..."
+    curl -sfL "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
+    curl -sfL "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
+        fail "Failed to download release $LATEST_TAG."
+    }
 
-if [ ! -s "$TARBALL" ]; then
-    fail "Downloaded tarball is empty."
-fi
+    if [ ! -s "$TARBALL" ]; then
+        fail "Downloaded tarball is empty."
+    fi
 
-# Extract
-log "Extracting..."
-tar xzf "$TARBALL" -C "$TMPDIR" || {
-    fail "Failed to extract tarball."
-}
+    # Extract
+    log "Extracting..."
+    tar xzf "$TARBALL" -C "$TMPDIR" || {
+        fail "Failed to extract tarball."
+    }
 
-EXTRACTED=$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d | head -1)
-if [ -z "$EXTRACTED" ]; then
-    fail "Could not find extracted directory."
+    EXTRACTED=$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d | head -1)
+    if [ -z "$EXTRACTED" ]; then
+        fail "Could not find extracted directory."
+    fi
 fi
 
 # Pre-flight checks
@@ -118,6 +127,17 @@ SRC_DIR="$EXTRACTED/pidoors"
 [ -f "$EXTRACTED/VERSION" ] || fail "Release missing VERSION file."
 
 log "Pre-flight checks passed."
+
+# --- Self-update: replace this script with the new version FIRST ---
+DOCKER_UPDATE_SRC="$EXTRACTED/docker/controller-update.sh"
+if [ -f "$DOCKER_UPDATE_SRC" ]; then
+    if ! cmp -s "$DOCKER_UPDATE_SRC" "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null; then
+        log "Update script has changed — self-updating and re-executing..."
+        cp "$DOCKER_UPDATE_SRC" "$INSTALL_DIR/pidoors-update.sh"
+        chmod +x "$INSTALL_DIR/pidoors-update.sh"
+        exec "$INSTALL_DIR/pidoors-update.sh" "$ZONE" "$TMPDIR"
+    fi
+fi
 
 # Update files
 COPIED=0
