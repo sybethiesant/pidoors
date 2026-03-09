@@ -46,6 +46,18 @@ services:
     networks:
       - pidoors-network
 
+  controller:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.controller
+    container_name: pidoors-controller
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - pidoors-network
+
 volumes:
   db_data:
   app_data:

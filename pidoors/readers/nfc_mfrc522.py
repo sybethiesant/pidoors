@@ -336,8 +336,8 @@ class MFRC522Reader(BaseReader):
                 uid = self._read_card()
                 if uid:
                     self._handle_card(uid)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"MFRC522 poll error: {e}")
 
             time.sleep(self.poll_interval)
 

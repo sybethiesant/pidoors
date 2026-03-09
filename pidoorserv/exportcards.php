@@ -5,7 +5,7 @@
  */
 require_once './includes/header.php';
 
-require_login($config);
+require_admin($config);
 
 try {
     $stmt = $pdo_access->query("

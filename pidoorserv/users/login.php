@@ -40,11 +40,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error_message)) {
         } else {
             try {
                 // Support login by username or email
-                $stmt = $pdo->prepare("SELECT id, user_name, user_email, user_pass, admin FROM users WHERE user_email = ? OR user_name = ?");
+                $stmt = $pdo->prepare("SELECT id, user_name, user_email, user_pass, admin, active FROM users WHERE user_email = ? OR user_name = ?");
                 $stmt->execute([$login, $login]);
                 $user = $stmt->fetch();
 
-                if ($user) {
+                if ($user && !$user['active']) {
+                    $error_message = 'This account has been deactivated. Contact an administrator.';
+                } elseif ($user) {
                     $password_valid = false;
                     $needs_upgrade = false;
 

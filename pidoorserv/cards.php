@@ -6,8 +6,8 @@
 $title = 'Cards';
 require_once './includes/header.php';
 
-// Require login
-require_login($config);
+// Require admin
+require_admin($config);
 
 $error_message = '';
 $show_modal = false;

@@ -1,0 +1,33 @@
+FROM python:3.13-slim-trixie
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# pymysql is required; pyserial/smbus2 are optional (OSDP/NFC readers)
+# spidev requires gcc + SPI headers — skip in Docker (hardware-only)
+RUN pip install --no-cache-dir pymysql pyserial smbus2
+
+# Copy controller source
+COPY pidoors/ /opt/pidoors/
+COPY VERSION /opt/pidoors/VERSION
+
+# Copy Docker mock/wrapper files
+COPY docker/mock_gpio.py /opt/pidoors/mock_gpio.py
+COPY docker/controller-wrapper.py /opt/pidoors/controller-wrapper.py
+COPY docker/controller-entrypoint.sh /entrypoint.sh
+
+# Docker-compatible update script (replaces the real pidoors-update.sh)
+COPY docker/controller-update.sh /opt/pidoors/pidoors-update.sh
+
+# Fake sudo — pidoors.py calls `sudo pidoors-update.sh`, but we're already root
+RUN printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/sudo && chmod +x /usr/local/bin/sudo
+
+# Create required directories and set permissions
+RUN mkdir -p /opt/pidoors/conf /opt/pidoors/cache \
+    && chmod +x /entrypoint.sh /opt/pidoors/pidoors-update.sh
+
+ENV PIDOORS_DIR=/opt/pidoors
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python3", "/opt/pidoors/controller-wrapper.py"]

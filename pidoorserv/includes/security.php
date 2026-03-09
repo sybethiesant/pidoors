@@ -32,17 +32,6 @@ function csrf_field() {
 }
 
 /**
- * Check CSRF token from POST request
- */
-function check_csrf() {
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
-            die('Invalid security token. Please refresh the page and try again.');
-        }
-    }
-}
-
-/**
  * Sanitize string input
  */
 function sanitize_string($input) {
@@ -108,22 +97,19 @@ function verify_password($password, $hash) {
 }
 
 /**
- * Check if password needs rehashing (upgrade from MD5)
- */
-function password_needs_upgrade($hash) {
-    // MD5 hashes are 32 hex characters
-    if (strlen($hash) === 32 && ctype_xdigit($hash)) {
-        return true;
-    }
-    return password_needs_rehash($hash, PASSWORD_BCRYPT, ['cost' => 12]);
-}
-
-/**
  * Regenerate session ID for security
  */
 function secure_session_start($config) {
     if (session_status() === PHP_SESSION_NONE) {
         session_name($config['session_name']);
+        $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+        session_set_cookie_params([
+            'lifetime' => 0,
+            'path'     => '/',
+            'secure'   => $secure,
+            'httponly'  => true,
+            'samesite'  => 'Lax',
+        ]);
         session_start();
 
         // Regenerate session ID periodically

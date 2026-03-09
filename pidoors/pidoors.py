@@ -1247,7 +1247,7 @@ def check_schedule(schedule_id, now):
 
     with cache_lock:
         schedules = local_cache.get('schedules', {})
-        schedule = schedules.get(schedule_id)
+        schedule = schedules.get(str(schedule_id)) or schedules.get(schedule_id)
         # Make a copy to avoid holding the lock during processing
         if schedule:
             schedule = dict(schedule)
@@ -1315,8 +1315,19 @@ def is_holiday_denied(now):
     today = now.strftime('%Y-%m-%d')
 
     for holiday in holidays:
-        if holiday.get('date') == today and holiday.get('access_denied'):
+        if not holiday.get('access_denied'):
+            continue
+        if holiday.get('date') == today:
             return True
+        # Check recurring holidays by month/day
+        if holiday.get('recurring'):
+            h_date = holiday.get('date', '')
+            try:
+                h_month_day = h_date[5:]  # "MM-DD"
+                if h_month_day == now.strftime('%m-%d'):
+                    return True
+            except (IndexError, TypeError):
+                pass
 
     return False
 
@@ -1628,7 +1639,8 @@ def command_poll_loop():
             if db is None:
                 db = get_db_connection(timeout=5)
                 if db is None:
-                    return
+                    time.sleep(DB_RETRY_INTERVAL)
+                    continue
                 debug("Command poll: connected to database")
 
             cursor = db.cursor(pymysql.cursors.DictCursor)

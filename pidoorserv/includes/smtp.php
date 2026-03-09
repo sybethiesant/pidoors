@@ -38,7 +38,7 @@ function smtp_send($to, $subject, $html_body, $smtp) {
         $conn = @stream_socket_client(
             "ssl://{$host}:{$port}", $errno, $errstr, $timeout,
             STREAM_CLIENT_CONNECT,
-            stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]])
+            stream_context_create(['ssl' => ['verify_peer' => ($config['smtp_verify_tls'] ?? true), 'verify_peer_name' => ($config['smtp_verify_tls'] ?? true)]])
         );
     } else {
         $conn = @stream_socket_client("tcp://{$host}:{$port}", $errno, $errstr, $timeout);

@@ -5,7 +5,7 @@
  */
 require_once './includes/header.php';
 
-require_login($config);
+require_admin($config);
 
 // Filter parameters (same as logs.php)
 $filter_door = sanitize_string($_GET['door'] ?? '');

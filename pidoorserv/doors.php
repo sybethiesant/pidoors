@@ -6,7 +6,7 @@
 $title = 'Doors';
 require_once './includes/header.php';
 
-require_login($config);
+require_admin($config);
 
 $error_message = '';
 $show_modal = false;
@@ -100,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['request_update']) &&
     } else {
         $name = sanitize_string($_POST['name'] ?? '');
         $location = sanitize_string($_POST['location'] ?? '');
-        $doornum = sanitize_string($_POST['doornum'] ?? '');
+        $doornum = trim($_POST['doornum'] ?? '') !== '' ? validate_int($_POST['doornum'] ?? '') : null;
         $description = sanitize_string($_POST['description'] ?? '');
         $schedule_id = validate_int($_POST['schedule_id'] ?? 0) ?: null;
         $unlock_duration = validate_int($_POST['unlock_duration'] ?? 5, 1, $max_unlock_duration) ?: 5;

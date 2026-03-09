@@ -284,8 +284,8 @@ class PN532Reader(BaseReader):
                 card_uid = self._read_passive_target()
                 if card_uid:
                     self._handle_card(card_uid)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"PN532 poll error: {e}")
 
             time.sleep(self.poll_interval)
 

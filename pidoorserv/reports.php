@@ -6,7 +6,7 @@
 $title = 'Reports';
 require_once './includes/header.php';
 
-require_login($config);
+require_admin($config);
 
 // Report parameters
 $report_type = sanitize_string($_GET['type'] ?? 'daily');

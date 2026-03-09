@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/VERSION" ]; then
     VERSION=$(cat "$SCRIPT_DIR/VERSION" | tr -d '[:space:]')
 else
-    VERSION="2.5.0"
+    VERSION="2.6.5"
 fi
 
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
@@ -53,7 +53,7 @@ prompt() {
             [ -z "$value" ] && echo -e "  ${RED}This field is required.${NC}"
         done
     fi
-    eval "$var_name='$value'"
+    printf -v "$var_name" '%s' "$value"
 }
 
 prompt_secret() {
@@ -64,7 +64,7 @@ prompt_secret() {
         echo
         [ -z "$value" ] && echo -e "  ${RED}This field is required.${NC}"
     done
-    eval "$var_name='$value'"
+    printf -v "$var_name" '%s' "$value"
 }
 
 # ──────────────────────────────────────────────
@@ -377,7 +377,8 @@ EOF
     # Configure PHP
     if [ -f "$WEB_ROOT/includes/config.php.example" ]; then
         cp "$WEB_ROOT/includes/config.php.example" "$WEB_ROOT/includes/config.php"
-        sed -i "s/'sqlpass' => ''/'sqlpass' => '$DB_PASS'/g" "$WEB_ROOT/includes/config.php"
+        ESCAPED_DB_PASS=$(printf '%s\n' "$DB_PASS" | sed 's/[&/\]/\\&/g; s/'"'"'/\\'"'"'/g')
+        sed -i "s/'sqlpass' => ''/'sqlpass' => '$ESCAPED_DB_PASS'/g" "$WEB_ROOT/includes/config.php"
         SERVER_IP=$(hostname -I | awk '{print $1}')
         sed -i "s|'url' => 'http://localhost'|'url' => 'http://$SERVER_IP'|g" "$WEB_ROOT/includes/config.php"
         chmod 640 "$WEB_ROOT/includes/config.php"
@@ -409,13 +410,16 @@ EOF
     prompt ADMIN_EMAIL "Admin email"
     prompt_secret ADMIN_PASS "Admin password"
 
-    HASHED_PASS=$(printf '%s' "$ADMIN_PASS" | php -r 'echo password_hash(file_get_contents("php://stdin"), PASSWORD_BCRYPT, ["cost" => 12]);')
-
-    MYSQL_PWD="$DB_PASS" mysql -u pidoors users <<EOF
-INSERT INTO users (user_name, user_email, user_pass, admin, active)
-VALUES ('Admin', '$ADMIN_EMAIL', '$HASHED_PASS', 1, 1)
-ON DUPLICATE KEY UPDATE user_pass='$HASHED_PASS';
-EOF
+    php -r '
+        $email = $argv[1];
+        $pass  = $argv[2];
+        $dbpass = $argv[3];
+        $hash  = password_hash($pass, PASSWORD_BCRYPT, ["cost" => 12]);
+        $pdo   = new PDO("mysql:host=localhost;dbname=users", "pidoors", $dbpass);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $stmt  = $pdo->prepare("INSERT INTO users (user_name, user_email, user_pass, admin, active) VALUES (\"Admin\", ?, ?, 1, 1) ON DUPLICATE KEY UPDATE user_pass=VALUES(user_pass)");
+        $stmt->execute([$email, $hash]);
+    ' "$ADMIN_EMAIL" "$ADMIN_PASS" "$DB_PASS"
     ok "Admin user created: $ADMIN_EMAIL"
 
     # ── Example data ──
@@ -712,6 +716,12 @@ WorkingDirectory=/run/pidoors
 ExecStart=/opt/pidoors/venv/bin/python3 /opt/pidoors/pidoors.py
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pidoors/cache /opt/pidoors/conf
 SupplementaryGroups=gpio
 
 [Install]

@@ -19,7 +19,7 @@ StandardError=journal
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/pidoors/cache
+ReadWritePaths=/opt/pidoors/cache /opt/pidoors/conf
 
 # Allow GPIO access
 SupplementaryGroups=gpio

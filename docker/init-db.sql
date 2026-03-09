@@ -331,7 +331,7 @@ INSERT IGNORE INTO `doors` (`name`, `location`, `doornum`, `description`) VALUES
 -- EXAMPLE DATA
 -- ========================================
 
--- Example user (password: password123)
+-- Example user (password: PiDoors2024!)
 USE `users`;
 INSERT IGNORE INTO `users` (`user_name`, `user_email`, `user_pass`, `first_name`, `last_name`, `department`, `company`, `job_title`, `admin`, `active`)
 VALUES ('jsmith', 'jsmith@example.com', '$2y$12$mBbwG6jxtJetQWLIQqhBfO9q34t57WdhpDmmWM7eEZkFjLJ3/e9jm', 'John', 'Smith', 'Engineering', 'Acme Corp', 'Engineer', 0, 1);

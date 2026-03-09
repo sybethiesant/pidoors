@@ -596,4 +596,38 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- --------------------------------------------------------
+-- v2.6.3 - Remote unlock & poll interval columns
+-- --------------------------------------------------------
+
+-- Add unlock_requested column to doors (for remote unlock from web UI)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'unlock_requested');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `unlock_requested` tinyint(1) NOT NULL DEFAULT 0 AFTER `update_status_time`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add poll_interval column to doors (configurable command poll interval)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'poll_interval');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `poll_interval` int(11) NOT NULL DEFAULT 3 AFTER `unlock_requested`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- --------------------------------------------------------
+-- Notification log table for deduplication
+-- --------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `notification_log` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `event_type` varchar(50) NOT NULL,
+  `event_key` varchar(100) NOT NULL,
+  `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_event_lookup` (`event_type`, `event_key`, `sent_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
+('smtp_from', '', 'SMTP from email address for notifications');
+
 COMMIT;

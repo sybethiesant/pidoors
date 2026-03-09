@@ -1,0 +1,8 @@
+.git/
+__pycache__/
+pidoorspcb/
+*.pyc
+*.pyo
+.remote
+*.log
+.DS_Store

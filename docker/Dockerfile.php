@@ -17,8 +17,8 @@ RUN echo "output_buffering = 4096" > /usr/local/etc/php/conf.d/output-buffering.
 # Copy application files
 COPY pidoorserv/ /var/www/pidoors/
 
-# Remove any shipped config.php (use example + entrypoint to configure)
-RUN rm -f /var/www/pidoors/includes/config.php
+# Remove any shipped config.php and credential files
+RUN rm -f /var/www/pidoors/includes/config.php /var/www/pidoors/.remote
 
 # Copy the entrypoint script
 COPY docker/entrypoint.sh /entrypoint.sh

@@ -6,7 +6,7 @@
 $title = 'Access Groups';
 require_once './includes/header.php';
 
-require_login($config);
+require_admin($config);
 
 // Handle delete
 if (isset($_GET['delete']) && isset($_GET['token'])) {

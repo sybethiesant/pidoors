@@ -251,7 +251,7 @@ class OSDPReader(BaseReader):
                     self._handle_response(response)
 
             except Exception as e:
-                # Don't stop on individual errors
+                print(f"OSDP poll error: {e}")
                 pass
 
             time.sleep(self.poll_interval)

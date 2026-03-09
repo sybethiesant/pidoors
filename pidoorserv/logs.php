@@ -6,7 +6,7 @@
 $title = 'Access Logs';
 require_once './includes/header.php';
 
-require_login($config);
+require_admin($config);
 
 // Filter parameters
 $filter_door = sanitize_string($_GET['door'] ?? '');
