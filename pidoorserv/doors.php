@@ -588,14 +588,14 @@ try {
         });
     }
 
-    pollTimer = setInterval(refreshDoors, 5000);
+    pollTimer = setInterval(refreshDoors, 2000);
 
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
             clearInterval(pollTimer);
         } else {
             refreshDoors();
-            pollTimer = setInterval(refreshDoors, 5000);
+            pollTimer = setInterval(refreshDoors, 2000);
         }
     });
 })();

@@ -732,7 +732,7 @@ try {
     }
 
     // Poll every 5 seconds
-    pollTimer = setInterval(refreshControllers, 5000);
+    pollTimer = setInterval(refreshControllers, 2000);
 
     // Stop polling when page is hidden, resume when visible
     document.addEventListener('visibilitychange', function() {
@@ -740,7 +740,7 @@ try {
             clearInterval(pollTimer);
         } else {
             refreshControllers();
-            pollTimer = setInterval(refreshControllers, 5000);
+            pollTimer = setInterval(refreshControllers, 2000);
         }
     });
 })();

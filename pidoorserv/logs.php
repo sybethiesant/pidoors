@@ -287,14 +287,14 @@ try {
         });
     }
 
-    pollTimer = setInterval(refreshLogs, 5000);
+    pollTimer = setInterval(refreshLogs, 2000);
 
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
             clearInterval(pollTimer);
         } else {
             refreshLogs();
-            pollTimer = setInterval(refreshLogs, 5000);
+            pollTimer = setInterval(refreshLogs, 2000);
         }
     });
 })();

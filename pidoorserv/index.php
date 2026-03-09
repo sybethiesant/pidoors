@@ -67,7 +67,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard') {
         $today_granted = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 1")->fetchColumn();
         $today_denied = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 0")->fetchColumn();
 
-        $doors = $pdo_access->query("SELECT name, location, status, locked FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+        $doors = $pdo_access->query("SELECT name, location, status, locked, unlock_requested FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
         $recent = $pdo_access->query("
             SELECT l.Date, l.Location, l.Granted, l.user_id, c.firstname, c.lastname
@@ -259,37 +259,31 @@ try {
                         <li class="list-group-item text-muted">No doors configured</li>
                     <?php else: ?>
                         <?php foreach ($doors as $door): ?>
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
+                            <?php
+                            $status = $door['status'] ?? 'unknown';
+                            $statusClass = match($status) {
+                                'online' => 'success',
+                                'offline' => 'danger',
+                                default => 'secondary'
+                            };
+                            ?>
+                            <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-1">
+                                <div class="me-auto">
                                     <strong><?php echo htmlspecialchars($door['name']); ?></strong>
-                                    <br>
-                                    <small class="text-muted"><?php echo htmlspecialchars($door['location'] ?? ''); ?></small>
+                                    <?php if ($door['location'] ?? ''): ?>
+                                        <small class="text-muted ms-1"><?php echo htmlspecialchars($door['location']); ?></small>
+                                    <?php endif; ?>
                                 </div>
-                                <div class="d-flex align-items-center gap-2">
-                                    <?php if (($door['status'] ?? '') === 'online' && is_admin()): ?>
-                                        <button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="<?php echo htmlspecialchars($door['name']); ?>" title="Remote Unlock">
+                                <div class="d-flex align-items-center gap-1 flex-wrap">
+                                    <?php if (isset($door['locked'])): ?>
+                                        <span class="badge lock-badge <?php echo $door['locked'] ? 'bg-success' : 'bg-warning text-dark'; ?>"><?php echo $door['locked'] ? 'Locked' : 'Unlocked'; ?></span>
+                                    <?php endif; ?>
+                                    <span class="badge bg-<?php echo $statusClass; ?>"><?php echo ucfirst($status); ?></span>
+                                    <?php if ($status === 'online' && is_admin()): ?>
+                                        <button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="<?php echo htmlspecialchars($door['name']); ?>" title="Unlock">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
                                         </button>
                                     <?php endif; ?>
-                                    <div class="text-end">
-                                        <?php
-                                        $status = $door['status'] ?? 'unknown';
-                                        $statusClass = match($status) {
-                                            'online' => 'success',
-                                            'offline' => 'danger',
-                                            default => 'secondary'
-                                        };
-                                        ?>
-                                        <span class="badge bg-<?php echo $statusClass; ?>">
-                                            <?php echo ucfirst($status); ?>
-                                        </span>
-                                        <?php if (isset($door['locked'])): ?>
-                                            <br>
-                                            <small class="<?php echo $door['locked'] ? 'text-success' : 'text-warning'; ?>">
-                                                <?php echo $door['locked'] ? 'Locked' : 'Unlocked'; ?>
-                                            </small>
-                                        <?php endif; ?>
-                                    </div>
                                 </div>
                             </li>
                         <?php endforeach; ?>
@@ -438,19 +432,20 @@ try {
                     $.each(data.doors, function(i, door) {
                         var status = door.status || 'unknown';
                         var statusClass = status === 'online' ? 'success' : status === 'offline' ? 'danger' : 'secondary';
-                        html += '<li class="list-group-item d-flex justify-content-between align-items-center">';
-                        html += '<div><strong>' + escHtml(door.name) + '</strong><br><small class="text-muted">' + escHtml(door.location || '') + '</small></div>';
-                        html += '<div class="d-flex align-items-center gap-2">';
-                        if (status === 'online' && isAdmin) {
-                            html += '<button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="' + escHtml(door.name) + '" title="Remote Unlock">' + unlockSvg + '</button>';
-                        }
-                        html += '<div class="text-end">';
-                        html += '<span class="badge bg-' + statusClass + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
+                        html += '<li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-1">';
+                        html += '<div class="me-auto"><strong>' + escHtml(door.name) + '</strong>';
+                        if (door.location) html += ' <small class="text-muted ms-1">' + escHtml(door.location) + '</small>';
+                        html += '</div>';
+                        html += '<div class="d-flex align-items-center gap-1 flex-wrap">';
                         if (door.locked !== null && door.locked !== undefined) {
                             var locked = parseInt(door.locked);
-                            html += '<br><small class="' + (locked ? 'text-success' : 'text-warning') + '">' + (locked ? 'Locked' : 'Unlocked') + '</small>';
+                            html += '<span class="badge lock-badge ' + (locked ? 'bg-success' : 'bg-warning text-dark') + '">' + (locked ? 'Locked' : 'Unlocked') + '</span>';
                         }
-                        html += '</div></div></li>';
+                        html += '<span class="badge bg-' + statusClass + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
+                        if (status === 'online' && isAdmin) {
+                            html += '<button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="' + escHtml(door.name) + '" title="Unlock">' + unlockSvg + '</button>';
+                        }
+                        html += '</div></li>';
                     });
                 }
                 doorList.html(html);
@@ -501,6 +496,12 @@ try {
             dataType: 'json',
             success: function(res) {
                 if (res.ok) {
+                    // Immediately show Unlocked badge as visual feedback
+                    var row = btn.closest('li');
+                    var lockBadge = row.find('.lock-badge');
+                    if (lockBadge.length) {
+                        lockBadge.removeClass('bg-success').addClass('bg-warning text-dark').text('Unlocked');
+                    }
                     btn.removeClass('btn-outline-warning').addClass('btn-warning');
                     setTimeout(function() {
                         btn.removeClass('btn-warning').addClass('btn-outline-warning').prop('disabled', false);
@@ -514,14 +515,14 @@ try {
         });
     });
 
-    pollTimer = setInterval(refreshDashboard, 5000);
+    pollTimer = setInterval(refreshDashboard, 2000);
 
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
             clearInterval(pollTimer);
         } else {
             refreshDashboard();
-            pollTimer = setInterval(refreshDashboard, 5000);
+            pollTimer = setInterval(refreshDashboard, 2000);
         }
     });
 })();
