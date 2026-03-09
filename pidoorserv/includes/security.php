@@ -121,7 +121,17 @@ function secure_session_start($config) {
         }
 
         // Check session timeout (0 = unlimited / no idle timeout)
+        // Load from DB if available (overrides config.php default)
         $idle_timeout = (int)($config['session_timeout'] ?? 3600);
+        try {
+            global $pdo_access;
+            if (isset($pdo_access)) {
+                $t_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'session_timeout'");
+                $t_stmt->execute();
+                $t_val = $t_stmt->fetchColumn();
+                if ($t_val !== false) $idle_timeout = (int)$t_val;
+            }
+        } catch (\Exception $e) { /* use config default */ }
         if ($idle_timeout > 0 && isset($_SESSION['last_activity']) &&
             (time() - $_SESSION['last_activity'] > $idle_timeout)) {
             session_unset();

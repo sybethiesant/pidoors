@@ -12,18 +12,6 @@ require_once $config['apppath'] . 'database/db_connection.php';
 // Set timezone
 date_default_timezone_set($config['timezone']);
 
-// Override session_timeout from DB setting (allows 0 = unlimited)
-try {
-    $st_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'session_timeout'");
-    $st_stmt->execute();
-    $db_timeout = $st_stmt->fetchColumn();
-    if ($db_timeout !== false) {
-        $config['session_timeout'] = (int)$db_timeout;
-    }
-} catch (PDOException $e) {
-    // use config.php default
-}
-
 // Start secure session
 secure_session_start($config);
 
