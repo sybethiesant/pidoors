@@ -850,11 +850,12 @@ def unlock_briefly(gpio):
         unlock_time = zone_config.get("open_delay", 5)
 
     debug(f"Unlocking for {unlock_time} seconds")
-    def _do_unlock():
-        unlock_door()
+    # Set unlocked state immediately so poll loop sees it right away
+    unlock_door()
+    def _do_relock():
         time.sleep(unlock_time)
         lock_door()
-    threading.Thread(target=_do_unlock, daemon=True).start()
+    threading.Thread(target=_do_relock, daemon=True).start()
 
 
 # ============================================================
@@ -1645,14 +1646,6 @@ def command_poll_loop():
 
             cursor = db.cursor(pymysql.cursors.DictCursor)
 
-            # Send real-time lock state
-            with state_lock:
-                locked_status = 0 if door_unlocked else 1
-            cursor.execute(
-                "UPDATE doors SET locked = %s WHERE name = %s",
-                (locked_status, zone)
-            )
-
             # Check for remote commands and read current poll interval
             cursor.execute(
                 "SELECT unlock_requested, poll_interval FROM doors WHERE name = %s",
@@ -1672,7 +1665,6 @@ def command_poll_loop():
                         "UPDATE doors SET unlock_requested = 0 WHERE name = %s",
                         (zone,)
                     )
-                    db.commit()
 
                     log_door_event('remote_unlock', 'Unlocked by remote request')
                     report("Remote unlock requested by server")
@@ -1680,10 +1672,15 @@ def command_poll_loop():
                     latch_gpio = zone_config.get("latch_gpio")
                     if latch_gpio:
                         unlock_briefly(latch_gpio)
-                else:
-                    db.commit()
-            else:
-                db.commit()
+
+            # Send real-time lock state AFTER processing commands
+            with state_lock:
+                locked_status = 0 if door_unlocked else 1
+            cursor.execute(
+                "UPDATE doors SET locked = %s WHERE name = %s",
+                (locked_status, zone)
+            )
+            db.commit()
 
         except pymysql.Error as e:
             debug(f"Command poll error: {e}")
