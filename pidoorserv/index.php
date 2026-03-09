@@ -275,11 +275,13 @@ try {
                                     <?php endif; ?>
                                 </div>
                                 <div class="d-flex align-items-center gap-1 flex-wrap">
-                                    <?php if (isset($door['locked'])): ?>
+                                    <?php if (!empty($door['unlock_requested'])): ?>
+                                        <span class="badge lock-badge bg-info">Unlocking</span>
+                                    <?php elseif (isset($door['locked'])): ?>
                                         <span class="badge lock-badge <?php echo $door['locked'] ? 'bg-success' : 'bg-warning text-dark'; ?>"><?php echo $door['locked'] ? 'Locked' : 'Unlocked'; ?></span>
                                     <?php endif; ?>
                                     <span class="badge bg-<?php echo $statusClass; ?>"><?php echo ucfirst($status); ?></span>
-                                    <?php if ($status === 'online' && is_admin()): ?>
+                                    <?php if ($status === 'online' && is_admin() && empty($door['unlock_requested'])): ?>
                                         <button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="<?php echo htmlspecialchars($door['name']); ?>" title="Unlock">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
                                         </button>
@@ -437,12 +439,14 @@ try {
                         if (door.location) html += ' <small class="text-muted ms-1">' + escHtml(door.location) + '</small>';
                         html += '</div>';
                         html += '<div class="d-flex align-items-center gap-1 flex-wrap">';
-                        if (door.locked !== null && door.locked !== undefined) {
+                        if (parseInt(door.unlock_requested)) {
+                            html += '<span class="badge lock-badge bg-info">Unlocking</span>';
+                        } else if (door.locked !== null && door.locked !== undefined) {
                             var locked = parseInt(door.locked);
                             html += '<span class="badge lock-badge ' + (locked ? 'bg-success' : 'bg-warning text-dark') + '">' + (locked ? 'Locked' : 'Unlocked') + '</span>';
                         }
                         html += '<span class="badge bg-' + statusClass + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
-                        if (status === 'online' && isAdmin) {
+                        if (status === 'online' && isAdmin && !parseInt(door.unlock_requested)) {
                             html += '<button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="' + escHtml(door.name) + '" title="Unlock">' + unlockSvg + '</button>';
                         }
                         html += '</div></li>';
