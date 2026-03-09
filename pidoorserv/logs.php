@@ -217,26 +217,24 @@ try {
 </div>
 
 <script>
-(function() {
+document.addEventListener('DOMContentLoaded', function() {
     var pollTimer = null;
     var dataTable = null;
 
-    // Initialize DataTable manually (we removed the .datatable class)
-    $(document).ready(function() {
-        if ($.fn.DataTable) {
-            dataTable = $('#logs-table').DataTable({
-                responsive: true,
-                pageLength: 25,
-                order: [[0, 'desc']],
-                language: {
-                    search: "Search:",
-                    lengthMenu: "Show _MENU_ entries",
-                    info: "Showing _START_ to _END_ of _TOTAL_ entries",
-                    paginate: { first: "First", last: "Last", next: "Next", previous: "Previous" }
-                }
-            });
-        }
-    });
+    // Initialize DataTable
+    if ($.fn.DataTable) {
+        dataTable = $('#logs-table').DataTable({
+            responsive: true,
+            pageLength: 25,
+            order: [[0, 'desc']],
+            language: {
+                search: "Search:",
+                lengthMenu: "Show _MENU_ entries",
+                info: "Showing _START_ to _END_ of _TOTAL_ entries",
+                paginate: { first: "First", last: "Last", next: "Next", previous: "Previous" }
+            }
+        });
+    }
 
     function escHtml(s) {
         if (!s) return '';
@@ -297,7 +295,7 @@ try {
             pollTimer = setInterval(refreshLogs, 2000);
         }
     });
-})();
+});
 </script>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>

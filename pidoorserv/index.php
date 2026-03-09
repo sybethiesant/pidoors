@@ -360,7 +360,7 @@ try {
 </div>
 
 <script>
-(function() {
+document.addEventListener('DOMContentLoaded', function() {
     var accessChart = null;
     var pollTimer = null;
     var csrfToken = '<?php echo htmlspecialchars(generate_csrf_token()); ?>';
@@ -383,33 +383,31 @@ try {
     function numberFormat(n) { return n.toLocaleString(); }
 
     // Initialize chart
-    document.addEventListener('DOMContentLoaded', function() {
-        var ctx = document.getElementById('accessChart');
-        if (ctx && typeof Chart !== 'undefined') {
-            var hourLabels = [];
-            for (var i = 0; i < 24; i++) hourLabels.push(i + ':00');
+    var ctx = document.getElementById('accessChart');
+    if (ctx && typeof Chart !== 'undefined') {
+        var hourLabels = [];
+        for (var i = 0; i < 24; i++) hourLabels.push(i + ':00');
 
-            accessChart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: hourLabels,
-                    datasets: [{
-                        label: 'Access Events',
-                        data: <?php echo json_encode(array_values($hours)); ?>,
-                        backgroundColor: 'rgba(13, 110, 253, 0.5)',
-                        borderColor: 'rgba(13, 110, 253, 1)',
-                        borderWidth: 1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
-                    plugins: { legend: { display: false } }
-                }
-            });
-        }
-    });
+        accessChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: hourLabels,
+                datasets: [{
+                    label: 'Access Events',
+                    data: <?php echo json_encode(array_values($hours)); ?>,
+                    backgroundColor: 'rgba(13, 110, 253, 0.5)',
+                    borderColor: 'rgba(13, 110, 253, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
 
     function refreshDashboard() {
         $.getJSON('index.php?ajax=dashboard', function(data) {
@@ -500,16 +498,12 @@ try {
             dataType: 'json',
             success: function(res) {
                 if (res.ok) {
-                    // Immediately show Unlocked badge as visual feedback
                     var row = btn.closest('li');
                     var lockBadge = row.find('.lock-badge');
                     if (lockBadge.length) {
-                        lockBadge.removeClass('bg-success').addClass('bg-warning text-dark').text('Unlocked');
+                        lockBadge.attr('class', 'badge lock-badge bg-info').text('Unlocking');
                     }
-                    btn.removeClass('btn-outline-warning').addClass('btn-warning');
-                    setTimeout(function() {
-                        btn.removeClass('btn-warning').addClass('btn-outline-warning').prop('disabled', false);
-                    }, 3000);
+                    btn.hide();
                 } else {
                     alert(res.msg || 'Unlock failed');
                     btn.prop('disabled', false);
@@ -529,7 +523,7 @@ try {
             pollTimer = setInterval(refreshDashboard, 2000);
         }
     });
-})();
+});
 </script>
 
 <?php require_once $config['apppath'] . 'includes/footer.php'; ?>
