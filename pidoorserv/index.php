@@ -4,6 +4,46 @@
  * PiDoors Access Control System
  */
 
+// AJAX endpoint: unlock a door (POST)
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'unlock' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $config = include(__DIR__ . '/includes/config.php');
+    require_once __DIR__ . '/includes/security.php';
+    require_once $config['apppath'] . 'database/db_connection.php';
+    secure_session_start($config);
+
+    header('Content-Type: application/json');
+    if (!is_logged_in() || !is_admin()) {
+        echo json_encode(['ok' => false, 'msg' => 'Unauthorized']);
+        exit();
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true);
+    $door_name = htmlspecialchars(trim($input['door'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $csrf = $input['csrf_token'] ?? '';
+
+    if (!verify_csrf_token($csrf)) {
+        echo json_encode(['ok' => false, 'msg' => 'Invalid token']);
+        exit();
+    }
+
+    try {
+        $stmt = $pdo_access->prepare("SELECT status FROM doors WHERE name = ?");
+        $stmt->execute([$door_name]);
+        $door_check = $stmt->fetch();
+        if ($door_check && $door_check['status'] === 'online') {
+            $stmt = $pdo_access->prepare("UPDATE doors SET unlock_requested = 1 WHERE name = ?");
+            $stmt->execute([$door_name]);
+            log_security_event($pdo, 'remote_unlock', $_SESSION['user_id'], "Remote unlock requested for door: $door_name");
+            echo json_encode(['ok' => true, 'msg' => 'Unlock command sent']);
+        } else {
+            echo json_encode(['ok' => false, 'msg' => 'Door is not online']);
+        }
+    } catch (PDOException $e) {
+        echo json_encode(['ok' => false, 'msg' => 'Database error']);
+    }
+    exit();
+}
+
 // AJAX endpoint: return dashboard data as JSON (no HTML)
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard') {
     $config = include(__DIR__ . '/includes/config.php');
@@ -225,24 +265,31 @@ try {
                                     <br>
                                     <small class="text-muted"><?php echo htmlspecialchars($door['location'] ?? ''); ?></small>
                                 </div>
-                                <div class="text-end">
-                                    <?php
-                                    $status = $door['status'] ?? 'unknown';
-                                    $statusClass = match($status) {
-                                        'online' => 'success',
-                                        'offline' => 'danger',
-                                        default => 'secondary'
-                                    };
-                                    ?>
-                                    <span class="badge bg-<?php echo $statusClass; ?>">
-                                        <?php echo ucfirst($status); ?>
-                                    </span>
-                                    <?php if (isset($door['locked'])): ?>
-                                        <br>
-                                        <small class="<?php echo $door['locked'] ? 'text-success' : 'text-warning'; ?>">
-                                            <?php echo $door['locked'] ? 'Locked' : 'Unlocked'; ?>
-                                        </small>
+                                <div class="d-flex align-items-center gap-2">
+                                    <?php if (($door['status'] ?? '') === 'online' && is_admin()): ?>
+                                        <button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="<?php echo htmlspecialchars($door['name']); ?>" title="Remote Unlock">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
+                                        </button>
                                     <?php endif; ?>
+                                    <div class="text-end">
+                                        <?php
+                                        $status = $door['status'] ?? 'unknown';
+                                        $statusClass = match($status) {
+                                            'online' => 'success',
+                                            'offline' => 'danger',
+                                            default => 'secondary'
+                                        };
+                                        ?>
+                                        <span class="badge bg-<?php echo $statusClass; ?>">
+                                            <?php echo ucfirst($status); ?>
+                                        </span>
+                                        <?php if (isset($door['locked'])): ?>
+                                            <br>
+                                            <small class="<?php echo $door['locked'] ? 'text-success' : 'text-warning'; ?>">
+                                                <?php echo $door['locked'] ? 'Locked' : 'Unlocked'; ?>
+                                            </small>
+                                        <?php endif; ?>
+                                    </div>
                                 </div>
                             </li>
                         <?php endforeach; ?>
@@ -320,6 +367,9 @@ try {
 (function() {
     var accessChart = null;
     var pollTimer = null;
+    var csrfToken = '<?php echo htmlspecialchars(generate_csrf_token()); ?>';
+    var isAdmin = <?php echo is_admin() ? 'true' : 'false'; ?>;
+    var unlockSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>';
 
     function escHtml(s) {
         if (!s) return '';
@@ -390,13 +440,17 @@ try {
                         var statusClass = status === 'online' ? 'success' : status === 'offline' ? 'danger' : 'secondary';
                         html += '<li class="list-group-item d-flex justify-content-between align-items-center">';
                         html += '<div><strong>' + escHtml(door.name) + '</strong><br><small class="text-muted">' + escHtml(door.location || '') + '</small></div>';
+                        html += '<div class="d-flex align-items-center gap-2">';
+                        if (status === 'online' && isAdmin) {
+                            html += '<button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="' + escHtml(door.name) + '" title="Remote Unlock">' + unlockSvg + '</button>';
+                        }
                         html += '<div class="text-end">';
                         html += '<span class="badge bg-' + statusClass + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
                         if (door.locked !== null && door.locked !== undefined) {
                             var locked = parseInt(door.locked);
                             html += '<br><small class="' + (locked ? 'text-success' : 'text-warning') + '">' + (locked ? 'Locked' : 'Unlocked') + '</small>';
                         }
-                        html += '</div></li>';
+                        html += '</div></div></li>';
                     });
                 }
                 doorList.html(html);
@@ -432,6 +486,33 @@ try {
             }
         });
     }
+
+    // Unlock button handler (delegated for dynamically added buttons)
+    $(document).on('click', '.btn-unlock', function() {
+        var btn = $(this);
+        var doorName = btn.data('door');
+        if (!confirm('Unlock ' + doorName + '?')) return;
+        btn.prop('disabled', true);
+        $.ajax({
+            url: 'index.php?ajax=unlock',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({door: doorName, csrf_token: csrfToken}),
+            dataType: 'json',
+            success: function(res) {
+                if (res.ok) {
+                    btn.removeClass('btn-outline-warning').addClass('btn-warning');
+                    setTimeout(function() {
+                        btn.removeClass('btn-warning').addClass('btn-outline-warning').prop('disabled', false);
+                    }, 3000);
+                } else {
+                    alert(res.msg || 'Unlock failed');
+                    btn.prop('disabled', false);
+                }
+            },
+            error: function() { alert('Request failed'); btn.prop('disabled', false); }
+        });
+    });
 
     pollTimer = setInterval(refreshDashboard, 5000);
 
