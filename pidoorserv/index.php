@@ -488,7 +488,6 @@ document.addEventListener('DOMContentLoaded', function() {
     $(document).on('click', '.btn-unlock', function() {
         var btn = $(this);
         var doorName = btn.data('door');
-        if (!confirm('Unlock ' + doorName + '?')) return;
         btn.prop('disabled', true);
         $.ajax({
             url: 'index.php?ajax=unlock',

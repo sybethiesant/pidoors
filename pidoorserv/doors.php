@@ -309,7 +309,7 @@ try {
                     <div>
                         <a href="editdoor.php?name=<?php echo urlencode($door['name']); ?>" class="btn btn-sm btn-outline-primary">Edit</a>
                         <?php if ($door['status'] === 'online'): ?>
-                            <form method="post" class="d-inline" onsubmit="return confirm('Unlock this door remotely?');">
+                            <form method="post" class="d-inline">
                                 <?php echo csrf_field(); ?>
                                 <input type="hidden" name="action" value="unlock">
                                 <input type="hidden" name="door" value="<?php echo htmlspecialchars($door['name']); ?>">
@@ -555,7 +555,7 @@ try {
                 html += '<div>';
                 html += '<a href="editdoor.php?name=' + encodeURIComponent(door.name) + '" class="btn btn-sm btn-outline-primary">Edit</a> ';
                 if (status === 'online') {
-                    html += '<form method="post" class="d-inline" onsubmit="return confirm(\'Unlock this door remotely?\');">';
+                    html += '<form method="post" class="d-inline">';
                     html += '<input type="hidden" name="csrf_token" value="' + csrfToken + '">';
                     html += '<input type="hidden" name="action" value="unlock">';
                     html += '<input type="hidden" name="door" value="' + escHtml(door.name) + '">';

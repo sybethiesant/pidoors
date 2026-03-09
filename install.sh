@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/VERSION" ]; then
     VERSION=$(cat "$SCRIPT_DIR/VERSION" | tr -d '[:space:]')
 else
-    VERSION="2.6.12"
+    VERSION="2.6.13"
 fi
 
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
