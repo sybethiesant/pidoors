@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.17.3-green)
+![Version](https://img.shields.io/badge/version-3.0.0-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -17,7 +17,7 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - **Cost-Effective**: 10x cheaper than commercial systems (~$100-150 per door vs $500-2000)
 - **Secure**: TLS database encryption, bcrypt passwords, SQL injection protection, CSRF tokens
 - **Open Source**: Full control over your security system
-- **Modern Interface**: Responsive Bootstrap 5 web dashboard
+- **Modern Interface**: React SPA with TailwindCSS — fast, responsive single-page application
 - **Offline Capable**: 24-hour local caching keeps doors working during network outages
 - **Extensible**: Easy to customize and integrate
 
@@ -37,7 +37,7 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - **Master card toggle** in web UI — promote any card to master with a checkbox
 
 ### Management
-- Modern web interface
+- Modern React SPA with REST API backend
 - Login by username or email
 - Real-time dashboard with analytics
 - Multi-user administration with extended profiles (name, department, company, etc.)
@@ -83,6 +83,7 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - Raspberry Pi 3B+ or newer (Pi 4 recommended for server)
 - Raspberry Pi OS (Debian-based, 64-bit recommended)
 - Internet connection for initial setup
+- Node.js and npm (installed automatically by `install.sh`)
 - For door controllers: card reader hardware and relay module
 
 ### Automated Installation (Recommended)
@@ -107,14 +108,15 @@ The installer presents three installation modes:
 #### What the installer does
 
 1. Updates system packages
-2. Installs dependencies (Nginx, PHP-FPM, MariaDB, Python libraries)
+2. Installs dependencies (Nginx, PHP-FPM, MariaDB, Node.js, Python libraries)
 3. Generates TLS certificates and enables encrypted database connections
 4. Creates the `users` and `access` databases with all required tables
 5. Imports the full database schema (base tables + migration extensions)
-6. Deploys the web interface to `/var/www/pidoors/`
-7. Configures Nginx with security headers
-8. Prompts you to create an admin account (username, email + password)
-9. Sets up log rotation and backup scripts
+6. Deploys the PHP API to `/var/www/pidoors/`
+7. Builds the React SPA and deploys to `/var/www/pidoors-ui/`
+8. Configures Nginx to serve the SPA with `/api/*` routed to PHP-FPM
+9. Prompts you to create an admin account (username, email + password)
+10. Sets up log rotation and backup scripts
 
 #### After installation
 
@@ -132,7 +134,8 @@ If you prefer to install manually or need to troubleshoot:
 ```bash
 sudo apt-get update && sudo apt-get install -y \
   nginx php-fpm php-mysql php-cli php-mbstring php-curl php-json \
-  mariadb-server python3 python3-pip python3-dev python3-venv git curl
+  mariadb-server nodejs npm \
+  python3 python3-pip python3-dev python3-venv git curl
 ```
 
 #### 2. Create databases
@@ -202,20 +205,36 @@ sudo mysql -u root -p users -e \
    VALUES ('Admin', 'admin@example.com', '$HASH', 1, 1);"
 ```
 
-#### 5. Deploy the web interface
+#### 5. Deploy the PHP API
 ```bash
 sudo mkdir -p /var/www/pidoors
 sudo cp -r pidoorserv/* /var/www/pidoors/
-sudo cp VERSION /var/www/pidoors/                 # Version file for update page
+sudo cp VERSION /var/www/pidoors/
 sudo cp /var/www/pidoors/includes/config.php.example /var/www/pidoors/includes/config.php
 sudo nano /var/www/pidoors/includes/config.php    # Set your database password and server IP
 sudo chown -R www-data:www-data /var/www/pidoors
 sudo chmod 640 /var/www/pidoors/includes/config.php
 ```
 
-#### 6. Configure Nginx
+#### 6. Build and deploy the React SPA
 ```bash
-sudo cp nginx/pidoors.conf /etc/nginx/sites-available/pidoors
+sudo apt-get install -y nodejs npm
+cd pidoors-ui
+npm install && npm run build
+sudo mkdir -p /var/www/pidoors-ui
+sudo cp -r dist/* /var/www/pidoors-ui/
+sudo chown -R www-data:www-data /var/www/pidoors-ui
+cd ..
+```
+
+#### 7. Configure Nginx
+```bash
+# Detect your PHP version
+PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;")
+
+# Install config with correct PHP socket path
+sudo sed "s|php-fpm.sock|php${PHP_VERSION}-fpm.sock|g" \
+  nginx/pidoors.conf > /etc/nginx/sites-available/pidoors
 sudo ln -sf /etc/nginx/sites-available/pidoors /etc/nginx/sites-enabled/pidoors
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
@@ -228,29 +247,35 @@ See the [Installation Guide](pidoors/INSTALLATION_GUIDE.md) for additional detai
 ## System Architecture
 
 ```
-                        WEB INTERFACE
+                    REACT SPA (Browser)
      Dashboard | Cards | Doors | Logs | Reports | Settings
-                            |
-            +---------------+---------------+
-            |                               |
-     SERVER RASPBERRY PI              DOOR CONTROLLERS
-    +------------------+             +----------------+
-    |  Nginx + PHP-FPM |             |  Door Pi #1    |
-    |  MariaDB (TLS)   |<--TLS/TCP->|  24hr Cache    |
-    |  Backups & Logs  |             |  Card Reader   |
-    +------------------+             |  Electric Lock |
-                                     +----------------+
-                                            |
-                                     +----------------+
-                                     |  Door Pi #N    |
-                                     |  24hr Cache    |
-                                     |  Card Reader   |
-                                     |  Electric Lock |
-                                     +----------------+
+                          |
+                     /api/* REST
+                          |
+     SERVER RASPBERRY PI
+    +--------------------------+
+    |  Nginx                   |
+    |  ├─ /         → React   |
+    |  └─ /api/*    → PHP-FPM |
+    |  MariaDB (TLS)           |
+    |  Backups & Logs          |
+    +--------------------------+
+          |                  |
+     HTTPS Push         TLS/TCP DB
+     (instant)          (sync/poll)
+          |                  |
+    +----------------+  +----------------+
+    |  Door Pi #1    |  |  Door Pi #N    |
+    |  Push Listener |  |  Push Listener |
+    |  24hr Cache    |  |  24hr Cache    |
+    |  Card Reader   |  |  Card Reader   |
+    |  Electric Lock |  |  Electric Lock |
+    +----------------+  +----------------+
 ```
 
-**One server Pi** runs the web interface and database.
+**One server Pi** runs the React SPA, PHP API, and database.
 **N door Pis** control individual access points with 24-hour local caching.
+The server pushes commands instantly via HTTPS, with database polling as fallback.
 
 ---
 
@@ -569,7 +594,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.17.3** - Production Ready
+**Current Version: 3.0.0** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -581,6 +606,26 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.0.0 (March 2026)
+- **React SPA**: Complete frontend rewrite — legacy PHP pages replaced with a modern React + TypeScript + TailwindCSS single-page application
+- **REST API**: New `api.php` unified router handles all SPA backend requests with full CSRF, auth, and input validation
+- **Nginx rewrite**: Production config now serves React SPA from `/var/www/pidoors-ui` with `/api/*` routed to PHP-FPM
+- **Install script**: Fresh installs now build the React SPA (Node.js + npm) and deploy it alongside the PHP API
+- **Server update script**: Updates rebuild the React SPA automatically; auto-upgrades legacy nginx config to SPA layout
+- **Feature**: Push-based controller communication — server sends commands directly to controllers via HTTPS for instant response (<100ms vs 3s polling)
+- **Feature**: Controller HTTPS listener on port 8443 with Bearer token auth and self-signed TLS
+- **Feature**: Automatic fallback to database polling if push is unavailable (mixed fleet support)
+- **Feature**: Live controller ping from UI — on-demand status check with version, uptime, and connection info
+- **Fix**: API route parsing now supports both `?route=` (Docker) and `PATH_INFO` (production nginx)
+- **Fix**: Controller heartbeat now reports `api_key` to database — push self-heals if DB is restored
+- **Fix**: Recurring holidays now cached for offline enforcement
+- **Fix**: Door PUT endpoint validates `reader_type` against whitelist
+- **Fix**: Profile API returns properly typed integer fields
+- **Fix**: Stale `pidoors/database_migration.sql` synced — controller updates now get push columns
+- **Fix**: Controller update script unbound variable crash on self-update re-exec path
+- **Fix**: Install script React build errors now reported instead of silently swallowed
+- **Cleanup**: Removed stale `pidoors/install.sh` duplicate (had eval injection bugs)
 
 ### Version 2.17.3 (March 2026)
 - **Fix**: Dashboard AJAX refresh reverted action buttons back to padlock icons every 2 seconds

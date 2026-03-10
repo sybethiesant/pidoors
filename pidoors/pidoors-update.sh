@@ -357,9 +357,73 @@ if [ "$REMOVED" -gt 0 ]; then
 fi
 
 # Read new version
-NEW_VERSION="$LATEST_VERSION"
+NEW_VERSION="${LATEST_VERSION:-}"
 if [ -f "$INSTALL_DIR/VERSION" ]; then
     NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" | tr -d '[:space:]')
+fi
+
+# ── Upgrade path: generate push listener cert/key/api_key if missing ──
+CONF_DIR="$INSTALL_DIR/conf"
+
+if [ ! -f "$CONF_DIR/listener.crt" ] || [ ! -f "$CONF_DIR/listener.key" ]; then
+    log "Generating TLS certificate for push listener..."
+    openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout "$CONF_DIR/listener.key" \
+        -out "$CONF_DIR/listener.crt" \
+        -days 3650 -subj "/CN=$ZONE" \
+        > /dev/null 2>&1 && log "TLS certificate generated" || log "Warning: TLS cert generation failed"
+    chown pidoors:pidoors "$CONF_DIR/listener.key" "$CONF_DIR/listener.crt" 2>/dev/null || true
+    chmod 600 "$CONF_DIR/listener.key" 2>/dev/null || true
+    chmod 644 "$CONF_DIR/listener.crt" 2>/dev/null || true
+fi
+
+# Add api_key and listen_port to config.json if missing
+if [ -f "$CONF_DIR/config.json" ]; then
+    python3 -c "
+import json, os, subprocess
+config_path = '$CONF_DIR/config.json'
+zone = '$ZONE'
+cfg = json.load(open(config_path))
+zc = cfg.get(zone, {})
+changed = False
+if 'api_key' not in zc:
+    zc['api_key'] = subprocess.check_output(['openssl', 'rand', '-hex', '32']).decode().strip()
+    changed = True
+if 'listen_port' not in zc:
+    zc['listen_port'] = 8443
+    changed = True
+if changed:
+    cfg[zone] = zc
+    with open(config_path, 'w') as f:
+        json.dump(cfg, f, indent=4)
+    # Store API key in database
+    try:
+        import pymysql
+        ca_path = os.path.join('$CONF_DIR', 'ca.pem')
+        kw = dict(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'],
+                  database=zc['sqldb'], connect_timeout=5)
+        if os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
+            kw['ssl'] = {'ca': ca_path}
+        else:
+            kw['ssl_disabled'] = True
+        db = pymysql.connect(**kw)
+        c = db.cursor()
+        c.execute('UPDATE doors SET api_key = %s, listen_port = %s WHERE name = %s',
+                  (zc['api_key'], zc['listen_port'], zone))
+        db.commit()
+        db.close()
+        print('Push API key registered in database')
+    except Exception as e:
+        print(f'Warning: could not register API key: {e}')
+    print('Push config added to config.json')
+else:
+    print('Push config already present')
+" 2>&1 | while read -r line; do log "$line"; done
+fi
+
+# Open firewall port if ufw is installed
+if command -v ufw > /dev/null 2>&1; then
+    ufw allow 8443/tcp > /dev/null 2>&1 && log "Firewall: port 8443/tcp opened" || true
 fi
 
 # Run database migration before marking success

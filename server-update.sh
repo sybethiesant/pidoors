@@ -30,6 +30,9 @@ cleanup() {
     if [ -n "$TMPDIR" ] && [ -d "$TMPDIR" ]; then
         rm -rf "$TMPDIR"
     fi
+    if [ -n "${UI_BUILD_DIR:-}" ] && [ -d "$UI_BUILD_DIR" ]; then
+        rm -rf "$UI_BUILD_DIR"
+    fi
 }
 trap cleanup EXIT
 
@@ -196,6 +199,54 @@ ok "VERSION file updated"
 # Copy database migration if present
 if [ -f "$EXTRACTED/database_migration.sql" ]; then
     cp "$EXTRACTED/database_migration.sql" "$WEB_ROOT/database_migration.sql"
+fi
+
+# ──────────────────────────────────────────────
+# Build and deploy React UI
+# ──────────────────────────────────────────────
+
+WEB_UI_ROOT="/var/www/pidoors-ui"
+
+if [ -d "$EXTRACTED/pidoors-ui" ]; then
+    if command -v node > /dev/null 2>&1; then
+        info "Building React UI..."
+        UI_BUILD_DIR=$(mktemp -d /tmp/pidoors-ui-build-XXX)
+        cp -r "$EXTRACTED/pidoors-ui/"* "$UI_BUILD_DIR/"
+        [ -f "$EXTRACTED/pidoors-ui/.env" ] && cp "$EXTRACTED/pidoors-ui/.env" "$UI_BUILD_DIR/"
+
+        if (cd "$UI_BUILD_DIR" && npm install --production=false --loglevel=error) > /dev/null 2>&1 && \
+           (cd "$UI_BUILD_DIR" && npm run build) > /dev/null 2>&1; then
+            mkdir -p "$WEB_UI_ROOT"
+            rm -rf "$WEB_UI_ROOT/"*
+            cp -r "$UI_BUILD_DIR/dist/"* "$WEB_UI_ROOT/"
+            chown -R www-data:www-data "$WEB_UI_ROOT"
+            chmod -R 755 "$WEB_UI_ROOT"
+            ok "React UI built and deployed to $WEB_UI_ROOT"
+        else
+            warn "React UI build failed — the previous UI version is still in place"
+        fi
+        rm -rf "$UI_BUILD_DIR"
+    else
+        warn "Node.js is not installed — cannot build React UI"
+        warn "Install it with: sudo apt-get install -y nodejs npm"
+    fi
+fi
+
+# Upgrade nginx config if still using legacy PHP-only setup
+if [ -f /etc/nginx/sites-available/pidoors ]; then
+    if ! grep -q "pidoors-ui" /etc/nginx/sites-available/pidoors 2>/dev/null; then
+        if [ -f "$EXTRACTED/nginx/pidoors.conf" ]; then
+            info "Upgrading Nginx config to React SPA layout..."
+            PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null || echo "")
+            if [ -n "$PHP_VERSION" ]; then
+                sed "s|unix:/var/run/php/php-fpm.sock|unix:/var/run/php/php${PHP_VERSION}-fpm.sock|g" \
+                    "$EXTRACTED/nginx/pidoors.conf" > /etc/nginx/sites-available/pidoors
+            else
+                cp "$EXTRACTED/nginx/pidoors.conf" /etc/nginx/sites-available/pidoors
+            fi
+            ok "Nginx config upgraded for React SPA"
+        fi
+    fi
 fi
 
 # ──────────────────────────────────────────────

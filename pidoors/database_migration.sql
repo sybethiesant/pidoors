@@ -648,4 +648,35 @@ CREATE TABLE IF NOT EXISTS `notification_log` (
 INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
 ('smtp_from', '', 'SMTP from email address for notifications');
 
+-- --------------------------------------------------------
+-- v2.18.0 - Push-based controller communication
+-- --------------------------------------------------------
+
+-- Add listen_port column to doors (controller HTTPS listener port)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'listen_port');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `listen_port` int(11) DEFAULT NULL AFTER `poll_interval`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add api_key column to doors (shared secret for push auth)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'api_key');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `api_key` varchar(64) DEFAULT NULL AFTER `listen_port`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add push_available column to doors (tracks whether push is currently reachable)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'push_available');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `push_available` tinyint(1) NOT NULL DEFAULT 0 AFTER `api_key`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Push communication settings
+INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
+('default_listen_port', '8443', 'Default HTTPS listener port for controller push commands'),
+('push_timeout', '3', 'Timeout in seconds for push commands to controllers'),
+('push_fallback_poll_interval', '15', 'Poll interval in seconds when push listener is active (fallback safety net)');
+
 COMMIT;

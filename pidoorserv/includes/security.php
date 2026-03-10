@@ -15,9 +15,13 @@ function generate_csrf_token() {
 }
 
 /**
- * Verify CSRF token
+ * Verify CSRF token (supports form field, JSON body, or X-CSRF-Token header)
  */
-function verify_csrf_token($token) {
+function verify_csrf_token($token = null) {
+    // If no token passed, check X-CSRF-Token header
+    if ($token === null || $token === '') {
+        $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    }
     if (empty($_SESSION['csrf_token']) || empty($token)) {
         return false;
     }

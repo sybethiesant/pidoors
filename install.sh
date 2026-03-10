@@ -21,13 +21,14 @@ NC='\033[0m'
 
 INSTALL_DIR="/opt/pidoors"
 WEB_ROOT="/var/www/pidoors"
+WEB_UI_ROOT="/var/www/pidoors-ui"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Read version from VERSION file, fallback to hardcoded
 if [ -f "$SCRIPT_DIR/VERSION" ]; then
     VERSION=$(cat "$SCRIPT_DIR/VERSION" | tr -d '[:space:]')
 else
-    VERSION="2.6.14"
+    VERSION="3.0.0"
 fi
 
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
@@ -374,6 +375,40 @@ EOF
     curl -sL "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" -o "$WEB_ROOT/js/Chart.min.js"
     ok "Front-end libraries downloaded"
 
+    # ── React SPA ──
+
+    step "Server: Building React UI"
+
+    info "Installing Node.js..."
+    apt-get install -y -qq nodejs npm > /dev/null 2>&1
+    ok "Node.js installed ($(node --version 2>/dev/null || echo 'unknown'))"
+
+    if [ -d "$SCRIPT_DIR/pidoors-ui" ]; then
+        UI_BUILD_DIR=$(mktemp -d /tmp/pidoors-ui-build-XXX)
+        cp -r "$SCRIPT_DIR/pidoors-ui/"* "$UI_BUILD_DIR/"
+        [ -f "$SCRIPT_DIR/pidoors-ui/.env" ] && cp "$SCRIPT_DIR/pidoors-ui/.env" "$UI_BUILD_DIR/"
+
+        info "Installing dependencies (this may take a minute)..."
+        if (cd "$UI_BUILD_DIR" && npm install --production=false --loglevel=error) > /dev/null 2>&1 && \
+           (cd "$UI_BUILD_DIR" && npm run build) > /dev/null 2>&1; then
+            ok "React app built"
+
+            mkdir -p "$WEB_UI_ROOT"
+            cp -r "$UI_BUILD_DIR/dist/"* "$WEB_UI_ROOT/"
+            chown -R www-data:www-data "$WEB_UI_ROOT"
+            chmod -R 755 "$WEB_UI_ROOT"
+            ok "React UI deployed to $WEB_UI_ROOT"
+        else
+            fail "React UI build failed — check Node.js and npm are working"
+            fail "You can retry manually: cd pidoors-ui && npm install && npm run build"
+        fi
+
+        rm -rf "$UI_BUILD_DIR"
+    else
+        warn "pidoors-ui/ directory not found — skipping React build"
+        warn "The web UI will not be available until pidoors-ui is built"
+    fi
+
     # Configure PHP
     if [ -f "$WEB_ROOT/includes/config.php.example" ]; then
         cp "$WEB_ROOT/includes/config.php.example" "$WEB_ROOT/includes/config.php"
@@ -648,6 +683,19 @@ if [ "$INSTALL_DOOR" = true ]; then
     fi
     ok "Controller files copied"
 
+    # Generate API key for push communication
+    API_KEY=$(openssl rand -hex 32)
+    LISTEN_PORT=8443
+
+    # Generate self-signed TLS certificate for push listener
+    info "Generating TLS certificate for push listener..."
+    openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout "$INSTALL_DIR/conf/listener.key" \
+        -out "$INSTALL_DIR/conf/listener.crt" \
+        -days 3650 -subj "/CN=$DOOR_NAME" \
+        > /dev/null 2>&1
+    ok "TLS certificate generated"
+
     # Write config.json
     cat > "$INSTALL_DIR/conf/config.json" <<EOF
 {
@@ -659,7 +707,9 @@ if [ "$INSTALL_DOOR" = true ]; then
         "sqladdr": "$DB_HOST",
         "sqluser": "$DB_USER",
         "sqlpass": "$DB_PASS_DOOR",
-        "sqldb": "$DB_NAME"
+        "sqldb": "$DB_NAME",
+        "api_key": "$API_KEY",
+        "listen_port": $LISTEN_PORT
     }
 }
 EOF
@@ -689,6 +739,8 @@ EOF
     chmod +x "$INSTALL_DIR/pidoors.py"
     chmod 700 "$INSTALL_DIR/cache"
     chmod 600 "$INSTALL_DIR/conf/config.json"
+    chmod 600 "$INSTALL_DIR/conf/listener.key" 2>/dev/null || true
+    chmod 644 "$INSTALL_DIR/conf/listener.crt" 2>/dev/null || true
     ok "Permissions set"
 
     # Add sudoers entry for update script (allows pidoors user to run update as root)
@@ -731,6 +783,34 @@ EOF
     systemctl daemon-reload
     systemctl enable pidoors.service > /dev/null 2>&1
     ok "Systemd service installed and enabled"
+
+    # Open firewall port for push listener
+    if command -v ufw > /dev/null 2>&1; then
+        ufw allow "$LISTEN_PORT/tcp" > /dev/null 2>&1 && ok "Firewall: port $LISTEN_PORT/tcp opened"
+    fi
+
+    # Store API key in database (so server can push to this controller)
+    info "Registering push API key in database..."
+    "$INSTALL_DIR/venv/bin/python3" -c "
+import json, pymysql, os
+cfg = json.load(open('$INSTALL_DIR/conf/config.json'))
+zc = cfg['$DOOR_NAME']
+ca_path = '$INSTALL_DIR/conf/ca.pem'
+kw = dict(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'],
+          database=zc['sqldb'], connect_timeout=5)
+if os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
+    kw['ssl'] = {'ca': ca_path}
+else:
+    kw['ssl_disabled'] = True
+db = pymysql.connect(**kw)
+c = db.cursor()
+# Update if door exists, insert will happen on first heartbeat if not
+c.execute('UPDATE doors SET api_key = %s, listen_port = %s WHERE name = %s',
+          ('$API_KEY', $LISTEN_PORT, '$DOOR_NAME'))
+db.commit()
+db.close()
+print('ok')
+" 2>/dev/null && ok "Push API key registered" || warn "Could not register API key (will register on first heartbeat)"
 
     # ── Verify database connection ──
 

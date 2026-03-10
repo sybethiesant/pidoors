@@ -320,6 +320,9 @@ def initialize():
     # Start command poll thread (lightweight fast-poll for remote unlock)
     start_command_poll_thread()
 
+    # Start push listener (HTTPS server for instant commands from server)
+    start_push_listener()
+
     # Sync cache from server
     sync_cache_from_server()
 
@@ -658,7 +661,7 @@ def sync_cache_from_server():
         # Build the cache (master cards are stored separately in persistent storage)
         new_cache = {
             'schedules': schedules,
-            'holidays': [{'date': str(h['date']), 'name': h['name'], 'access_denied': h['access_denied']}
+            'holidays': [{'date': str(h['date']), 'name': h['name'], 'access_denied': h['access_denied'], 'recurring': h.get('recurring', 0)}
                         for h in holidays],
             'door_settings': door_info,
             'cards': {}
@@ -1557,7 +1560,8 @@ def send_heartbeat():
         held_open_val = 1 if zone_config.get("unlocked", False) else 0
         reader = zone_config.get("reader_type", "wiegand")
 
-        # Update door status with version
+        # Update door status with version, listen port, and api_key
+        controller_api_key = zone_config.get("api_key", "")
         cursor.execute("""
             UPDATE doors
             SET status = 'online',
@@ -1565,16 +1569,18 @@ def send_heartbeat():
                 ip_address = %s,
                 locked = %s,
                 held_open = %s,
-                controller_version = %s
+                controller_version = %s,
+                listen_port = %s,
+                api_key = %s
             WHERE name = %s
-        """, (myip, locked_status, held_open_val, VERSION, zone))
+        """, (myip, locked_status, held_open_val, VERSION, push_listener_port, controller_api_key, zone))
 
         # Auto-register door if it doesn't exist yet
         if cursor.rowcount == 0:
             cursor.execute("""
-                INSERT INTO doors (name, ip_address, status, last_seen, locked, held_open, reader_type, controller_version)
-                VALUES (%s, %s, 'online', NOW(), %s, %s, %s, %s)
-            """, (zone, myip, locked_status, held_open_val, reader, VERSION))
+                INSERT INTO doors (name, ip_address, status, last_seen, locked, held_open, reader_type, controller_version, listen_port, api_key)
+                VALUES (%s, %s, 'online', NOW(), %s, %s, %s, %s, %s, %s)
+            """, (zone, myip, locked_status, held_open_val, reader, VERSION, push_listener_port, controller_api_key))
             report(f"Door '{zone}' auto-registered in database")
 
         # Clear stale "updating" status — if we're heartbeating, the update finished
@@ -1638,7 +1644,8 @@ def command_poll_loop():
 
     zone_config = config.get(zone, {})
     db = None
-    poll_interval = 3  # default, updated dynamically from DB
+    # When push listener is active, use longer fallback interval (safety net only)
+    poll_interval = 15 if push_listener_port else 3
 
     while running:
         try:
@@ -1739,6 +1746,186 @@ def command_poll_loop():
             db.close()
         except Exception:
             pass
+
+
+# ============================================================
+# HTTPS PUSH LISTENER
+# ============================================================
+
+push_listener_thread = None
+push_listener_port = None
+
+
+def start_push_listener():
+    """Start the HTTPS push listener if api_key and listen_port are configured."""
+    global push_listener_thread, push_listener_port
+
+    zone_config = config.get(zone, {})
+    api_key = zone_config.get('api_key')
+    listen_port = zone_config.get('listen_port')
+
+    if not api_key or not listen_port:
+        debug("Push listener: no api_key or listen_port in config, skipping")
+        return
+
+    listen_port = int(listen_port)
+    cert_file = os.path.join(CONF_DIR, 'listener.crt')
+    key_file = os.path.join(CONF_DIR, 'listener.key')
+
+    if not os.path.isfile(cert_file) or not os.path.isfile(key_file):
+        report("Push listener: TLS cert/key not found, skipping")
+        return
+
+    push_listener_port = listen_port
+    push_listener_thread = threading.Thread(
+        target=_run_push_listener,
+        args=(listen_port, api_key, cert_file, key_file),
+        daemon=True
+    )
+    push_listener_thread.start()
+    report(f"Push listener started on port {listen_port}")
+
+
+def _get_status_dict():
+    """Build the status response dict for /ping and /status."""
+    zone_config = config.get(zone, {})
+    with state_lock:
+        locked_val = not door_unlocked
+        connected = db_connected
+    with state_lock:
+        last_sync = cache_last_sync
+
+    return {
+        'zone': zone,
+        'version': VERSION,
+        'locked': locked_val,
+        'held_open': zone_config.get('unlocked', False),
+        'uptime': int(time.time() - _start_time),
+        'cache_age': int(time.time() - last_sync) if last_sync else None,
+        'db_connected': connected,
+        'listen_port': push_listener_port,
+    }
+
+
+def _run_push_listener(port, api_key, cert_file, key_file):
+    """Run the HTTPS listener in a thread. Stdlib only."""
+    import ssl
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+
+    controller_api_key = api_key
+
+    class PushHandler(BaseHTTPRequestHandler):
+
+        def _check_auth(self):
+            auth = self.headers.get('Authorization', '')
+            if auth != f'Bearer {controller_api_key}':
+                self._respond(403, {'ok': False, 'error': 'Forbidden'})
+                return False
+            return True
+
+        def _respond(self, code, body):
+            payload = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_POST(self):
+            if not self._check_auth():
+                return
+
+            path = self.path.rstrip('/')
+            zone_config = config.get(zone, {})
+
+            if path == '/cmd/unlock':
+                latch_gpio = zone_config.get('latch_gpio')
+                if latch_gpio:
+                    log_door_event('remote_unlock', 'Unlocked by push command')
+                    report("Push: remote unlock")
+                    unlock_briefly(latch_gpio)
+                with state_lock:
+                    locked = not door_unlocked
+                self._respond(200, {'ok': True, 'locked': locked})
+
+            elif path == '/cmd/hold':
+                if not zone_config.get('unlocked', False):
+                    zone_config['unlocked'] = True
+                    unlock_door()
+                    log_door_event('door_held_open', 'Held open by push command')
+                    report("Push: door held open")
+                self._respond(200, {'ok': True, 'held_open': True})
+
+            elif path == '/cmd/release':
+                if zone_config.get('unlocked', False):
+                    zone_config['unlocked'] = False
+                    lock_door()
+                    log_door_event('lock', 'Hold released by push command')
+                    report("Push: hold released")
+                self._respond(200, {'ok': True, 'held_open': False})
+
+            elif path == '/cmd/update':
+                report("Push: update requested")
+                trigger_update()
+                self._respond(200, {'ok': True, 'updating': True})
+
+            elif path == '/cmd/sync':
+                report("Push: cache sync requested")
+                threading.Thread(target=sync_cache_from_server, daemon=True).start()
+                self._respond(200, {'ok': True})
+
+            elif path == '/ping':
+                self._respond(200, _get_status_dict())
+
+            else:
+                self._respond(404, {'ok': False, 'error': 'Not found'})
+
+        def do_GET(self):
+            if not self._check_auth():
+                return
+
+            path = self.path.rstrip('/')
+            if path == '/status':
+                self._respond(200, _get_status_dict())
+            else:
+                self._respond(404, {'ok': False, 'error': 'Not found'})
+
+        def log_message(self, format, *args):
+            # Suppress default stderr logging
+            pass
+
+    class ThreadedHTTPServer(HTTPServer):
+        """Handle each request in a new thread."""
+        daemon_threads = True
+
+        def process_request(self, request, client_address):
+            t = threading.Thread(target=self.process_request_thread,
+                                 args=(request, client_address), daemon=True)
+            t.start()
+
+        def process_request_thread(self, request, client_address):
+            try:
+                self.finish_request(request, client_address)
+            except Exception:
+                self.handle_error(request, client_address)
+            finally:
+                self.shutdown_request(request)
+
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert_file, key_file)
+
+        server = ThreadedHTTPServer(('0.0.0.0', port), PushHandler)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+
+        debug(f"Push listener: HTTPS server bound to 0.0.0.0:{port}")
+        server.serve_forever()
+    except Exception as e:
+        report(f"Push listener failed: {e}")
+
+
+# Track process start time for uptime calculation
+_start_time = time.time()
 
 
 # ============================================================

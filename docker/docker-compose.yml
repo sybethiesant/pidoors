@@ -58,9 +58,38 @@ services:
     networks:
       - pidoors-network
 
+  gateway:
+    image: nginx:1.25-alpine
+    container_name: pidoors-gateway
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "8089:80"
+    volumes:
+      - react_dist:/var/www/pidoors-ui:ro
+      - ./nginx-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - pidoors-network
+
+  react-dev:
+    image: node:20-alpine
+    container_name: pidoors-react-dev
+    profiles:
+      - dev
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../pidoors-ui:/app
+    networks:
+      - pidoors-network
+
 volumes:
   db_data:
   app_data:
+  react_dist:
 
 networks:
   pidoors-network:

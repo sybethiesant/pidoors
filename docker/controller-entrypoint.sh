@@ -36,6 +36,11 @@ migrations = [
     'ALTER TABLE doors ADD COLUMN IF NOT EXISTS update_status_time datetime DEFAULT NULL AFTER update_status',
     'ALTER TABLE doors ADD COLUMN IF NOT EXISTS unlock_requested tinyint(1) NOT NULL DEFAULT 0 AFTER update_status_time',
     'ALTER TABLE doors ADD COLUMN IF NOT EXISTS poll_interval int(11) NOT NULL DEFAULT 3 AFTER unlock_requested',
+    'ALTER TABLE doors ADD COLUMN IF NOT EXISTS held_open tinyint(1) NOT NULL DEFAULT 0 AFTER locked',
+    'ALTER TABLE doors ADD COLUMN IF NOT EXISTS hold_requested tinyint(1) NOT NULL DEFAULT 0 AFTER held_open',
+    'ALTER TABLE doors ADD COLUMN IF NOT EXISTS listen_port int(11) DEFAULT NULL AFTER poll_interval',
+    'ALTER TABLE doors ADD COLUMN IF NOT EXISTS api_key varchar(64) DEFAULT NULL AFTER listen_port',
+    'ALTER TABLE doors ADD COLUMN IF NOT EXISTS push_available tinyint(1) NOT NULL DEFAULT 0 AFTER api_key',
 ]
 for sql in migrations:
     cur.execute(sql)
@@ -51,7 +56,24 @@ cat > /opt/pidoors/conf/zone.json <<'EOF'
 {"zone": "docker_door"}
 EOF
 
-cat > /opt/pidoors/conf/config.json <<'EOF'
+# Generate push listener TLS cert if missing
+if [ ! -f /opt/pidoors/conf/listener.crt ]; then
+    openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout /opt/pidoors/conf/listener.key \
+        -out /opt/pidoors/conf/listener.crt \
+        -days 3650 -subj "/CN=docker_door" 2>/dev/null
+    echo "Controller: TLS cert generated for push listener"
+fi
+
+# Generate push API key if missing
+API_KEY_FILE=/opt/pidoors/conf/.api_key
+if [ ! -f "$API_KEY_FILE" ]; then
+    openssl rand -hex 32 > "$API_KEY_FILE"
+    echo "Controller: API key generated"
+fi
+API_KEY=$(cat "$API_KEY_FILE")
+
+cat > /opt/pidoors/conf/config.json <<EOF
 {
   "docker_door": {
     "sqladdr": "db",
@@ -63,23 +85,28 @@ cat > /opt/pidoors/conf/config.json <<'EOF'
     "latch_gpio": 18,
     "unlock_value": 1,
     "open_delay": 5,
-    "reader_type": "wiegand"
+    "reader_type": "wiegand",
+    "api_key": "$API_KEY",
+    "listen_port": 8443
   }
 }
 EOF
 
 # ── Register door in database ──
 python3 -c "
-import pymysql
+import pymysql, os
 db = pymysql.connect(host='db', user='pidoors', password='pidoors_pass', database='access')
 cur = db.cursor()
 cur.execute(\"\"\"
     INSERT IGNORE INTO doors (name, location, description)
     VALUES ('docker_door', 'Docker Test', 'Simulated controller')
 \"\"\")
+api_key = open('/opt/pidoors/conf/.api_key').read().strip()
+cur.execute('UPDATE doors SET api_key = %s, listen_port = %s WHERE name = %s',
+            (api_key, 8443, 'docker_door'))
 db.commit()
 db.close()
-print('Controller: door registered in database')
+print('Controller: door registered with push API key')
 "
 
 # ── Launch controller ──

@@ -32,6 +32,11 @@ pytest.ini
 requirements-test.txt
 tests/
 
+# React SPA build artifacts
+pidoors-ui/node_modules/
+pidoors-ui/dist/
+pidoors-ui/.tsbuildinfo
+
 # IDE / tools
 .vscode/
 .idea/
