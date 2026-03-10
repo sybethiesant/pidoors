@@ -615,6 +615,24 @@ EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 -- --------------------------------------------------------
+-- v2.7.0 - Held-open state columns for doors
+-- --------------------------------------------------------
+
+-- held_open: reported by controller (0=normal, 1=held open)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'held_open');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `held_open` tinyint(1) NOT NULL DEFAULT 0 AFTER `locked`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- hold_requested: set by web UI (0=none, 1=hold open, 2=release)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'hold_requested');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `hold_requested` tinyint(1) NOT NULL DEFAULT 0 AFTER `held_open`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- --------------------------------------------------------
 -- Notification log table for deduplication
 -- --------------------------------------------------------
 

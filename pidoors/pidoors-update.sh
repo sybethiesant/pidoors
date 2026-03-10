@@ -74,6 +74,89 @@ db.close()
 " 2>/dev/null || log "Warning: failed to update DB status"
 }
 
+run_db_migration() {
+    local migration_file="$1"
+    local config_file="$INSTALL_DIR/conf/config.json"
+
+    if [ ! -f "$migration_file" ]; then
+        log "No migration file found, skipping database migration"
+        return
+    fi
+
+    if [ ! -f "$config_file" ] || [ -z "$ZONE" ]; then
+        log "Warning: cannot run migration — missing config or zone"
+        return
+    fi
+
+    log "Running database migration..."
+
+    PIDOORS_CONFIG="$config_file" PIDOORS_ZONE="$ZONE" \
+    PIDOORS_MIGRATION="$migration_file" \
+    python3 -c "
+import os, json, pymysql
+
+cfg = json.load(open(os.environ['PIDOORS_CONFIG']))
+zc = cfg[os.environ['PIDOORS_ZONE']]
+ca_path = os.path.join(os.path.dirname(os.environ['PIDOORS_CONFIG']), 'ca.pem')
+db = None
+
+# Try TLS first, fall back to plain
+for use_tls in [True, False]:
+    try:
+        kw = dict(host=zc['sqladdr'], user=zc['sqluser'], password=zc['sqlpass'],
+                  database=zc['sqldb'], connect_timeout=10)
+        if use_tls and os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
+            kw['ssl'] = {'ca': ca_path}
+        else:
+            kw['ssl_disabled'] = True
+            if use_tls:
+                continue
+        db = pymysql.connect(**kw)
+        break
+    except Exception as e:
+        err = str(e).upper()
+        if use_tls and ('SSL' in err or 'CERTIFICATE' in err or 'TLS' in err):
+            continue
+        raise
+if db is None:
+    raise RuntimeError('Could not connect to database')
+
+# Read migration SQL and split into individual statements
+with open(os.environ['PIDOORS_MIGRATION'], 'r') as f:
+    sql = f.read()
+
+c = db.cursor()
+statements = []
+current = []
+for line in sql.split('\n'):
+    stripped = line.strip()
+    if stripped.startswith('--') or stripped == '':
+        continue
+    current.append(line)
+    if stripped.endswith(';'):
+        stmt = '\n'.join(current).strip()
+        if stmt.endswith(';'):
+            stmt = stmt[:-1].strip()
+        if stmt:
+            statements.append(stmt)
+        current = []
+
+errors = 0
+for stmt in statements:
+    try:
+        c.execute(stmt)
+    except Exception as e:
+        # Migrations are idempotent — ignore duplicate column/table errors
+        errors += 1
+
+db.commit()
+db.close()
+print('Migration done: %d statements executed, %d skipped (already applied)' % (len(statements) - errors, errors))
+" 2>&1 | while read -r line; do log "$line"; done
+
+    log "Database migration step completed"
+}
+
 fail() {
     local message="$1"
     log "Error: $message"
@@ -233,6 +316,13 @@ if [ -d "$SRC_DIR/readers" ]; then
     done
 fi
 
+# Database migration file (prefer pidoors/ copy, fall back to root)
+if [ -f "$SRC_DIR/database_migration.sql" ]; then
+    copy_file "$SRC_DIR/database_migration.sql" "$INSTALL_DIR/database_migration.sql"
+elif [ -f "$EXTRACTED/database_migration.sql" ]; then
+    copy_file "$EXTRACTED/database_migration.sql" "$INSTALL_DIR/database_migration.sql"
+fi
+
 # Check for failures before updating VERSION
 if [ "$FAILED" -gt 0 ]; then
     # Fix ownership on whatever was copied, then restart
@@ -271,6 +361,9 @@ NEW_VERSION="$LATEST_VERSION"
 if [ -f "$INSTALL_DIR/VERSION" ]; then
     NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" | tr -d '[:space:]')
 fi
+
+# Run database migration before marking success
+run_db_migration "$INSTALL_DIR/database_migration.sql"
 
 # Update database — only mark success after everything worked
 log "Updating database status..."

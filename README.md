@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.17.0-green)
+![Version](https://img.shields.io/badge/version-2.17.1-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -569,7 +569,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.17.0** - Production Ready
+**Current Version: 2.17.1** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -581,6 +581,10 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.17.1 (March 2026)
+- **Fix**: Controller update now runs database migrations automatically — v2.17.0 controller update broke doors because new code referenced `held_open`/`hold_requested` columns that didn't exist yet
+- **Fix**: Root `database_migration.sql` was missing the `held_open`/`hold_requested` column migrations added in v2.17.0
 
 ### Version 2.17.0 (March 2026)
 - **Feature**: Held-open door mode — master cards can triple-scan to hold a door permanently open, single scan to release
