@@ -360,21 +360,15 @@ try {
                         <a href="editdoor.php?name=<?php echo urlencode($door['name']); ?>" class="btn btn-sm btn-outline-primary">Edit</a>
                         <?php if ($door['status'] === 'online'): ?>
                             <?php if (!empty($door['held_open'])): ?>
-                                <button type="button" class="btn btn-sm btn-outline-danger btn-hold-action" data-door="<?php echo htmlspecialchars($door['name']); ?>" data-action="release">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>Release
-                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger btn-hold-action" data-door="<?php echo htmlspecialchars($door['name']); ?>" data-action="release">Unhold</button>
                             <?php else: ?>
                                 <form method="post" class="d-inline">
                                     <?php echo csrf_field(); ?>
                                     <input type="hidden" name="action" value="unlock">
                                     <input type="hidden" name="door" value="<?php echo htmlspecialchars($door['name']); ?>">
-                                    <button type="submit" class="btn btn-sm btn-outline-warning">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Unlock
-                                    </button>
+                                    <button type="submit" class="btn btn-sm btn-outline-warning">Unlock</button>
                                 </form>
-                                <button type="button" class="btn btn-sm btn-outline-secondary btn-hold-action" data-door="<?php echo htmlspecialchars($door['name']); ?>" data-action="hold">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Hold Open
-                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary btn-hold-action" data-door="<?php echo htmlspecialchars($door['name']); ?>" data-action="hold">Hold</button>
                             <?php endif; ?>
                         <?php endif; ?>
                         <?php if ($is_outdated && $door['status'] === 'online' && !$door['update_requested']): ?>
