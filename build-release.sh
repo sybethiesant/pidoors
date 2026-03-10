@@ -99,6 +99,12 @@ cp -r pidoorserv "$STAGING/"
 # Remove config.php if it exists (it's site-specific)
 rm -f "$STAGING/pidoorserv/includes/config.php"
 
+# Bundle pre-built SPA inside pidoorserv/ so that old v2.x updaters
+# (which only copy pidoorserv/*) will also copy the SPA dist files.
+# The new update.php auto-deploys this on first load after upgrade.
+mkdir -p "$STAGING/pidoorserv/pidoors-ui-dist"
+cp -r pidoors-ui/dist/* "$STAGING/pidoorserv/pidoors-ui-dist/"
+
 # Door controller
 cp -r pidoors "$STAGING/"
 

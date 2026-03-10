@@ -85,6 +85,24 @@ if (($update_settings['server_version'] ?? '') !== $current_version) {
     } catch (PDOException $e) {
         // ignore
     }
+
+    // Post-upgrade: deploy bundled React SPA if present but not yet deployed.
+    // When upgrading from v2.x, the old updater copies pidoorserv/* (including
+    // pidoors-ui-dist/) but can't deploy the SPA. This block handles it on
+    // first page load after the upgrade.
+    $ui_root = '/var/www/pidoors-ui';
+    $bundled_dist = rtrim($config['apppath'], '/') . '/pidoors-ui-dist';
+    if (is_dir($bundled_dist) && file_exists($bundled_dist . '/index.html')) {
+        if (!file_exists($ui_root . '/index.html') || !is_dir($ui_root)) {
+            if (!is_dir($ui_root)) @mkdir($ui_root, 0755, true);
+            if (is_dir($ui_root) && is_writable($ui_root)) {
+                @exec('cp -r ' . escapeshellarg($bundled_dist) . '/* ' . escapeshellarg($ui_root) . '/');
+                @exec('chown -R www-data:www-data ' . escapeshellarg($ui_root) . ' 2>/dev/null');
+            }
+        }
+        // Clean up the bundled dist from the web root (it's been deployed)
+        @exec('rm -rf ' . escapeshellarg($bundled_dist));
+    }
 }
 
 $github_latest = $update_settings['github_latest_version'] ?? '';

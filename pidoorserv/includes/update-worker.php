@@ -122,6 +122,7 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
         $sub = substr($item->getPathname(), strlen($apppath) + 1);
         if ($sub === 'includes' . DIRECTORY_SEPARATOR . 'config.php' || $sub === 'includes/config.php') continue;
         if ($sub === 'VERSION' || $sub === 'database_migration.sql') continue;
+        if (str_starts_with($sub, 'pidoors-ui-dist') || str_starts_with($sub, 'pidoors-ui-dist' . DIRECTORY_SEPARATOR)) continue;
         if (str_starts_with(basename($sub), '.')) continue;
 
         $release_path = $web_src . '/' . str_replace(DIRECTORY_SEPARATOR, '/', $sub);
@@ -160,7 +161,11 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
     $ui_root = '/var/www/pidoors-ui';
 
     // Check for pre-built SPA dist (from build-release.sh)
+    // Try root-level first, then inside pidoorserv/ (for v2.x updater compat)
     $ui_dist_src = $extracted . '/pidoors-ui-dist';
+    if (!is_dir($ui_dist_src) || !file_exists($ui_dist_src . '/index.html')) {
+        $ui_dist_src = $web_src . '/pidoors-ui-dist';
+    }
     // Also check for source to build from
     $ui_src = $extracted . '/pidoors-ui';
 
@@ -206,6 +211,12 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
         } else {
             $details[] = 'Node.js not installed — run server-update.sh to deploy React UI';
         }
+    }
+
+    // Clean up bundled dist from web root (it's been deployed or isn't needed)
+    $bundled_in_webroot = $apppath . '/pidoors-ui-dist';
+    if (is_dir($bundled_in_webroot)) {
+        @exec('rm -rf ' . escapeshellarg($bundled_in_webroot));
     }
 
     // --- Database migration ---
