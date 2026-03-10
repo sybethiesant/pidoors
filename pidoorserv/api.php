@@ -18,6 +18,28 @@ secure_session_start($config);
 
 header('Content-Type: application/json');
 
+// Load configured timezone for timestamp conversion
+$app_timezone = null;
+try {
+    $tz_row = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'timezone'")->fetch();
+    if ($tz_row && !empty($tz_row['setting_value'])) {
+        $app_timezone = new DateTimeZone($tz_row['setting_value']);
+    }
+} catch (Exception $e) {}
+
+// Convert a DB datetime string to the app's configured timezone
+function convert_tz(string $datetime): string {
+    global $app_timezone;
+    if (!$app_timezone || empty($datetime)) return $datetime;
+    try {
+        $dt = new DateTime($datetime, new DateTimeZone(date_default_timezone_get()));
+        $dt->setTimezone($app_timezone);
+        return $dt->format('Y-m-d H:i:s');
+    } catch (Exception $e) {
+        return $datetime;
+    }
+}
+
 // Parse route — supports both ?route= (Docker gateway) and PATH_INFO (production nginx)
 $route = trim($_GET['route'] ?? $_SERVER['PATH_INFO'] ?? '', '/');
 $method = $_SERVER['REQUEST_METHOD'];
@@ -242,6 +264,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
         ")->fetchAll(PDO::FETCH_ASSOC);
         foreach ($recent as &$r) {
             $r['Granted'] = (int)$r['Granted'];
+            $r['Date'] = convert_tz($r['Date']);
         }
         unset($r);
 
@@ -818,7 +841,7 @@ if ($resource === 'logs') {
         foreach ($logs as $log) {
             $name = trim(($log['firstname'] ?? '') . ' ' . ($log['lastname'] ?? ''));
             fputcsv($out, [
-                $log['Date'],
+                convert_tz($log['Date']),
                 $name ?: "User #{$log['user_id']}",
                 $log['card_id'] ?? '',
                 $log['user_id'],
@@ -863,7 +886,10 @@ if ($resource === 'logs') {
         $stmt = $pdo_access->prepare($sql);
         $stmt->execute($params);
         $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($logs as &$l) { $l['Granted'] = (int)$l['Granted']; }
+        foreach ($logs as &$l) {
+            $l['Granted'] = (int)$l['Granted'];
+            $l['Date'] = convert_tz($l['Date']);
+        }
         unset($l);
 
         json_success(['logs' => $logs, 'total' => $total, 'page' => $page, 'limit' => $limit, 'pages' => ceil($total / $limit)]);
@@ -1398,7 +1424,10 @@ if ($resource === 'audit') {
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($logs as &$l) { $l['id'] = (int)$l['id']; }
+        foreach ($logs as &$l) {
+            $l['id'] = (int)$l['id'];
+            if (!empty($l['created_at'])) $l['created_at'] = convert_tz($l['created_at']);
+        }
         unset($l);
 
         // Get distinct event types for filter dropdown
