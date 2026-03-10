@@ -418,8 +418,6 @@ document.addEventListener('DOMContentLoaded', function() {
     var pollTimer = null;
     var csrfToken = '<?php echo htmlspecialchars(generate_csrf_token()); ?>';
     var isAdmin = <?php echo is_admin() ? 'true' : 'false'; ?>;
-    var unlockSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>';
-    var lockSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>';
 
     function escHtml(s) {
         if (!s) return '';
@@ -503,10 +501,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         html += '<span class="badge bg-' + statusClass + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
                         if (status === 'online' && isAdmin && !parseInt(door.unlock_requested)) {
                             if (heldOpen) {
-                                html += '<button type="button" class="btn btn-sm btn-outline-danger py-0 px-1 btn-hold" data-door="' + escHtml(door.name) + '" data-action="release" title="Release Hold">' + lockSvg + '</button>';
+                                html += '<button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 btn-hold" data-door="' + escHtml(door.name) + '" data-action="release">Unhold</button>';
                             } else {
-                                html += '<button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="' + escHtml(door.name) + '" title="Unlock">' + unlockSvg + '</button>';
-                                html += '<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 btn-hold" data-door="' + escHtml(door.name) + '" data-action="hold" title="Hold Open">' + unlockSvg + '</button>';
+                                html += '<button type="button" class="btn btn-sm btn-outline-warning py-0 px-2 btn-unlock" data-door="' + escHtml(door.name) + '">Unlock</button>';
+                                html += '<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 btn-hold" data-door="' + escHtml(door.name) + '" data-action="hold">Hold</button>';
                             }
                         }
                         html += '</div></li>';

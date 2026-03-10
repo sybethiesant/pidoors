@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.17.2-green)
+![Version](https://img.shields.io/badge/version-2.17.3-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -569,7 +569,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.17.2** - Production Ready
+**Current Version: 2.17.3** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -581,6 +581,9 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.17.3 (March 2026)
+- **Fix**: Dashboard AJAX refresh reverted action buttons back to padlock icons every 2 seconds
 
 ### Version 2.17.2 (March 2026)
 - **UI**: Replaced padlock icon buttons with clear text labels — "Unlock", "Hold", "Unhold"
