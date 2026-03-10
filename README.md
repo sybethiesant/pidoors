@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.0.3-green)
+![Version](https://img.shields.io/badge/version-3.0.4-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -594,7 +594,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.0.0** - Production Ready
+**Current Version: 3.0.4** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -606,6 +606,11 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.0.4 (March 2026)
+- **Feature**: Add card setup from access logs — denied unknown cards show "Set Up Card" button linking to pre-filled edit form
+- **Fix**: Door unlock/lock/hold status now updates instantly on dashboard after push command (was waiting up to 60s for controller poll)
+- **Fix**: Gitignore release tarballs
 
 ### Version 3.0.0 (March 2026)
 - **React SPA**: Complete frontend rewrite — legacy PHP pages replaced with a modern React + TypeScript + TailwindCSS single-page application
