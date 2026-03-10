@@ -193,7 +193,7 @@ if ($resource === 'auth') {
 
         case 'me':
             if (!is_logged_in()) json_error('Not authenticated', 401);
-            $version = trim(@file_get_contents($config['apppath'] . '../VERSION') ?: 'unknown');
+            $version = trim(@file_get_contents($config['apppath'] . 'VERSION') ?: 'unknown');
             json_success(['user' => [
                 'id' => (int)$_SESSION['user_id'],
                 'username' => $_SESSION['username'],
