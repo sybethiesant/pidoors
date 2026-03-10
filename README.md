@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-2.6.14-green)
+![Version](https://img.shields.io/badge/version-2.17.0-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -569,7 +569,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 2.6.4** - Production Ready
+**Current Version: 2.17.0** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -581,6 +581,14 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 2.17.0 (March 2026)
+- **Feature**: Held-open door mode — master cards can triple-scan to hold a door permanently open, single scan to release
+- **Feature**: Only master cards can toggle held-open state; regular cards never trigger it
+- **Feature**: Dashboard and Doors page show orange "Held Open" badge when a door is held open
+- **Feature**: Admin UI buttons to remotely hold open or release a door (via `hold_requested` column)
+- **Feature**: Controller reports `held_open` state to database via heartbeat and command poll loop
+- **Database**: Added `held_open` and `hold_requested` columns to `doors` table
 
 ### Version 2.6.4 (March 2026)
 - **Fix**: "Failed to update door" self-heals — editdoor.php auto-adds missing columns and retries if the UPDATE fails due to missing schema

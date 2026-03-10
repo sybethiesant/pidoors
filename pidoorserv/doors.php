@@ -37,6 +37,54 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'door_status') {
     exit();
 }
 
+// AJAX endpoint: hold/release a door (POST)
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'hold' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $config = include(__DIR__ . '/includes/config.php');
+    require_once __DIR__ . '/includes/security.php';
+    require_once $config['apppath'] . 'database/db_connection.php';
+    secure_session_start($config);
+
+    header('Content-Type: application/json');
+    if (!is_logged_in() || !is_admin()) {
+        echo json_encode(['ok' => false, 'msg' => 'Unauthorized']);
+        exit();
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true);
+    $door_name = htmlspecialchars(trim($input['door'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $action = $input['action'] ?? '';
+    $csrf = $input['csrf_token'] ?? '';
+
+    if (!verify_csrf_token($csrf)) {
+        echo json_encode(['ok' => false, 'msg' => 'Invalid token']);
+        exit();
+    }
+
+    if (!in_array($action, ['hold', 'release'])) {
+        echo json_encode(['ok' => false, 'msg' => 'Invalid action']);
+        exit();
+    }
+
+    try {
+        $stmt = $pdo_access->prepare("SELECT status FROM doors WHERE name = ?");
+        $stmt->execute([$door_name]);
+        $door_check = $stmt->fetch();
+        if ($door_check && $door_check['status'] === 'online') {
+            $hold_val = ($action === 'hold') ? 1 : 2;
+            $stmt = $pdo_access->prepare("UPDATE doors SET hold_requested = ? WHERE name = ?");
+            $stmt->execute([$hold_val, $door_name]);
+            $label = ($action === 'hold') ? 'Hold open' : 'Release hold';
+            log_security_event($pdo, 'remote_hold', $_SESSION['user_id'], "$label requested for door: $door_name");
+            echo json_encode(['ok' => true, 'msg' => "$label command sent"]);
+        } else {
+            echo json_encode(['ok' => false, 'msg' => 'Door is not online']);
+        }
+    } catch (PDOException $e) {
+        echo json_encode(['ok' => false, 'msg' => 'Database error']);
+    }
+    exit();
+}
+
 $title = 'Doors';
 require_once './includes/header.php';
 
@@ -247,7 +295,9 @@ try {
                     <?php endif; ?>
                     <p class="mb-1">
                         <strong>Lock Status:</strong>
-                        <?php if (isset($door['locked'])): ?>
+                        <?php if (!empty($door['held_open'])): ?>
+                            <span class="badge" style="background-color:#fd7e14;color:#fff;">Held Open</span>
+                        <?php elseif (isset($door['locked'])): ?>
                             <span class="badge <?php echo $door['locked'] ? 'bg-success' : 'bg-warning'; ?>">
                                 <?php echo $door['locked'] ? 'Locked' : 'Unlocked'; ?>
                             </span>
@@ -309,14 +359,23 @@ try {
                     <div>
                         <a href="editdoor.php?name=<?php echo urlencode($door['name']); ?>" class="btn btn-sm btn-outline-primary">Edit</a>
                         <?php if ($door['status'] === 'online'): ?>
-                            <form method="post" class="d-inline">
-                                <?php echo csrf_field(); ?>
-                                <input type="hidden" name="action" value="unlock">
-                                <input type="hidden" name="door" value="<?php echo htmlspecialchars($door['name']); ?>">
-                                <button type="submit" class="btn btn-sm btn-outline-warning">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Unlock
+                            <?php if (!empty($door['held_open'])): ?>
+                                <button type="button" class="btn btn-sm btn-outline-danger btn-hold-action" data-door="<?php echo htmlspecialchars($door['name']); ?>" data-action="release">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>Release
                                 </button>
-                            </form>
+                            <?php else: ?>
+                                <form method="post" class="d-inline">
+                                    <?php echo csrf_field(); ?>
+                                    <input type="hidden" name="action" value="unlock">
+                                    <input type="hidden" name="door" value="<?php echo htmlspecialchars($door['name']); ?>">
+                                    <button type="submit" class="btn btn-sm btn-outline-warning">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Unlock
+                                    </button>
+                                </form>
+                                <button type="button" class="btn btn-sm btn-outline-secondary btn-hold-action" data-door="<?php echo htmlspecialchars($door['name']); ?>" data-action="hold">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Hold Open
+                                </button>
+                            <?php endif; ?>
                         <?php endif; ?>
                         <?php if ($is_outdated && $door['status'] === 'online' && !$door['update_requested']): ?>
                             <form method="post" class="d-inline">
@@ -515,8 +574,11 @@ try {
                 if (door.last_seen) html += '<p class="mb-1"><strong>Last Seen:</strong> ' + formatDate(door.last_seen) + '</p>';
 
                 // Lock status
+                var heldOpen = parseInt(door.held_open);
                 html += '<p class="mb-1"><strong>Lock Status:</strong> ';
-                if (door.locked !== null && door.locked !== undefined) {
+                if (heldOpen) {
+                    html += '<span class="badge" style="background-color:#fd7e14;color:#fff;">Held Open</span>';
+                } else if (door.locked !== null && door.locked !== undefined) {
                     var locked = parseInt(door.locked);
                     html += '<span class="badge ' + (locked ? 'bg-success' : 'bg-warning') + '">' + (locked ? 'Locked' : 'Unlocked') + '</span>';
                 } else {
@@ -555,13 +617,20 @@ try {
                 html += '<div>';
                 html += '<a href="editdoor.php?name=' + encodeURIComponent(door.name) + '" class="btn btn-sm btn-outline-primary">Edit</a> ';
                 if (status === 'online') {
-                    html += '<form method="post" class="d-inline">';
-                    html += '<input type="hidden" name="csrf_token" value="' + csrfToken + '">';
-                    html += '<input type="hidden" name="action" value="unlock">';
-                    html += '<input type="hidden" name="door" value="' + escHtml(door.name) + '">';
-                    html += '<button type="submit" class="btn btn-sm btn-outline-warning">';
-                    html += '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Unlock</button>';
-                    html += '</form> ';
+                    if (heldOpen) {
+                        html += '<button type="button" class="btn btn-sm btn-outline-danger btn-hold-action" data-door="' + escHtml(door.name) + '" data-action="release">';
+                        html += '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>Release</button> ';
+                    } else {
+                        html += '<form method="post" class="d-inline">';
+                        html += '<input type="hidden" name="csrf_token" value="' + csrfToken + '">';
+                        html += '<input type="hidden" name="action" value="unlock">';
+                        html += '<input type="hidden" name="door" value="' + escHtml(door.name) + '">';
+                        html += '<button type="submit" class="btn btn-sm btn-outline-warning">';
+                        html += '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Unlock</button>';
+                        html += '</form> ';
+                        html += '<button type="button" class="btn btn-sm btn-outline-secondary btn-hold-action" data-door="' + escHtml(door.name) + '" data-action="hold">';
+                        html += '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="me-1"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>Hold Open</button> ';
+                    }
                 }
                 if (isOutdated && status === 'online' && !parseInt(door.update_requested)) {
                     html += '<form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="' + csrfToken + '">';
@@ -587,6 +656,30 @@ try {
             $('[data-bs-toggle="tooltip"]').each(function() { new bootstrap.Tooltip(this); });
         });
     }
+
+    // Hold/Release button handler (delegated for dynamically added buttons)
+    $(document).on('click', '.btn-hold-action', function() {
+        var btn = $(this);
+        var doorName = btn.data('door');
+        var action = btn.data('action');
+        btn.prop('disabled', true);
+        $.ajax({
+            url: 'doors.php?ajax=hold',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({door: doorName, action: action, csrf_token: csrfToken}),
+            dataType: 'json',
+            success: function(res) {
+                if (res.ok) {
+                    refreshDoors();
+                } else {
+                    alert(res.msg || 'Action failed');
+                    btn.prop('disabled', false);
+                }
+            },
+            error: function() { alert('Request failed'); btn.prop('disabled', false); }
+        });
+    });
 
     pollTimer = setInterval(refreshDoors, 2000);
 

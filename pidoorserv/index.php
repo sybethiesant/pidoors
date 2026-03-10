@@ -44,6 +44,54 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'unlock' && $_SERVER['REQUEST_METH
     exit();
 }
 
+// AJAX endpoint: hold/release a door (POST)
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'hold' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $config = include(__DIR__ . '/includes/config.php');
+    require_once __DIR__ . '/includes/security.php';
+    require_once $config['apppath'] . 'database/db_connection.php';
+    secure_session_start($config);
+
+    header('Content-Type: application/json');
+    if (!is_logged_in() || !is_admin()) {
+        echo json_encode(['ok' => false, 'msg' => 'Unauthorized']);
+        exit();
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true);
+    $door_name = htmlspecialchars(trim($input['door'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $action = $input['action'] ?? '';
+    $csrf = $input['csrf_token'] ?? '';
+
+    if (!verify_csrf_token($csrf)) {
+        echo json_encode(['ok' => false, 'msg' => 'Invalid token']);
+        exit();
+    }
+
+    if (!in_array($action, ['hold', 'release'])) {
+        echo json_encode(['ok' => false, 'msg' => 'Invalid action']);
+        exit();
+    }
+
+    try {
+        $stmt = $pdo_access->prepare("SELECT status FROM doors WHERE name = ?");
+        $stmt->execute([$door_name]);
+        $door_check = $stmt->fetch();
+        if ($door_check && $door_check['status'] === 'online') {
+            $hold_val = ($action === 'hold') ? 1 : 2;
+            $stmt = $pdo_access->prepare("UPDATE doors SET hold_requested = ? WHERE name = ?");
+            $stmt->execute([$hold_val, $door_name]);
+            $label = ($action === 'hold') ? 'Hold open' : 'Release hold';
+            log_security_event($pdo, 'remote_hold', $_SESSION['user_id'], "$label requested for door: $door_name");
+            echo json_encode(['ok' => true, 'msg' => "$label command sent"]);
+        } else {
+            echo json_encode(['ok' => false, 'msg' => 'Door is not online']);
+        }
+    } catch (PDOException $e) {
+        echo json_encode(['ok' => false, 'msg' => 'Database error']);
+    }
+    exit();
+}
+
 // AJAX endpoint: return dashboard data as JSON (no HTML)
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard') {
     $config = include(__DIR__ . '/includes/config.php');
@@ -67,7 +115,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard') {
         $today_granted = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 1")->fetchColumn();
         $today_denied = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 0")->fetchColumn();
 
-        $doors = $pdo_access->query("SELECT name, location, status, locked, unlock_requested FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+        $doors = $pdo_access->query("SELECT name, location, status, locked, held_open, hold_requested, unlock_requested FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
         $recent = $pdo_access->query("
             SELECT l.Date, l.Location, l.Granted, l.user_id, c.firstname, c.lastname
@@ -275,16 +323,27 @@ try {
                                     <?php endif; ?>
                                 </div>
                                 <div class="d-flex align-items-center gap-1 flex-wrap">
-                                    <?php if (!empty($door['unlock_requested'])): ?>
+                                    <?php if (!empty($door['held_open'])): ?>
+                                        <span class="badge lock-badge bg-warning text-dark" style="background-color: #fd7e14 !important; color: #fff !important;">Held Open</span>
+                                    <?php elseif (!empty($door['unlock_requested'])): ?>
                                         <span class="badge lock-badge bg-info">Unlocking</span>
                                     <?php elseif (isset($door['locked'])): ?>
                                         <span class="badge lock-badge <?php echo $door['locked'] ? 'bg-success' : 'bg-warning text-dark'; ?>"><?php echo $door['locked'] ? 'Locked' : 'Unlocked'; ?></span>
                                     <?php endif; ?>
                                     <span class="badge bg-<?php echo $statusClass; ?>"><?php echo ucfirst($status); ?></span>
                                     <?php if ($status === 'online' && is_admin() && empty($door['unlock_requested'])): ?>
-                                        <button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="<?php echo htmlspecialchars($door['name']); ?>" title="Unlock">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
-                                        </button>
+                                        <?php if (!empty($door['held_open'])): ?>
+                                            <button type="button" class="btn btn-sm btn-outline-danger py-0 px-1 btn-hold" data-door="<?php echo htmlspecialchars($door['name']); ?>" data-action="release" title="Release Hold">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                                            </button>
+                                        <?php else: ?>
+                                            <button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="<?php echo htmlspecialchars($door['name']); ?>" title="Unlock">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 btn-hold" data-door="<?php echo htmlspecialchars($door['name']); ?>" data-action="hold" title="Hold Open">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
+                                            </button>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </div>
                             </li>
@@ -366,6 +425,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var csrfToken = '<?php echo htmlspecialchars(generate_csrf_token()); ?>';
     var isAdmin = <?php echo is_admin() ? 'true' : 'false'; ?>;
     var unlockSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>';
+    var lockSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>';
 
     function escHtml(s) {
         if (!s) return '';
@@ -432,12 +492,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     $.each(data.doors, function(i, door) {
                         var status = door.status || 'unknown';
                         var statusClass = status === 'online' ? 'success' : status === 'offline' ? 'danger' : 'secondary';
+                        var heldOpen = parseInt(door.held_open);
                         html += '<li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-1">';
                         html += '<div class="me-auto"><strong>' + escHtml(door.name) + '</strong>';
                         if (door.location) html += ' <small class="text-muted ms-1">' + escHtml(door.location) + '</small>';
                         html += '</div>';
                         html += '<div class="d-flex align-items-center gap-1 flex-wrap">';
-                        if (parseInt(door.unlock_requested)) {
+                        if (heldOpen) {
+                            html += '<span class="badge lock-badge" style="background-color:#fd7e14;color:#fff;">Held Open</span>';
+                        } else if (parseInt(door.unlock_requested)) {
                             html += '<span class="badge lock-badge bg-info">Unlocking</span>';
                         } else if (door.locked !== null && door.locked !== undefined) {
                             var locked = parseInt(door.locked);
@@ -445,7 +508,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                         html += '<span class="badge bg-' + statusClass + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</span>';
                         if (status === 'online' && isAdmin && !parseInt(door.unlock_requested)) {
-                            html += '<button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="' + escHtml(door.name) + '" title="Unlock">' + unlockSvg + '</button>';
+                            if (heldOpen) {
+                                html += '<button type="button" class="btn btn-sm btn-outline-danger py-0 px-1 btn-hold" data-door="' + escHtml(door.name) + '" data-action="release" title="Release Hold">' + lockSvg + '</button>';
+                            } else {
+                                html += '<button type="button" class="btn btn-sm btn-outline-warning py-0 px-1 btn-unlock" data-door="' + escHtml(door.name) + '" title="Unlock">' + unlockSvg + '</button>';
+                                html += '<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 btn-hold" data-door="' + escHtml(door.name) + '" data-action="hold" title="Hold Open">' + unlockSvg + '</button>';
+                            }
                         }
                         html += '</div></li>';
                     });
@@ -505,6 +573,37 @@ document.addEventListener('DOMContentLoaded', function() {
                     btn.hide();
                 } else {
                     alert(res.msg || 'Unlock failed');
+                    btn.prop('disabled', false);
+                }
+            },
+            error: function() { alert('Request failed'); btn.prop('disabled', false); }
+        });
+    });
+
+    // Hold/Release button handler (delegated for dynamically added buttons)
+    $(document).on('click', '.btn-hold', function() {
+        var btn = $(this);
+        var doorName = btn.data('door');
+        var action = btn.data('action');
+        btn.prop('disabled', true);
+        $.ajax({
+            url: 'index.php?ajax=hold',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({door: doorName, action: action, csrf_token: csrfToken}),
+            dataType: 'json',
+            success: function(res) {
+                if (res.ok) {
+                    var row = btn.closest('li');
+                    var lockBadge = row.find('.lock-badge');
+                    if (action === 'hold') {
+                        if (lockBadge.length) lockBadge.attr('class', 'badge lock-badge').attr('style', 'background-color:#fd7e14;color:#fff;').text('Held Open');
+                    } else {
+                        if (lockBadge.length) lockBadge.attr('class', 'badge lock-badge bg-success').removeAttr('style').text('Locked');
+                    }
+                    btn.hide();
+                } else {
+                    alert(res.msg || 'Action failed');
                     btn.prop('disabled', false);
                 }
             },

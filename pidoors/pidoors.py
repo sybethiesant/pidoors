@@ -1031,7 +1031,7 @@ def lookup_card(card_id, facility, user_id, bstr):
         # Grant master card access
         description = master_info.get('description', 'Master')
         report(f"Master card access granted: {description}")
-        open_door(user_id, "Master")
+        open_door(user_id, "Master", is_master=True)
         log_access(user_id, card_id, facility, True, "Master card")
         return
 
@@ -1137,7 +1137,7 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
 
         if cursor.fetchone():
             report("Master card access via database")
-            open_door(user_id, "Master")
+            open_door(user_id, "Master", is_master=True)
             cursor.execute("""
                 INSERT INTO logs (user_id, Date, Granted, Location, doorip)
                 VALUES (%s, %s, 1, %s, %s)
@@ -1346,8 +1346,10 @@ def is_holiday_denied_db(cursor, now):
     return cursor.fetchone() is not None
 
 
-def open_door(user_id, name):
-    """Handle door open logic with repeat swipe detection"""
+def open_door(user_id, name, is_master=False):
+    """Handle door open logic with repeat swipe detection.
+    Only master cards can toggle held-open state.
+    A single master scan releases held-open; triple scan enters it."""
     global last_card, repeat_read_timeout, repeat_read_count
 
     now = time.time()
@@ -1365,18 +1367,20 @@ def open_door(user_id, name):
 
     zone_config = config.get(zone, {})
 
-    if current_repeat_count >= 2:
-        # Triple swipe - toggle permanent lock/unlock
-        zone_config["unlocked"] = not zone_config.get("unlocked", False)
-
-        if zone_config["unlocked"]:
-            report(f"{zone} UNLOCKED permanently by {name}")
-            unlock_door()
-            log_door_event('unlock', f"By {name}")
-        else:
-            report(f"{zone} LOCKED by {name}")
-            lock_door()
-            log_door_event('lock', f"By {name}")
+    if is_master and zone_config.get("unlocked"):
+        # Single master scan while held-open -> release hold
+        zone_config["unlocked"] = False
+        report(f"{zone} hold released by {name}")
+        lock_door()
+        log_door_event('lock', f"Hold released by {name}")
+        with card_lock:
+            repeat_read_count = 0
+    elif is_master and current_repeat_count >= 2:
+        # Triple master scan -> enter held-open
+        zone_config["unlocked"] = True
+        report(f"{zone} HELD OPEN by {name}")
+        unlock_door()
+        log_door_event('door_held_open', f"Held open by {name}")
     else:
         if zone_config.get("unlocked"):
             report(f"{name} entered {zone} (already unlocked)")
@@ -1550,6 +1554,7 @@ def send_heartbeat():
         zone_config = config.get(zone, {})
         with state_lock:
             locked_status = 0 if door_unlocked else 1
+        held_open_val = 1 if zone_config.get("unlocked", False) else 0
         reader = zone_config.get("reader_type", "wiegand")
 
         # Update door status with version
@@ -1559,16 +1564,17 @@ def send_heartbeat():
                 last_seen = NOW(),
                 ip_address = %s,
                 locked = %s,
+                held_open = %s,
                 controller_version = %s
             WHERE name = %s
-        """, (myip, locked_status, VERSION, zone))
+        """, (myip, locked_status, held_open_val, VERSION, zone))
 
         # Auto-register door if it doesn't exist yet
         if cursor.rowcount == 0:
             cursor.execute("""
-                INSERT INTO doors (name, ip_address, status, last_seen, locked, reader_type, controller_version)
-                VALUES (%s, %s, 'online', NOW(), %s, %s, %s)
-            """, (zone, myip, locked_status, reader, VERSION))
+                INSERT INTO doors (name, ip_address, status, last_seen, locked, held_open, reader_type, controller_version)
+                VALUES (%s, %s, 'online', NOW(), %s, %s, %s, %s)
+            """, (zone, myip, locked_status, held_open_val, reader, VERSION))
             report(f"Door '{zone}' auto-registered in database")
 
         # Clear stale "updating" status — if we're heartbeating, the update finished
@@ -1648,7 +1654,7 @@ def command_poll_loop():
 
             # Check for remote commands and read current poll interval
             cursor.execute(
-                "SELECT unlock_requested, poll_interval FROM doors WHERE name = %s",
+                "SELECT unlock_requested, hold_requested, poll_interval FROM doors WHERE name = %s",
                 (zone,)
             )
             row = cursor.fetchone()
@@ -1673,12 +1679,40 @@ def command_poll_loop():
                     if latch_gpio:
                         unlock_briefly(latch_gpio)
 
-            # Send real-time lock state AFTER processing commands
+                # Handle hold_requested from web UI
+                hold_req = int(row.get('hold_requested') or 0)
+                if hold_req == 1 and not zone_config.get("unlocked", False):
+                    zone_config["unlocked"] = True
+                    unlock_door()
+                    log_door_event('door_held_open', 'Held open by admin')
+                    report("Door held open by admin request")
+                    cursor.execute(
+                        "UPDATE doors SET hold_requested = 0, held_open = 1 WHERE name = %s",
+                        (zone,)
+                    )
+                elif hold_req == 2 and zone_config.get("unlocked", False):
+                    zone_config["unlocked"] = False
+                    lock_door()
+                    log_door_event('lock', 'Hold released by admin')
+                    report("Door hold released by admin request")
+                    cursor.execute(
+                        "UPDATE doors SET hold_requested = 0, held_open = 0 WHERE name = %s",
+                        (zone,)
+                    )
+                elif hold_req:
+                    # Stale request (e.g. hold requested but already held), just clear it
+                    cursor.execute(
+                        "UPDATE doors SET hold_requested = 0 WHERE name = %s",
+                        (zone,)
+                    )
+
+            # Send real-time lock state and held_open AFTER processing commands
             with state_lock:
                 locked_status = 0 if door_unlocked else 1
+            held_open_val = 1 if zone_config.get("unlocked", False) else 0
             cursor.execute(
-                "UPDATE doors SET locked = %s WHERE name = %s",
-                (locked_status, zone)
+                "UPDATE doors SET locked = %s, held_open = %s WHERE name = %s",
+                (locked_status, held_open_val, zone)
             )
             db.commit()
 
