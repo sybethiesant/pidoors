@@ -1650,20 +1650,32 @@ if ($resource === 'update') {
 
     if ($id === 'server' && $method === 'POST') {
         require_csrf();
-        // Run server update script
-        $script = $config['apppath'] . '../server-update.sh';
-        if (!file_exists($script)) json_error('Update script not found');
 
-        $output = [];
-        $return_code = 0;
-        exec("bash " . escapeshellarg($script) . " 2>&1", $output, $return_code);
+        // Determine target version
+        $target = '';
+        try {
+            $gh_url = 'https://api.github.com/repos/sybethiesant/pidoors/releases/latest';
+            $opts = ['http' => ['header' => "User-Agent: PiDoors\r\n", 'timeout' => 10]];
+            $ctx = stream_context_create($opts);
+            $gh_json = @file_get_contents($gh_url, false, $ctx);
+            if ($gh_json) {
+                $gh = json_decode($gh_json, true);
+                $target = ltrim($gh['tag_name'] ?? '', 'v');
+            }
+        } catch (Exception $e) {}
 
-        if ($return_code !== 0) {
-            json_error('Update failed: ' . implode("\n", $output));
+        if (empty($target)) {
+            json_error('Could not determine latest version from GitHub.');
         }
 
-        log_security_event($pdo, 'server_update', $_SESSION['user_id'], 'Server update executed via API');
-        json_success(['output' => implode("\n", $output)], 'Update completed');
+        require_once __DIR__ . '/includes/update-bootstrap.php';
+        $result = pidoors_bootstrap_update($config, $pdo_access, $pdo, $target);
+
+        if (!$result['ok']) {
+            json_error($result['msg']);
+        }
+
+        json_success(['output' => $result['msg'], 'version' => $result['version'] ?? $target], $result['msg']);
     }
 
     if ($id === 'controllers' && $method === 'GET') {

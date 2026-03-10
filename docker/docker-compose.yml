@@ -29,6 +29,7 @@ services:
         condition: service_healthy
     volumes:
       - app_data:/var/www/pidoors
+      - react_dist:/var/www/pidoors-ui
     networks:
       - pidoors-network
 
