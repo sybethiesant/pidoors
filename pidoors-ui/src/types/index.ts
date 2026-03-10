@@ -49,7 +49,7 @@ export interface Door {
 }
 
 export interface Card {
-  card_id: number;
+  card_id: string;
   user_id: string;
   facility: string;
   firstname: string;
@@ -81,7 +81,7 @@ export interface AccessLog {
   doorip: string;
   firstname?: string;
   lastname?: string;
-  card_id?: number;
+  card_id?: string;
   card_active?: number;
 }
 

@@ -205,7 +205,7 @@ export function CardsPage() {
       setSearchParams({}, { replace: true });
     } else if (editId) {
       setSearchParams({}, { replace: true });
-      getCard(parseInt(editId)).then((card) => {
+      getCard(editId).then((card) => {
         setEditCard(card);
       }).catch(() => {
         toast.error('Card not found');
@@ -240,13 +240,13 @@ export function CardsPage() {
   });
 
   const editMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<Card> }) => updateCard(id, data),
+    mutationFn: ({ id, data }: { id: string; data: Partial<Card> }) => updateCard(id, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['cards'] }); setEditCard(null); toast.success('Card updated'); },
     onError: (err: Error) => toast.error(err.message),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => deleteCard(id),
+    mutationFn: (id: string) => deleteCard(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['cards'] }); setConfirmDelete(null); toast.success('Card deleted'); },
     onError: (err: Error) => toast.error(err.message),
   });

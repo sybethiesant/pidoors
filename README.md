@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.0.4-green)
+![Version](https://img.shields.io/badge/version-3.0.5-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -594,7 +594,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.0.4** - Production Ready
+**Current Version: 3.0.5** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -606,6 +606,11 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.0.5 (March 2026)
+- **Fix**: Card edit/delete returned "Card not found" — `card_id` is a hex string (Wiegand) but API was casting to `(int)`, breaking all lookups
+- **Fix**: Card creation via API now sets `card_id` field (generates random hex if not provided), matching legacy PHP behavior
+- **Fix**: `card_id` typed as string throughout frontend (was incorrectly `number`)
 
 ### Version 3.0.4 (March 2026)
 - **Feature**: Add card setup from access logs — denied unknown cards show "Set Up Card" button linking to pre-filled edit form

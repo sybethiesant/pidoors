@@ -531,7 +531,6 @@ if ($resource === 'cards') {
             ORDER BY c.lastname, c.firstname
         ")->fetchAll(PDO::FETCH_ASSOC);
         foreach ($cards as &$c) {
-            $c['card_id'] = (int)$c['card_id'];
             $c['active'] = (int)$c['active'];
             $c['master_card'] = (int)$c['master_card'];
             $c['group_id'] = $c['group_id'] !== null ? (int)$c['group_id'] : null;
@@ -688,10 +687,9 @@ if ($resource === 'cards') {
     if ($method === 'GET' && $id !== null) {
         require_admin_auth();
         $stmt = $pdo_access->prepare("SELECT * FROM cards WHERE card_id = ?");
-        $stmt->execute([(int)$id]);
+        $stmt->execute([$id]);
         $card = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$card) json_error('Card not found', 404);
-        $card['card_id'] = (int)$card['card_id'];
         $card['active'] = (int)$card['active'];
         json_success(['card' => $card]);
     }
@@ -707,8 +705,15 @@ if ($resource === 'cards') {
         $check->execute([$user_id]);
         if ($check->fetch()) json_error('A card with this number already exists');
 
-        $stmt = $pdo_access->prepare("INSERT INTO cards (user_id, facility, firstname, lastname, doors, active, group_id, schedule_id, valid_from, valid_until, daily_scan_limit, email, phone, department, employee_id, company, title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        // Generate card_id if not provided (hex identifier for Wiegand matching)
+        $card_id = trim($input['card_id'] ?? '');
+        if (empty($card_id)) {
+            $card_id = bin2hex(random_bytes(4));
+        }
+
+        $stmt = $pdo_access->prepare("INSERT INTO cards (card_id, user_id, facility, firstname, lastname, doors, active, group_id, schedule_id, valid_from, valid_until, daily_scan_limit, email, phone, department, employee_id, company, title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt->execute([
+            $card_id,
             $user_id,
             sanitize_string($input['facility'] ?? ''),
             sanitize_string($input['firstname'] ?? ''),
@@ -729,10 +734,10 @@ if ($resource === 'cards') {
             sanitize_string($input['notes'] ?? ''),
         ]);
 
-        $new_card_id = (int)$pdo_access->lastInsertId();
+        $new_card_id = $card_id;
 
         // Handle master card
-        if (!empty($input['master_card'])) {
+        if (!empty($input['master_card']) && !empty($new_card_id)) {
             try {
                 $pdo_access->prepare("INSERT INTO master_cards (card_id, user_id, facility, description, active) VALUES (?, ?, ?, ?, 1)")
                     ->execute([$new_card_id, $user_id, sanitize_string($input['facility'] ?? ''), sanitize_string($input['firstname'] ?? '') . ' ' . sanitize_string($input['lastname'] ?? '')]);
@@ -748,7 +753,7 @@ if ($resource === 'cards') {
         require_csrf();
 
         $stmt = $pdo_access->prepare("SELECT card_id FROM cards WHERE card_id = ?");
-        $stmt->execute([(int)$id]);
+        $stmt->execute([$id]);
         if (!$stmt->fetch()) json_error('Card not found', 404);
 
         $fields = [];
@@ -770,7 +775,7 @@ if ($resource === 'cards') {
         if (empty($fields) && !isset($input['master_card'])) json_error('No fields to update');
 
         if (!empty($fields)) {
-            $params[] = (int)$id;
+            $params[] = $id;
             $pdo_access->prepare("UPDATE cards SET " . implode(', ', $fields) . " WHERE card_id = ?")->execute($params);
         }
 
@@ -778,20 +783,20 @@ if ($resource === 'cards') {
         if (isset($input['master_card'])) {
             try {
                 $mc_stmt = $pdo_access->prepare("SELECT id FROM master_cards WHERE card_id = ? AND active = 1");
-                $mc_stmt->execute([(int)$id]);
+                $mc_stmt->execute([$id]);
                 $is_master = (bool)$mc_stmt->fetch();
 
                 if ($input['master_card'] && !$is_master) {
                     // Get card details for master_cards entry
                     $card_detail = $pdo_access->prepare("SELECT user_id, facility, firstname, lastname FROM cards WHERE card_id = ?");
-                    $card_detail->execute([(int)$id]);
+                    $card_detail->execute([$id]);
                     $cd = $card_detail->fetch(PDO::FETCH_ASSOC);
                     if ($cd) {
                         $pdo_access->prepare("INSERT INTO master_cards (card_id, user_id, facility, description, active) VALUES (?, ?, ?, ?, 1)")
-                            ->execute([(int)$id, $cd['user_id'], $cd['facility'], $cd['firstname'] . ' ' . $cd['lastname']]);
+                            ->execute([$id, $cd['user_id'], $cd['facility'], $cd['firstname'] . ' ' . $cd['lastname']]);
                     }
                 } elseif (!$input['master_card'] && $is_master) {
-                    $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?")->execute([(int)$id]);
+                    $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?")->execute([$id]);
                 }
             } catch (PDOException $e) { /* master_cards table may not exist */ }
         }
@@ -805,14 +810,14 @@ if ($resource === 'cards') {
         require_csrf();
         // Get card info for audit log
         $stmt = $pdo_access->prepare("SELECT user_id, firstname, lastname FROM cards WHERE card_id = ?");
-        $stmt->execute([(int)$id]);
+        $stmt->execute([$id]);
         $card_info = $stmt->fetch();
         if (!$card_info) json_error('Card not found', 404);
 
         // Delete from master_cards first (foreign key)
-        $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?")->execute([(int)$id]);
+        $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?")->execute([$id]);
         // Delete card
-        $pdo_access->prepare("DELETE FROM cards WHERE card_id = ?")->execute([(int)$id]);
+        $pdo_access->prepare("DELETE FROM cards WHERE card_id = ?")->execute([$id]);
         log_security_event($pdo, 'card_deleted', $_SESSION['user_id'], "Card deleted: {$card_info['firstname']} {$card_info['lastname']} (card_id=$id)");
         json_success([], 'Card deleted');
     }
