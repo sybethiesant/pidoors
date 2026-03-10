@@ -1632,7 +1632,7 @@ if ($resource === 'update') {
 
     if ($id === 'status' && $method === 'GET') {
         // Current server version + latest GitHub version
-        $version = trim(file_get_contents($config['apppath'] . '../VERSION') ?: 'unknown');
+        $version = trim(file_get_contents($config['apppath'] . 'VERSION') ?: 'unknown');
         $latest = 'unknown';
         try {
             $gh_url = 'https://api.github.com/repos/sybethiesant/pidoors/releases/latest';
