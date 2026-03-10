@@ -451,7 +451,10 @@ if ($resource === 'doors') {
 
         $result = push_to_controller($pdo_access, $door_name, 'unlock');
         $delivery = 'push';
-        if (!$result['ok']) {
+        if ($result['ok']) {
+            // Update DB immediately so dashboard poll sees the change right away
+            $pdo_access->prepare("UPDATE doors SET locked = 0 WHERE name = ?")->execute([$door_name]);
+        } else {
             // Fallback to database flag
             $pdo_access->prepare("UPDATE doors SET unlock_requested = 1 WHERE name = ?")->execute([$door_name]);
             $delivery = 'poll';
@@ -478,7 +481,14 @@ if ($resource === 'doors') {
         $push_cmd = ($hold_action === 'hold') ? 'hold' : 'release';
         $result = push_to_controller($pdo_access, $door_name, $push_cmd);
         $delivery = 'push';
-        if (!$result['ok']) {
+        if ($result['ok']) {
+            // Update DB immediately so dashboard poll sees the change right away
+            if ($hold_action === 'hold') {
+                $pdo_access->prepare("UPDATE doors SET held_open = 1, locked = 0 WHERE name = ?")->execute([$door_name]);
+            } else {
+                $pdo_access->prepare("UPDATE doors SET held_open = 0, locked = 1 WHERE name = ?")->execute([$door_name]);
+            }
+        } else {
             $hold_val = ($hold_action === 'hold') ? 1 : 2;
             $pdo_access->prepare("UPDATE doors SET hold_requested = ? WHERE name = ?")->execute([$hold_val, $door_name]);
             $delivery = 'poll';
@@ -880,7 +890,7 @@ if ($resource === 'logs') {
         $total = (int)$countStmt->fetchColumn();
 
         // Data
-        $sql = "SELECT l.Date, l.user_id, l.Location, l.Granted, l.doorip, c.firstname, c.lastname
+        $sql = "SELECT l.Date, l.user_id, l.Location, l.Granted, l.doorip, c.card_id, c.firstname, c.lastname, c.active AS card_active
                 FROM logs l LEFT JOIN cards c ON l.user_id = c.user_id $whereClause
                 ORDER BY l.Date DESC LIMIT $limit OFFSET $offset";
         $stmt = $pdo_access->prepare($sql);

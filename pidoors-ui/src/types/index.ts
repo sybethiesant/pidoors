@@ -82,6 +82,7 @@ export interface AccessLog {
   firstname?: string;
   lastname?: string;
   card_id?: number;
+  card_active?: number;
 }
 
 export interface Schedule {

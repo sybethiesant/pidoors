@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import {
   FileText,
   Download,
@@ -8,11 +9,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
+  UserPlus,
+  Pencil,
 } from 'lucide-react';
 import { getLogs, getExportUrl, type LogFilters } from '../api/logs';
 import { getDoors } from '../api/doors';
 
 export function LogsPage() {
+  const navigate = useNavigate();
   const [filters, setFilters] = useState<LogFilters>({ page: 1, limit: 50 });
   const [showFilters, setShowFilters] = useState(false);
 
@@ -110,17 +114,21 @@ export function LogsPage() {
                 <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Name</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Door</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-500 dark:text-slate-400">Status</th>
+                <th className="px-4 py-3 text-right font-medium text-slate-500 dark:text-slate-400">Actions</th>
               </tr>
             </thead>
             <tbody>
               {logs.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                     No logs found
                   </td>
                 </tr>
               ) : (
                 logs.map((log, i) => {
+                  const hasName = log.firstname || log.lastname;
+                  const needsSetup = log.card_id && !log.card_active && !hasName;
+                  const isUnknown = !log.card_id;
                   const name = [log.firstname, log.lastname].filter(Boolean).join(' ') || `User #${log.user_id}`;
                   return (
                     <tr key={i} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/30">
@@ -136,6 +144,27 @@ export function LogsPage() {
                         <span className={`badge ${log.Granted ? 'badge-success' : 'badge-danger'}`}>
                           {log.Granted ? 'Granted' : 'Denied'}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {needsSetup ? (
+                          <button
+                            onClick={() => navigate(`/cards?edit=${log.card_id}`)}
+                            className="btn btn-sm btn-primary"
+                            title="Set up this card"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Set Up Card
+                          </button>
+                        ) : isUnknown ? (
+                          <button
+                            onClick={() => navigate(`/cards?add=${encodeURIComponent(log.user_id)}`)}
+                            className="btn btn-sm btn-primary"
+                            title="Add this card"
+                          >
+                            <UserPlus className="h-3.5 w-3.5" />
+                            Add Card
+                          </button>
+                        ) : null}
                       </td>
                     </tr>
                   );

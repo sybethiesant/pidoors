@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import {
   CreditCard,
   Plus,
@@ -12,7 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { getCards, createCard, updateCard, deleteCard, getExportUrl } from '../api/cards';
+import { getCards, getCard, createCard, updateCard, deleteCard, getExportUrl } from '../api/cards';
 import { getSchedules } from '../api/schedules';
 import { getGroups } from '../api/groups';
 import toast from 'react-hot-toast';
@@ -185,12 +186,32 @@ function CardFormModal({
 
 export function CardsPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [prefill, setPrefill] = useState<Partial<Card> | null>(null);
   const [editCard, setEditCard] = useState<Card | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Card | null>(null);
   const [page, setPage] = useState(1);
   const perPage = 25;
+
+  // Auto-open form when navigated with ?add=<card_number> or ?edit=<card_id>
+  useEffect(() => {
+    const addUserId = searchParams.get('add');
+    const editId = searchParams.get('edit');
+    if (addUserId) {
+      setPrefill({ user_id: addUserId });
+      setShowForm(true);
+      setSearchParams({}, { replace: true });
+    } else if (editId) {
+      setSearchParams({}, { replace: true });
+      getCard(parseInt(editId)).then((card) => {
+        setEditCard(card);
+      }).catch(() => {
+        toast.error('Card not found');
+      });
+    }
+  }, [searchParams, setSearchParams]);
 
   const { data: cards = [], isLoading } = useQuery({ queryKey: ['cards'], queryFn: getCards });
   const { data: schedules = [] } = useQuery({ queryKey: ['schedules'], queryFn: getSchedules });
@@ -335,10 +356,10 @@ export function CardsPage() {
       {/* Add/Edit Modal */}
       {(showForm || editCard) && (
         <CardFormModal
-          card={editCard}
+          card={editCard || prefill}
           schedules={schedules}
           groups={groups}
-          onClose={() => { setShowForm(false); setEditCard(null); }}
+          onClose={() => { setShowForm(false); setEditCard(null); setPrefill(null); }}
           onSave={(data) => {
             if (editCard) {
               editMutation.mutate({ id: editCard.card_id, data });

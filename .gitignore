@@ -19,6 +19,9 @@ __pycache__/
 *.swp
 *~
 
+# Release tarballs
+*.tar.gz
+
 # OS files
 .DS_Store
 Thumbs.db
