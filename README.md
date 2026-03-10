@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.0.2-green)
+![Version](https://img.shields.io/badge/version-3.0.3-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
