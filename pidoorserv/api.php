@@ -77,7 +77,14 @@ function require_auth() {
 
 function require_admin_auth() {
     require_auth();
-    if (!is_admin()) json_error('Forbidden', 403);
+    // Re-verify admin + active status from DB on every admin call
+    global $pdo;
+    $stmt = $pdo->prepare("SELECT admin, active FROM users WHERE id = ?");
+    $stmt->execute([$_SESSION['user_id']]);
+    $db_user = $stmt->fetch();
+    if (!$db_user || !$db_user['active'] || !$db_user['admin']) {
+        json_error('Forbidden', 403);
+    }
 }
 
 function require_csrf() {
@@ -111,15 +118,15 @@ if ($resource === 'auth') {
                 json_error('Please enter both username/email and password.');
             }
 
-            // Session-based lockout
-            if (!isset($_SESSION['login_attempts'])) {
-                $_SESSION['login_attempts'] = 0;
-                $_SESSION['login_lockout_time'] = 0;
-            }
+            // IP-based rate limiting (survives cookie clearing)
+            $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+            $max_attempts = $config['max_failed_attempts'] ?? 5;
+            $lockout_seconds = $config['lockout_duration'] ?? 300;
 
-            if ($_SESSION['login_lockout_time'] > time()) {
-                $remaining = ceil(($_SESSION['login_lockout_time'] - time()) / 60);
-                json_error("Too many failed attempts. Try again in {$remaining} minute(s).");
+            $rate_stmt = $pdo->prepare("SELECT COUNT(*) FROM audit_logs WHERE event_type = 'login_failed' AND ip_address = ? AND created_at > DATE_SUB(NOW(), INTERVAL ? SECOND)");
+            $rate_stmt->execute([$ip, $lockout_seconds]);
+            if ((int)$rate_stmt->fetchColumn() >= $max_attempts) {
+                json_error('Too many failed attempts. Try again later.');
             }
 
             try {
@@ -127,14 +134,10 @@ if ($resource === 'auth') {
                 $stmt->execute([$login, $login]);
                 $user = $stmt->fetch();
 
-                if ($user && !$user['active']) {
-                    json_error('This account has been deactivated.');
-                }
+                $password_valid = false;
+                $needs_upgrade = false;
 
                 if ($user) {
-                    $password_valid = false;
-                    $needs_upgrade = false;
-
                     if (strlen($user['user_pass']) === 32 && ctype_xdigit($user['user_pass'])) {
                         $legacy_hash = md5(($config['legacy_password_salt'] ?? '') . $password);
                         if (hash_equals($user['user_pass'], $legacy_hash)) {
@@ -143,52 +146,45 @@ if ($resource === 'auth') {
                         }
                     } else {
                         $password_valid = password_verify($password, $user['user_pass']);
-                    }
-
-                    if ($password_valid) {
-                        $_SESSION['login_attempts'] = 0;
-                        $_SESSION['login_lockout_time'] = 0;
-
-                        if ($needs_upgrade) {
-                            $new_hash = hash_password($password);
-                            $pdo->prepare("UPDATE users SET user_pass = ? WHERE id = ?")->execute([$new_hash, $user['id']]);
+                        if ($password_valid && password_needs_rehash($user['user_pass'], PASSWORD_BCRYPT, ['cost' => 12])) {
+                            $needs_upgrade = true;
                         }
-
-                        session_regenerate_id(true);
-                        $_SESSION['user_id'] = $user['id'];
-                        $_SESSION['email'] = $user['user_email'];
-                        $_SESSION['username'] = $user['user_name'];
-                        $_SESSION['isadmin'] = ($user['admin'] == 1);
-                        $_SESSION['login_time'] = time();
-
-                        try {
-                            log_security_event($pdo, 'login_success', $user['id'], "User {$user['user_name']} logged in via API");
-                        } catch (Exception $e) {}
-
-                        json_success(['user' => [
-                            'id' => (int)$user['id'],
-                            'username' => $user['user_name'],
-                            'email' => $user['user_email'],
-                            'isAdmin' => ($user['admin'] == 1),
-                        ]]);
                     }
+                } else {
+                    // Constant-time dummy verify to prevent user enumeration
+                    password_verify($password, '$2y$12$000000000000000000000uGHKGnr..PqIq1DSqGCPLlmIvMef/fXu');
                 }
 
-                // Failed login
-                $_SESSION['login_attempts']++;
-                $max_attempts = $config['max_failed_attempts'] ?? 5;
-                $lockout_seconds = $config['lockout_duration'] ?? 300;
+                if ($password_valid && $user['active']) {
+                    if ($needs_upgrade) {
+                        $new_hash = hash_password($password);
+                        $pdo->prepare("UPDATE users SET user_pass = ? WHERE id = ?")->execute([$new_hash, $user['id']]);
+                    }
 
-                if ($_SESSION['login_attempts'] >= $max_attempts) {
-                    $_SESSION['login_lockout_time'] = time() + $lockout_seconds;
-                    $lockout_minutes = ceil($lockout_seconds / 60);
-                    try { log_security_event($pdo, 'login_failed', null, "Failed login for: $login (locked out)"); } catch (Exception $e) {}
-                    json_error("Too many failed attempts. Account locked for {$lockout_minutes} minute(s).");
+                    session_regenerate_id(true);
+                    $_SESSION['user_id'] = $user['id'];
+                    $_SESSION['email'] = $user['user_email'];
+                    $_SESSION['username'] = $user['user_name'];
+                    $_SESSION['isadmin'] = ($user['admin'] == 1);
+                    $_SESSION['login_time'] = time();
+
+                    try {
+                        log_security_event($pdo, 'login_success', $user['id'], "User {$user['user_name']} logged in via API");
+                    } catch (Exception $e) {}
+
+                    $version = trim(@file_get_contents($config['apppath'] . 'VERSION') ?: 'unknown');
+                    json_success(['user' => [
+                        'id' => (int)$user['id'],
+                        'username' => $user['user_name'],
+                        'email' => $user['user_email'],
+                        'isAdmin' => ($user['admin'] == 1),
+                        'version' => $version,
+                    ]]);
                 }
 
+                // Failed login — single unified error message (no attempt count, no deactivation hint)
                 try { log_security_event($pdo, 'login_failed', null, "Failed login for: $login"); } catch (Exception $e) {}
-                $remaining = $max_attempts - $_SESSION['login_attempts'];
-                json_error("Invalid username/email or password. {$remaining} attempt(s) remaining.");
+                json_error('Invalid username/email or password.');
             } catch (PDOException $e) {
                 error_log("API login error: " . $e->getMessage());
                 json_error('A system error occurred.', 500);
@@ -236,6 +232,7 @@ if ($resource === 'auth') {
 // ──────────────────────────────────────────────
 if ($resource === 'dashboard' && $method === 'GET') {
     require_auth();
+    poll_all_door_status($pdo_access);
 
     try {
         $total_cards = (int)$pdo_access->query("SELECT COUNT(*) FROM cards")->fetchColumn();
@@ -246,7 +243,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
         $today_granted = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 1")->fetchColumn();
         $today_denied = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 0")->fetchColumn();
 
-        $doors = $pdo_access->query("SELECT name, location, status, locked, held_open, hold_requested, unlock_requested, push_available FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+        $doors = $pdo_access->query("SELECT name, location, status, locked, held_open, hold_requested, unlock_requested, push_available, door_sensor_gpio, door_open FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
         // Cast numeric fields
         foreach ($doors as &$d) {
             $d['locked'] = (int)$d['locked'];
@@ -254,6 +251,8 @@ if ($resource === 'dashboard' && $method === 'GET') {
             $d['hold_requested'] = (int)$d['hold_requested'];
             $d['unlock_requested'] = (int)$d['unlock_requested'];
             $d['push_available'] = (int)($d['push_available'] ?? 0);
+            $d['door_sensor_gpio'] = $d['door_sensor_gpio'] !== null ? (int)$d['door_sensor_gpio'] : null;
+            $d['door_open'] = $d['door_open'] !== null ? (int)$d['door_open'] : null;
         }
         unset($d);
 
@@ -299,6 +298,7 @@ if ($resource === 'doors') {
     if ($method === 'GET' && $id === null) {
         // List all doors
         require_auth();
+        poll_all_door_status($pdo_access);
         $doors = $pdo_access->query("SELECT * FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
         foreach ($doors as &$d) {
             $d['locked'] = (int)$d['locked'];
@@ -312,6 +312,8 @@ if ($resource === 'doors') {
             $d['poll_interval'] = (int)($d['poll_interval'] ?? 10);
             $d['listen_port'] = $d['listen_port'] ? (int)$d['listen_port'] : null;
             $d['push_available'] = (int)($d['push_available'] ?? 0);
+            $d['door_sensor_gpio'] = $d['door_sensor_gpio'] !== null ? (int)$d['door_sensor_gpio'] : null;
+            $d['door_open'] = $d['door_open'] !== null ? (int)$d['door_open'] : null;
             unset($d['api_key']); // Never expose API key to browser
         }
         unset($d);
@@ -319,10 +321,28 @@ if ($resource === 'doors') {
     }
 
     if ($method === 'GET' && $id !== null && $action === null) {
-        // Get single door
+        // Get single door — ping controller for live status
         require_auth();
+        $door_name = urldecode($id);
+
+        // Ping this specific controller for fresh status
+        $ping = ping_controller($pdo_access, $door_name);
+        if (!empty($ping['ok'])) {
+            $sets = ['status' => 'online', 'last_seen' => date('Y-m-d H:i:s'), 'push_available' => 1];
+            if (isset($ping['locked'])) $sets['locked'] = (int) $ping['locked'];
+            if (isset($ping['held_open'])) $sets['held_open'] = (int) $ping['held_open'];
+            if (isset($ping['version'])) $sets['controller_version'] = $ping['version'];
+            if (array_key_exists('door_open', $ping)) $sets['door_open'] = $ping['door_open'];
+            $cols = []; $vals = [];
+            foreach ($sets as $col => $val) { $cols[] = "$col = ?"; $vals[] = $val; }
+            $vals[] = $door_name;
+            $pdo_access->prepare("UPDATE doors SET " . implode(', ', $cols) . " WHERE name = ?")->execute($vals);
+        } elseif (isset($ping['reason']) && $ping['reason'] !== 'no_push_config') {
+            $pdo_access->prepare("UPDATE doors SET status = 'offline', push_available = 0 WHERE name = ?")->execute([$door_name]);
+        }
+
         $stmt = $pdo_access->prepare("SELECT * FROM doors WHERE name = ?");
-        $stmt->execute([urldecode($id)]);
+        $stmt->execute([$door_name]);
         $door = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$door) json_error('Door not found', 404);
         $door['locked'] = (int)$door['locked'];
@@ -331,6 +351,8 @@ if ($resource === 'doors') {
         $door['unlock_requested'] = (int)$door['unlock_requested'];
         $door['listen_port'] = $door['listen_port'] ? (int)$door['listen_port'] : null;
         $door['push_available'] = (int)($door['push_available'] ?? 0);
+        $door['door_sensor_gpio'] = $door['door_sensor_gpio'] !== null ? (int)$door['door_sensor_gpio'] : null;
+        $door['door_open'] = $door['door_open'] !== null ? (int)$door['door_open'] : null;
         unset($door['api_key']);
         json_success(['door' => $door]);
     }
@@ -357,7 +379,7 @@ if ($resource === 'doors') {
             $reader_type = 'wiegand';
         }
 
-        $stmt = $pdo_access->prepare("INSERT INTO doors (name, location, doornum, description, ip_address, schedule_id, unlock_duration, reader_type, poll_interval, listen_port, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown')");
+        $stmt = $pdo_access->prepare("INSERT INTO doors (name, location, doornum, description, ip_address, schedule_id, unlock_duration, reader_type, poll_interval, listen_port, door_sensor_gpio, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown')");
         $stmt->execute([
             $name,
             sanitize_string($input['location'] ?? ''),
@@ -369,6 +391,7 @@ if ($resource === 'doors') {
             $reader_type,
             (int)($input['poll_interval'] ?? 10),
             !empty($input['listen_port']) ? (int)$input['listen_port'] : null,
+            isset($input['door_sensor_gpio']) && $input['door_sensor_gpio'] !== null && $input['door_sensor_gpio'] !== '' ? (int)$input['door_sensor_gpio'] : null,
         ]);
         log_security_event($pdo, 'door_created', $_SESSION['user_id'], "Door created: $name");
         json_success([], 'Door created');
@@ -415,6 +438,10 @@ if ($resource === 'doors') {
         if (array_key_exists('listen_port', $input)) {
             $fields[] = "listen_port = ?";
             $params[] = !empty($input['listen_port']) ? (int)$input['listen_port'] : null;
+        }
+        if (array_key_exists('door_sensor_gpio', $input)) {
+            $fields[] = "door_sensor_gpio = ?";
+            $params[] = ($input['door_sensor_gpio'] !== null && $input['door_sensor_gpio'] !== '') ? (int)$input['door_sensor_gpio'] : null;
         }
 
         if (empty($fields)) json_error('No fields to update');
@@ -509,6 +536,19 @@ if ($resource === 'doors') {
         if (!$stmt->fetch()) json_error('Door not found', 404);
 
         $result = ping_controller($pdo_access, $door_name);
+        if (!empty($result['ok'])) {
+            $sets = ['status' => 'online', 'last_seen' => date('Y-m-d H:i:s'), 'push_available' => 1];
+            if (isset($result['locked'])) $sets['locked'] = (int) $result['locked'];
+            if (isset($result['held_open'])) $sets['held_open'] = (int) $result['held_open'];
+            if (isset($result['version'])) $sets['controller_version'] = $result['version'];
+            if (array_key_exists('door_open', $result)) $sets['door_open'] = $result['door_open'];
+            $cols = []; $vals = [];
+            foreach ($sets as $col => $val) { $cols[] = "$col = ?"; $vals[] = $val; }
+            $vals[] = $door_name;
+            $pdo_access->prepare("UPDATE doors SET " . implode(', ', $cols) . " WHERE name = ?")->execute($vals);
+        } else {
+            $pdo_access->prepare("UPDATE doors SET status = 'offline', push_available = 0 WHERE name = ?")->execute([$door_name]);
+        }
         json_success(['ping' => $result]);
     }
 
@@ -897,7 +937,9 @@ if ($resource === 'logs') {
         // Data
         $sql = "SELECT l.Date, l.user_id, l.Location, l.Granted, l.doorip, c.card_id, c.firstname, c.lastname, c.active AS card_active
                 FROM logs l LEFT JOIN cards c ON l.user_id = c.user_id $whereClause
-                ORDER BY l.Date DESC LIMIT $limit OFFSET $offset";
+                ORDER BY l.Date DESC LIMIT ? OFFSET ?";
+        $params[] = $limit;
+        $params[] = $offset;
         $stmt = $pdo_access->prepare($sql);
         $stmt->execute($params);
         $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1184,6 +1226,7 @@ if ($resource === 'settings') {
             'email_notifications', 'notification_email',
             'log_retention_days', 'timezone',
             'controller_update_url', 'default_poll_interval',
+            'default_listen_port', 'push_timeout', 'push_fallback_poll_interval', 'status_check_timeout',
             'maintenance_mode', 'auto_backup', 'backup_retention_days',
         ];
 
@@ -1435,7 +1478,9 @@ if ($resource === 'audit') {
         $countStmt->execute($params);
         $total = (int)$countStmt->fetchColumn();
 
-        $sql = "SELECT a.*, u.user_name as username FROM audit_logs a LEFT JOIN users u ON a.user_id = u.id $whereClause ORDER BY a.created_at DESC LIMIT $limit OFFSET $offset";
+        $sql = "SELECT a.*, u.user_name as username FROM audit_logs a LEFT JOIN users u ON a.user_id = u.id $whereClause ORDER BY a.created_at DESC LIMIT ? OFFSET ?";
+        $params[] = $limit;
+        $params[] = $offset;
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1497,8 +1542,10 @@ if ($resource === 'backups') {
         // Try mysqldump first, fall back to PHP PDO backup
         $mysqldump_path = trim(shell_exec('which mysqldump 2>/dev/null') ?: '');
         if (!empty($mysqldump_path)) {
-            $cmd = "mysqldump -h " . escapeshellarg($db_host) . " -u " . escapeshellarg($db_user) . " -p" . escapeshellarg($db_pass) . " --databases " . escapeshellarg($db_name1) . " " . escapeshellarg($db_name2) . " > " . escapeshellarg($filepath) . " 2>&1";
+            putenv('MYSQL_PWD=' . $db_pass);
+            $cmd = "mysqldump -h " . escapeshellarg($db_host) . " -u " . escapeshellarg($db_user) . " --databases " . escapeshellarg($db_name1) . " " . escapeshellarg($db_name2) . " > " . escapeshellarg($filepath) . " 2>&1";
             exec($cmd, $output, $return_code);
+            putenv('MYSQL_PWD');
             if ($return_code !== 0) {
                 @unlink($filepath);
                 json_error('Backup failed: ' . implode("\n", $output));
@@ -1548,8 +1595,9 @@ if ($resource === 'backups') {
         $filepath = $backup_dir . $filename;
         if (!file_exists($filepath)) json_error('Backup not found', 404);
 
+        $safe_filename = preg_replace('/[^a-zA-Z0-9._-]/', '', $filename);
         header('Content-Type: application/octet-stream');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Disposition: attachment; filename="' . $safe_filename . '"');
         header('Content-Length: ' . filesize($filepath));
         readfile($filepath);
         exit();
@@ -1574,8 +1622,11 @@ if ($resource === 'backups') {
 if ($resource === 'reports') {
     require_admin_auth();
 
+    $valid_report_types = ['access_summary', 'daily_activity', 'user_activity', 'hourly_pattern', 'denied_access'];
+
     if ($id === 'export' && $method === 'GET') {
         $type = $_GET['type'] ?? 'access_summary';
+        if (!in_array($type, $valid_report_types)) json_error('Invalid report type');
         // Build report data then export as CSV
         $report_data = build_report($pdo_access, $type, $_GET);
 
@@ -1592,6 +1643,7 @@ if ($resource === 'reports') {
 
     if ($method === 'GET') {
         $type = $_GET['type'] ?? 'access_summary';
+        if (!in_array($type, $valid_report_types)) json_error('Invalid report type');
         $report_data = build_report($pdo_access, $type, $_GET);
         json_success(['report' => $report_data, 'type' => $type]);
     }
@@ -1752,6 +1804,86 @@ if ($resource === 'update') {
     }
 
     json_error('Not found', 404);
+}
+
+// ──────────────────────────────────────────────
+// CERT SIGNING (headless controller auth via DB credentials)
+// ──────────────────────────────────────────────
+if ($resource === 'certs' && $id === 'sign' && $method === 'POST') {
+    // Authenticate via DB credentials (not session — used by headless controller installs)
+    $db_user_input = $input['db_user'] ?? '';
+    $db_pass_input = $input['db_pass'] ?? '';
+    $csr_pem = $input['csr'] ?? '';
+    $door_name = preg_replace('/[^a-z0-9_]/', '', $input['door_name'] ?? '');
+    $door_ip = filter_var($input['door_ip'] ?? '', FILTER_VALIDATE_IP) ?: '';
+
+    if (empty($db_user_input) || empty($db_pass_input) || empty($csr_pem) || empty($door_name)) {
+        json_error('Missing required fields: db_user, db_pass, csr, door_name');
+    }
+
+    // Verify DB credentials by attempting a connection
+    try {
+        new PDO(
+            "mysql:host=localhost;dbname=access",
+            $db_user_input,
+            $db_pass_input,
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]
+        );
+    } catch (PDOException $e) {
+        json_error('Invalid database credentials', 403);
+    }
+
+    // Validate CSR
+    if (strpos($csr_pem, '-----BEGIN CERTIFICATE REQUEST-----') === false) {
+        json_error('Invalid CSR format');
+    }
+
+    $ca_cert = '/etc/mysql/ssl/ca.pem';
+    $ca_key = '/etc/mysql/ssl/ca-key.pem';
+    if (!file_exists($ca_cert) || !file_exists($ca_key)) {
+        json_error('CA not available on this server', 500);
+    }
+
+    // Write CSR to temp file
+    $csr_tmp = tempnam(sys_get_temp_dir(), 'pidoors_csr_');
+    $cert_tmp = tempnam(sys_get_temp_dir(), 'pidoors_cert_');
+    $ext_tmp = tempnam(sys_get_temp_dir(), 'pidoors_ext_');
+    file_put_contents($csr_tmp, $csr_pem);
+
+    // Build SAN extension
+    $san_entries = "subjectAltName = DNS:{$door_name},DNS:{$door_name}.local";
+    if (!empty($door_ip)) {
+        $san_entries .= ",IP:{$door_ip}";
+    }
+    file_put_contents($ext_tmp, $san_entries);
+
+    // Sign with CA
+    $cmd = sprintf(
+        'openssl x509 -req -days 3650 -in %s -CA %s -CAkey %s -CAcreateserial -out %s -extfile %s 2>&1',
+        escapeshellarg($csr_tmp),
+        escapeshellarg($ca_cert),
+        escapeshellarg($ca_key),
+        escapeshellarg($cert_tmp),
+        escapeshellarg($ext_tmp)
+    );
+    exec($cmd, $output, $return_code);
+
+    $signed_cert = '';
+    if ($return_code === 0 && file_exists($cert_tmp)) {
+        $signed_cert = file_get_contents($cert_tmp);
+    }
+
+    // Cleanup temp files
+    @unlink($csr_tmp);
+    @unlink($cert_tmp);
+    @unlink($ext_tmp);
+    @unlink('/etc/mysql/ssl/ca.srl');
+
+    if (empty($signed_cert) || strpos($signed_cert, '-----BEGIN CERTIFICATE-----') === false) {
+        json_error('Certificate signing failed: ' . implode(' ', $output), 500);
+    }
+
+    json_success(['cert' => $signed_cert], 'Certificate signed');
 }
 
 // ──────────────────────────────────────────────

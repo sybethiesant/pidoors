@@ -259,6 +259,62 @@ if [ "$INSTALL_SERVER" = true ]; then
 
     setup_mariadb_tls
 
+    # ── Nginx TLS ──
+
+    setup_nginx_tls() {
+        if [ -f "/etc/ssl/certs/pidoors.crt" ] && [ -f "/etc/ssl/private/pidoors.key" ]; then
+            info "Nginx TLS certificate already exists, skipping generation"
+            return
+        fi
+
+        local CA_CERT="/etc/mysql/ssl/ca.pem"
+        local CA_KEY="/etc/mysql/ssl/ca-key.pem"
+
+        if [ ! -f "$CA_CERT" ] || [ ! -f "$CA_KEY" ]; then
+            warn "PiDoors CA not found — skipping nginx TLS setup"
+            warn "Run install again after CA is generated, or set up TLS manually"
+            return
+        fi
+
+        info "Generating nginx TLS certificate signed by PiDoors CA..."
+        local SERVER_IP
+        SERVER_IP=$(hostname -I | awk '{print $1}')
+
+        # Generate key
+        openssl genrsa 2048 > /etc/ssl/private/pidoors.key 2>/dev/null
+
+        # Generate CSR
+        openssl req -new -key /etc/ssl/private/pidoors.key \
+            -out /tmp/pidoors-nginx.csr \
+            -subj "/CN=PiDoors Web" 2>/dev/null
+
+        # SAN extension file
+        cat > /tmp/pidoors-nginx-ext.cnf <<SANEOF
+subjectAltName = IP:${SERVER_IP},DNS:pidoors,DNS:pidoors.local,DNS:localhost,IP:127.0.0.1
+SANEOF
+
+        # Sign with CA
+        openssl x509 -req -days 3650 \
+            -in /tmp/pidoors-nginx.csr \
+            -CA "$CA_CERT" \
+            -CAkey "$CA_KEY" \
+            -CAcreateserial \
+            -out /etc/ssl/certs/pidoors.crt \
+            -extfile /tmp/pidoors-nginx-ext.cnf 2>/dev/null
+
+        # Cleanup temp files
+        rm -f /tmp/pidoors-nginx.csr /tmp/pidoors-nginx-ext.cnf /etc/mysql/ssl/ca.srl
+
+        # Permissions
+        chmod 600 /etc/ssl/private/pidoors.key
+        chmod 644 /etc/ssl/certs/pidoors.crt
+
+        ok "Nginx TLS certificate generated (signed by PiDoors CA)"
+        ok "  SAN: IP:${SERVER_IP}, DNS:pidoors, DNS:pidoors.local, DNS:localhost"
+    }
+
+    setup_nginx_tls
+
     echo
     prompt_secret MYSQL_ROOT_PASS "MySQL root password"
 
@@ -384,7 +440,7 @@ EOF
     ok "Node.js installed ($(node --version 2>/dev/null || echo 'unknown'))"
 
     if [ -d "$SCRIPT_DIR/pidoors-ui" ]; then
-        UI_BUILD_DIR=$(mktemp -d /tmp/pidoors-ui-build-XXX)
+        UI_BUILD_DIR=$(mktemp -d /tmp/pidoors-ui-build-XXXXXX)
         cp -r "$SCRIPT_DIR/pidoors-ui/"* "$UI_BUILD_DIR/"
         [ -f "$SCRIPT_DIR/pidoors-ui/.env" ] && cp "$SCRIPT_DIR/pidoors-ui/.env" "$UI_BUILD_DIR/"
 
@@ -445,16 +501,17 @@ EOF
     prompt ADMIN_EMAIL "Admin email"
     prompt_secret ADMIN_PASS "Admin password"
 
+    ADMIN_EMAIL_ENV="$ADMIN_EMAIL" ADMIN_PASS_ENV="$ADMIN_PASS" DB_PASS_ENV="$DB_PASS" \
     php -r '
-        $email = $argv[1];
-        $pass  = $argv[2];
-        $dbpass = $argv[3];
+        $email = getenv("ADMIN_EMAIL_ENV");
+        $pass  = getenv("ADMIN_PASS_ENV");
+        $dbpass = getenv("DB_PASS_ENV");
         $hash  = password_hash($pass, PASSWORD_BCRYPT, ["cost" => 12]);
         $pdo   = new PDO("mysql:host=localhost;dbname=users", "pidoors", $dbpass);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $stmt  = $pdo->prepare("INSERT INTO users (user_name, user_email, user_pass, admin, active) VALUES (\"Admin\", ?, ?, 1, 1) ON DUPLICATE KEY UPDATE user_pass=VALUES(user_pass)");
         $stmt->execute([$email, $hash]);
-    ' "$ADMIN_EMAIL" "$ADMIN_PASS" "$DB_PASS"
+    '
     ok "Admin user created: $ADMIN_EMAIL"
 
     # ── Example data ──
@@ -687,14 +744,32 @@ if [ "$INSTALL_DOOR" = true ]; then
     API_KEY=$(openssl rand -hex 32)
     LISTEN_PORT=8443
 
-    # Generate self-signed TLS certificate for push listener
+    # Generate TLS certificate for push listener
+    # Try CA-signed via server API first, fall back to self-signed
     info "Generating TLS certificate for push listener..."
-    openssl req -x509 -newkey rsa:2048 -nodes \
-        -keyout "$INSTALL_DIR/conf/listener.key" \
-        -out "$INSTALL_DIR/conf/listener.crt" \
-        -days 3650 -subj "/CN=$DOOR_NAME" \
-        > /dev/null 2>&1
-    ok "TLS certificate generated"
+    CONTROLLER_IP=$(hostname -I | awk '{print $1}')
+    openssl genrsa 2048 > "$INSTALL_DIR/conf/listener.key" 2>/dev/null
+    openssl req -new -key "$INSTALL_DIR/conf/listener.key" \
+        -out /tmp/pidoors-controller.csr \
+        -subj "/CN=$DOOR_NAME" 2>/dev/null
+
+    CSR_PEM=$(cat /tmp/pidoors-controller.csr)
+    SIGN_RESPONSE=$(curl -sf -k "https://$DB_HOST/api/certs/sign" \
+        -H 'Content-Type: application/json' \
+        -d "{\"db_user\":\"$DB_USER\",\"db_pass\":\"$(echo "$DB_PASS_DOOR" | sed 's/"/\\"/g')\",\"csr\":$(echo "$CSR_PEM" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),\"door_name\":\"$DOOR_NAME\",\"door_ip\":\"$CONTROLLER_IP\"}" \
+        2>/dev/null) || SIGN_RESPONSE=""
+
+    if echo "$SIGN_RESPONSE" | python3 -c "import sys,json; cert=json.load(sys.stdin)['cert']; open('$INSTALL_DIR/conf/listener.crt','w').write(cert)" 2>/dev/null; then
+        ok "TLS certificate signed by PiDoors CA"
+    else
+        # Fallback to self-signed
+        openssl req -x509 -key "$INSTALL_DIR/conf/listener.key" \
+            -in /tmp/pidoors-controller.csr \
+            -out "$INSTALL_DIR/conf/listener.crt" \
+            -days 3650 > /dev/null 2>&1
+        ok "TLS certificate generated (self-signed — CA signing unavailable)"
+    fi
+    rm -f /tmp/pidoors-controller.csr
 
     # Write config.json
     cat > "$INSTALL_DIR/conf/config.json" <<EOF
@@ -724,13 +799,15 @@ EOF
     ok "Zone file written"
 
     # Download CA cert from server for TLS database connections
+    # Try HTTPS first (with -k since CA is what we're downloading), fall back to HTTP
     info "Downloading database TLS certificate..."
-    if curl -sf "http://$DB_HOST/ca.pem" -o "$INSTALL_DIR/conf/ca.pem" 2>/dev/null; then
+    if curl -sf -k "https://$DB_HOST/ca.pem" -o "$INSTALL_DIR/conf/ca.pem" 2>/dev/null || \
+       curl -sf "http://$DB_HOST/ca.pem" -o "$INSTALL_DIR/conf/ca.pem" 2>/dev/null; then
         chown pidoors:pidoors "$INSTALL_DIR/conf/ca.pem"
         chmod 600 "$INSTALL_DIR/conf/ca.pem"
         ok "TLS certificate downloaded — database connections will be encrypted"
     else
-        warn "Could not download CA certificate from server (http://$DB_HOST/ca.pem)"
+        warn "Could not download CA certificate from server"
         warn "Database connections will be unencrypted. You can add TLS later by placing ca.pem in $INSTALL_DIR/conf/"
     fi
 
@@ -741,6 +818,10 @@ EOF
     chmod 600 "$INSTALL_DIR/conf/config.json"
     chmod 600 "$INSTALL_DIR/conf/listener.key" 2>/dev/null || true
     chmod 644 "$INSTALL_DIR/conf/listener.crt" 2>/dev/null || true
+
+    # Root-own the update script (sudoers entry allows pidoors user to run it as root)
+    chown root:root "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null || true
+    chmod 755 "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null || true
     ok "Permissions set"
 
     # Add sudoers entry for update script (allows pidoors user to run update as root)

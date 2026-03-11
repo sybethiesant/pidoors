@@ -36,6 +36,7 @@ import syslog
 import socket
 import fcntl
 import subprocess
+import hmac
 
 # Try to import optional dependencies
 try:
@@ -76,7 +77,7 @@ CUSTOM_FORMATS_FILE = os.path.join(CONF_DIR, 'formats.json')
 SSL_CA_PATH = os.path.join(CONF_DIR, 'ca.pem')
 SSL_CA_STALE_PATH = os.path.join(CONF_DIR, 'ca.pem.stale')
 CACHE_DURATION = 86400  # 24 hours in seconds
-HEARTBEAT_INTERVAL = 60  # seconds
+HEARTBEAT_INTERVAL = 300  # seconds (server-initiated pings handle status; heartbeat is safety net)
 DB_RETRY_INTERVAL = 30  # seconds
 
 # Global variables
@@ -97,6 +98,8 @@ running = True
 door_unlocked = False  # Real-time lock state tracking
 master_cards = {}  # Persistent master cards (never expire)
 format_registry = None  # Wiegand format registry
+door_sensor_open = None  # Current door sensor state (None/True/False)
+current_sensor_pin = None  # Currently active door sensor GPIO pin
 
 # Thread locks for shared state
 state_lock = threading.Lock()  # For db_connected, last_db_attempt, cache_last_sync
@@ -757,15 +760,45 @@ def setup_readers():
 
 
 def setup_door_sensor():
-    """Setup door sensor GPIO pin (optional)"""
+    """Setup door sensor GPIO pin (optional, from zone config for first boot)"""
+    global current_sensor_pin, door_sensor_open
     zone_config = config.get(zone, {})
     door_sensor_gpio = zone_config.get("door_sensor_gpio")
 
     if door_sensor_gpio:
+        door_sensor_gpio = int(door_sensor_gpio)
         GPIO.setup(door_sensor_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         GPIO.add_event_detect(door_sensor_gpio, GPIO.BOTH,
                              callback=door_sensor_event, bouncetime=200)
+        current_sensor_pin = door_sensor_gpio
+        door_sensor_open = GPIO.input(door_sensor_gpio) == GPIO.LOW
         debug(f"Door sensor configured on GPIO {door_sensor_gpio}")
+
+
+def reconfigure_door_sensor(new_pin):
+    """Reconfigure door sensor GPIO at runtime (called when DB pin changes)"""
+    global current_sensor_pin, door_sensor_open
+
+    # Remove old pin detection
+    if current_sensor_pin is not None:
+        try:
+            GPIO.remove_event_detect(current_sensor_pin)
+        except Exception:
+            pass
+        debug(f"Door sensor removed from GPIO {current_sensor_pin}")
+
+    current_sensor_pin = new_pin
+    if new_pin is not None:
+        new_pin = int(new_pin)
+        GPIO.setup(new_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.add_event_detect(new_pin, GPIO.BOTH,
+                             callback=door_sensor_event, bouncetime=200)
+        current_sensor_pin = new_pin
+        door_sensor_open = GPIO.input(new_pin) == GPIO.LOW
+        debug(f"Door sensor reconfigured to GPIO {new_pin}")
+    else:
+        door_sensor_open = None
+        debug("Door sensor disabled")
 
 
 def setup_rex_button():
@@ -782,8 +815,10 @@ def setup_rex_button():
 
 def door_sensor_event(channel):
     """Handle door sensor state change"""
+    global door_sensor_open
     zone_config = config.get(zone, {})
     door_open = GPIO.input(channel) == GPIO.LOW  # Assuming active-low sensor
+    door_sensor_open = door_open
 
     if door_open:
         report(f"Door opened at {zone}")
@@ -1560,8 +1595,13 @@ def send_heartbeat():
         held_open_val = 1 if zone_config.get("unlocked", False) else 0
         reader = zone_config.get("reader_type", "wiegand")
 
-        # Update door status with version, listen port, and api_key
+        # Update door status with version, listen port, api_key, and door sensor state
         controller_api_key = zone_config.get("api_key", "")
+        door_open_val = None
+        if door_sensor_open is True:
+            door_open_val = 1
+        elif door_sensor_open is False:
+            door_open_val = 0
         cursor.execute("""
             UPDATE doors
             SET status = 'online',
@@ -1571,16 +1611,17 @@ def send_heartbeat():
                 held_open = %s,
                 controller_version = %s,
                 listen_port = %s,
-                api_key = %s
+                api_key = %s,
+                door_open = %s
             WHERE name = %s
-        """, (myip, locked_status, held_open_val, VERSION, push_listener_port, controller_api_key, zone))
+        """, (myip, locked_status, held_open_val, VERSION, push_listener_port, controller_api_key, door_open_val, zone))
 
         # Auto-register door if it doesn't exist yet
         if cursor.rowcount == 0:
             cursor.execute("""
-                INSERT INTO doors (name, ip_address, status, last_seen, locked, held_open, reader_type, controller_version, listen_port, api_key)
-                VALUES (%s, %s, 'online', NOW(), %s, %s, %s, %s, %s, %s)
-            """, (zone, myip, locked_status, held_open_val, reader, VERSION, push_listener_port, controller_api_key))
+                INSERT INTO doors (name, ip_address, status, last_seen, locked, held_open, reader_type, controller_version, listen_port, api_key, door_open)
+                VALUES (%s, %s, 'online', NOW(), %s, %s, %s, %s, %s, %s, %s)
+            """, (zone, myip, locked_status, held_open_val, reader, VERSION, push_listener_port, controller_api_key, door_open_val))
             report(f"Door '{zone}' auto-registered in database")
 
         # Clear stale "updating" status — if we're heartbeating, the update finished
@@ -1594,7 +1635,7 @@ def send_heartbeat():
 
         # Check if an update has been requested
         cursor.execute("""
-            SELECT update_requested FROM doors WHERE name = %s
+            SELECT update_requested, door_sensor_gpio FROM doors WHERE name = %s
         """, (zone,))
         row = cursor.fetchone()
         if row and row.get('update_requested'):
@@ -1608,6 +1649,13 @@ def send_heartbeat():
             """, (zone,))
             db.commit()
             trigger_update()
+
+        # Check if door sensor GPIO pin changed in DB
+        if row:
+            db_sensor_pin = int(row['door_sensor_gpio']) if row.get('door_sensor_gpio') is not None else None
+            if db_sensor_pin != current_sensor_pin:
+                report(f"Door sensor GPIO changed: {current_sensor_pin} -> {db_sensor_pin}")
+                reconfigure_door_sensor(db_sensor_pin)
 
         with state_lock:
             db_connected = True
@@ -1795,6 +1843,12 @@ def _get_status_dict():
     with state_lock:
         last_sync = cache_last_sync
 
+    door_open_val = None
+    if door_sensor_open is True:
+        door_open_val = 1
+    elif door_sensor_open is False:
+        door_open_val = 0
+
     return {
         'zone': zone,
         'version': VERSION,
@@ -1804,6 +1858,7 @@ def _get_status_dict():
         'cache_age': int(time.time() - last_sync) if last_sync else None,
         'db_connected': connected,
         'listen_port': push_listener_port,
+        'door_open': door_open_val,
     }
 
 
@@ -1818,7 +1873,8 @@ def _run_push_listener(port, api_key, cert_file, key_file):
 
         def _check_auth(self):
             auth = self.headers.get('Authorization', '')
-            if auth != f'Bearer {controller_api_key}':
+            expected = f'Bearer {controller_api_key}'
+            if not hmac.compare_digest(auth.encode(), expected.encode()):
                 self._respond(403, {'ok': False, 'error': 'Forbidden'})
                 return False
             return True
@@ -1835,6 +1891,7 @@ def _run_push_listener(port, api_key, cert_file, key_file):
             if not self._check_auth():
                 return
 
+            client_ip = self.client_address[0]
             path = self.path.rstrip('/')
             zone_config = config.get(zone, {})
 
@@ -1842,7 +1899,7 @@ def _run_push_listener(port, api_key, cert_file, key_file):
                 latch_gpio = zone_config.get('latch_gpio')
                 if latch_gpio:
                     log_door_event('remote_unlock', 'Unlocked by push command')
-                    report("Push: remote unlock")
+                    report(f"Push: remote unlock from {client_ip}")
                     unlock_briefly(latch_gpio)
                 with state_lock:
                     locked = not door_unlocked
@@ -1853,7 +1910,7 @@ def _run_push_listener(port, api_key, cert_file, key_file):
                     zone_config['unlocked'] = True
                     unlock_door()
                     log_door_event('door_held_open', 'Held open by push command')
-                    report("Push: door held open")
+                    report(f"Push: door held open from {client_ip}")
                 self._respond(200, {'ok': True, 'held_open': True})
 
             elif path == '/cmd/release':
@@ -1861,16 +1918,16 @@ def _run_push_listener(port, api_key, cert_file, key_file):
                     zone_config['unlocked'] = False
                     lock_door()
                     log_door_event('lock', 'Hold released by push command')
-                    report("Push: hold released")
+                    report(f"Push: hold released from {client_ip}")
                 self._respond(200, {'ok': True, 'held_open': False})
 
             elif path == '/cmd/update':
-                report("Push: update requested")
+                report(f"Push: update requested from {client_ip}")
                 trigger_update()
                 self._respond(200, {'ok': True, 'updating': True})
 
             elif path == '/cmd/sync':
-                report("Push: cache sync requested")
+                report(f"Push: cache sync requested from {client_ip}")
                 threading.Thread(target=sync_cache_from_server, daemon=True).start()
                 self._respond(200, {'ok': True})
 
@@ -1913,6 +1970,8 @@ def _run_push_listener(port, api_key, cert_file, key_file):
 
     try:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.set_ciphers('ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS')
         ctx.load_cert_chain(cert_file, key_file)
 
         server = ThreadedHTTPServer(('0.0.0.0', port), PushHandler)

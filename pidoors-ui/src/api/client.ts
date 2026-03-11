@@ -50,7 +50,7 @@ export async function api<T = unknown>(
     headers['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     ...options,
     headers,
     credentials: 'same-origin',
@@ -60,6 +60,22 @@ export async function api<T = unknown>(
   if (res.status === 401) {
     clearCsrfToken();
     throw new ApiError('Session expired', 401);
+  }
+
+  // Auto-retry on 403 with fresh CSRF token (stale token recovery)
+  if (res.status === 403 && options.method && options.method !== 'GET') {
+    clearCsrfToken();
+    const freshToken = await fetchCsrfToken();
+    const retryHeaders = { ...headers, 'X-CSRF-Token': freshToken };
+    res = await fetch(url, {
+      ...options,
+      headers: retryHeaders,
+      credentials: 'same-origin',
+    });
+    if (res.status === 401) {
+      clearCsrfToken();
+      throw new ApiError('Session expired', 401);
+    }
   }
 
   // Handle non-JSON responses (file downloads)
@@ -72,7 +88,6 @@ export async function api<T = unknown>(
   const data = await res.json();
 
   if (!res.ok) {
-    // Refresh CSRF token on 403 (might be stale token)
     if (res.status === 403) {
       clearCsrfToken();
     }

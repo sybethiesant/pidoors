@@ -209,7 +209,7 @@ else
     log "Latest version: $LATEST_VERSION"
 
     # Download tarball
-    TMPDIR=$(mktemp -d /tmp/pidoors-update-XXX)
+    TMPDIR=$(mktemp -d /tmp/pidoors-update-XXXXXX)
     TARBALL="$TMPDIR/release.tar.gz"
     log "Downloading release tarball..."
     curl -sfL "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
@@ -257,8 +257,8 @@ if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
     if ! cmp -s "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null; then
         log "Update script has changed — self-updating and re-executing..."
         cp "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh"
-        chmod +x "$INSTALL_DIR/pidoors-update.sh"
-        chown pidoors:pidoors "$INSTALL_DIR/pidoors-update.sh"
+        chmod 755 "$INSTALL_DIR/pidoors-update.sh"
+        chown root:root "$INSTALL_DIR/pidoors-update.sh"
         # Re-run the new script with the same arguments, passing the
         # already-downloaded temp dir to skip re-downloading
         exec "$INSTALL_DIR/pidoors-update.sh" "$ZONE" "$TMPDIR"
@@ -338,6 +338,10 @@ copy_file "$EXTRACTED/VERSION" "$INSTALL_DIR/VERSION"
 chown -R pidoors:pidoors "$INSTALL_DIR"
 chmod +x "$INSTALL_DIR/pidoors.py"
 
+# Root-own the update script (sudoers entry references it)
+chown root:root "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null || true
+chmod 755 "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null || true
+
 # Remove orphaned files from managed directories
 REMOVED=0
 for dir in formats readers; do
@@ -367,11 +371,54 @@ CONF_DIR="$INSTALL_DIR/conf"
 
 if [ ! -f "$CONF_DIR/listener.crt" ] || [ ! -f "$CONF_DIR/listener.key" ]; then
     log "Generating TLS certificate for push listener..."
-    openssl req -x509 -newkey rsa:2048 -nodes \
-        -keyout "$CONF_DIR/listener.key" \
-        -out "$CONF_DIR/listener.crt" \
-        -days 3650 -subj "/CN=$ZONE" \
-        > /dev/null 2>&1 && log "TLS certificate generated" || log "Warning: TLS cert generation failed"
+
+    # Generate key + CSR
+    openssl genrsa 2048 > "$CONF_DIR/listener.key" 2>/dev/null
+    openssl req -new -key "$CONF_DIR/listener.key" \
+        -out /tmp/pidoors-controller.csr \
+        -subj "/CN=$ZONE" 2>/dev/null
+
+    # Try CA-signed via server API, fall back to self-signed
+    CERT_SIGNED=false
+    if [ -f "$CONF_DIR/config.json" ]; then
+        SIGN_RESULT=$(python3 -c "
+import json, sys, subprocess
+cfg = json.load(open('$CONF_DIR/config.json'))
+zc = cfg.get('$ZONE', {})
+csr = open('/tmp/pidoors-controller.csr').read()
+controller_ip = subprocess.check_output(['hostname', '-I']).decode().split()[0] if subprocess.check_output(['hostname', '-I']).decode().strip() else ''
+import urllib.request, urllib.error
+payload = json.dumps({'db_user': zc.get('sqluser',''), 'db_pass': zc.get('sqlpass',''), 'csr': csr, 'door_name': '$ZONE', 'door_ip': controller_ip}).encode()
+req = urllib.request.Request('https://' + zc.get('sqladdr','') + '/api/certs/sign', data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+import ssl
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+resp = urllib.request.urlopen(req, timeout=10, context=ctx)
+data = json.loads(resp.read())
+if data.get('ok') and data.get('cert'):
+    with open('$CONF_DIR/listener.crt', 'w') as f:
+        f.write(data['cert'])
+    print('ok')
+else:
+    print('fail')
+" 2>/dev/null) || SIGN_RESULT="fail"
+
+        if [ "$SIGN_RESULT" = "ok" ]; then
+            CERT_SIGNED=true
+            log "TLS certificate signed by PiDoors CA"
+        fi
+    fi
+
+    if [ "$CERT_SIGNED" = "false" ]; then
+        # Fallback to self-signed
+        openssl req -x509 -key "$CONF_DIR/listener.key" \
+            -in /tmp/pidoors-controller.csr \
+            -out "$CONF_DIR/listener.crt" \
+            -days 3650 > /dev/null 2>&1 && log "TLS certificate generated (self-signed)" || log "Warning: TLS cert generation failed"
+    fi
+
+    rm -f /tmp/pidoors-controller.csr
     chown pidoors:pidoors "$CONF_DIR/listener.key" "$CONF_DIR/listener.crt" 2>/dev/null || true
     chmod 600 "$CONF_DIR/listener.key" 2>/dev/null || true
     chmod 644 "$CONF_DIR/listener.crt" 2>/dev/null || true

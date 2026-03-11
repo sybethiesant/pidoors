@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.0.5-green)
+![Version](https://img.shields.io/badge/version-3.1.1-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -47,6 +47,7 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - Email notifications
 - Complete audit trail
 - Remote door control
+- Instant offline detection via server-initiated polling (no stale heartbeat data)
 - Door auto-registration from client heartbeat
 
 ### Updates
@@ -276,6 +277,7 @@ See the [Installation Guide](pidoors/INSTALLATION_GUIDE.md) for additional detai
 **One server Pi** runs the React SPA, PHP API, and database.
 **N door Pis** control individual access points with 24-hour local caching.
 The server pushes commands instantly via HTTPS, with database polling as fallback.
+The server pings controllers on each page load for instant status. Heartbeat runs every 5 minutes as a safety net.
 
 ---
 
@@ -532,15 +534,29 @@ Please report security issues to the repository owner directly, not via public i
 
 ```
 pidoors/
-├── pidoorserv/           # Web server application
+├── pidoorserv/           # PHP API backend
+│   ├── api.php           # Unified REST API router
 │   ├── includes/         # Core PHP includes
 │   │   ├── config.php.example
 │   │   ├── security.php
-│   │   └── header.php
+│   │   ├── header.php
+│   │   ├── push.php      # Push communication & status polling
+│   │   ├── notifications.php
+│   │   └── smtp.php      # Lightweight SMTP sender
+│   ├── cron/             # Scheduled tasks (notifications)
 │   ├── users/            # User management
 │   ├── database/         # Database connection
-│   ├── css/              # Stylesheets
-│   └── js/               # JavaScript
+│   ├── css/              # Stylesheets (legacy)
+│   └── js/               # JavaScript (legacy)
+├── pidoors-ui/           # React SPA frontend
+│   ├── src/
+│   │   ├── pages/        # Dashboard, Cards, Doors, Settings, etc.
+│   │   ├── components/   # Shared UI components
+│   │   ├── contexts/     # Auth context
+│   │   ├── api/          # REST API client
+│   │   └── types/        # TypeScript type definitions
+│   ├── package.json
+│   └── vite.config.ts
 ├── pidoors/              # Door controller
 │   ├── pidoors.py        # Main daemon
 │   ├── pidoors.service   # Systemd service
@@ -560,6 +576,7 @@ pidoors/
 ├── pidoorspcb/           # PCB design files (KiCAD)
 ├── VERSION               # Current version number
 ├── install.sh            # Installation script
+├── server-update.sh      # Server self-update script
 ├── database_migration.sql
 └── README.md
 ```
@@ -594,7 +611,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.0.5** - Production Ready
+**Current Version: 3.1.1** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -606,6 +623,38 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.1.1 (March 2026)
+- **Security**: IP-based login rate limiting — survives cookie clearing, uses `audit_logs` table
+- **Security**: Timing-safe login — dummy `password_verify` prevents user enumeration; unified error messages leak no attempt counts or account status
+- **Security**: Admin re-verified from database on every admin API call — demotion/deactivation takes immediate effect
+- **Security**: HTTPS enabled with PiDoors CA-signed certificates, HSTS (`max-age=63072000`), Content-Security-Policy
+- **Security**: Nginx API rate limiting (`limit_req_zone`, burst=20)
+- **Security**: Controller push communication verifies TLS certificates against CA when available (graceful fallback for pre-CA installs)
+- **Security**: Controller listener enforces TLS 1.2+ with strong cipher suite; timing-safe API key comparison via `hmac.compare_digest`
+- **Security**: SMTP header injection prevention — CRLF stripped from From/To/Subject
+- **Security**: `mysqldump` password passed via `MYSQL_PWD` env var instead of `-p` flag (not visible in `ps`)
+- **Security**: Admin password during install passed via env vars instead of CLI args
+- **Security**: LIMIT/OFFSET values bound as prepared statement parameters
+- **Security**: Backup download `Content-Disposition` filename sanitized
+- **Security**: Report type validated against whitelist
+- **Security**: Session cookie `secure` flag respects `X-Forwarded-Proto` header
+- **Security**: `mktemp` patterns use 6+ random characters (`XXXXXX`) across all scripts
+- **Security**: Update script (`pidoors-update.sh`) owned by root, not pidoors user
+- **Security**: Client IP logged in all push command reports
+- **Feature**: `/api/certs/sign` endpoint — controllers request CA-signed TLS certificates during install/update
+- **Feature**: `RequireAdmin` route guard in React SPA — non-admin users redirected from admin pages
+- **Feature**: CSRF 403 auto-retry — stale tokens recovered transparently with one retry
+- **Feature**: `password_needs_rehash` support — bcrypt cost upgrades on login
+
+### Version 3.1.0 (March 2026)
+- **Feature**: Server-initiated status polling — server pings all push-enabled controllers on every dashboard/doors page load for instant online/offline detection
+- **Feature**: Parallel `curl_multi` polling with configurable `status_check_timeout` setting (default 2s)
+- **Feature**: Single door view and ping endpoint now write full status fields (locked, held_open, version, door_open) to database
+- **Change**: Controller heartbeat interval increased from 60s to 300s — heartbeat is now a safety net for cache sync, update checks, and auto-registration; status reporting handled by server-initiated pings
+- **Fix**: Settings whitelist missing `default_listen_port`, `push_timeout`, `push_fallback_poll_interval` — push settings couldn't be saved from the UI
+- **Fix**: Footer version showed "unknown" after login — login endpoint was missing `version` field in response
+- **Database**: Added `status_check_timeout` setting
 
 ### Version 3.0.5 (March 2026)
 - **Fix**: Card edit/delete returned "Card not found" — `card_id` is a hex string (Wiegand) but API was casting to `(int)`, breaking all lookups

@@ -106,7 +106,8 @@ function verify_password($password, $hash) {
 function secure_session_start($config) {
     if (session_status() === PHP_SESSION_NONE) {
         session_name($config['session_name']);
-        $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+        $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
         session_set_cookie_params([
             'lifetime' => 0,
             'path'     => '/',

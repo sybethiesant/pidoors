@@ -1,8 +1,9 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
+import { useContext, type ReactNode } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, AuthContext } from './contexts/AuthContext';
 import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -21,6 +22,13 @@ import { BackupPage } from './pages/BackupPage';
 import { UpdatePage } from './pages/UpdatePage';
 import { ProfilePage } from './pages/ProfilePage';
 import { NotFoundPage } from './pages/NotFoundPage';
+
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const { user, loading } = useContext(AuthContext);
+  if (loading) return null;
+  if (!user?.isAdmin) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,18 +52,18 @@ export default function App() {
               <Route element={<AppShell />}>
                 <Route index element={<DashboardPage />} />
                 <Route path="doors" element={<DoorsPage />} />
-                <Route path="cards" element={<CardsPage />} />
-                <Route path="cards/import" element={<ImportCardsPage />} />
+                <Route path="cards" element={<RequireAdmin><CardsPage /></RequireAdmin>} />
+                <Route path="cards/import" element={<RequireAdmin><ImportCardsPage /></RequireAdmin>} />
                 <Route path="logs" element={<LogsPage />} />
-                <Route path="reports" element={<ReportsPage />} />
+                <Route path="reports" element={<RequireAdmin><ReportsPage /></RequireAdmin>} />
                 <Route path="schedules" element={<SchedulesPage />} />
                 <Route path="groups" element={<GroupsPage />} />
                 <Route path="holidays" element={<HolidaysPage />} />
-                <Route path="users" element={<UsersPage />} />
-                <Route path="audit" element={<AuditPage />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="backup" element={<BackupPage />} />
-                <Route path="updates" element={<UpdatePage />} />
+                <Route path="users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
+                <Route path="audit" element={<RequireAdmin><AuditPage /></RequireAdmin>} />
+                <Route path="settings" element={<RequireAdmin><SettingsPage /></RequireAdmin>} />
+                <Route path="backup" element={<RequireAdmin><BackupPage /></RequireAdmin>} />
+                <Route path="updates" element={<RequireAdmin><UpdatePage /></RequireAdmin>} />
                 <Route path="profile" element={<ProfilePage />} />
               </Route>
 

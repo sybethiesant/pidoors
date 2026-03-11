@@ -110,7 +110,7 @@ fi
 # Download and extract
 # ──────────────────────────────────────────────
 
-TMPDIR=$(mktemp -d /tmp/pidoors-server-update-XXX)
+TMPDIR=$(mktemp -d /tmp/pidoors-server-update-XXXXXX)
 TARBALL="$TMPDIR/release.tar.gz"
 
 info "Downloading release $LATEST_TAG..."
@@ -210,7 +210,7 @@ WEB_UI_ROOT="/var/www/pidoors-ui"
 if [ -d "$EXTRACTED/pidoors-ui" ]; then
     if command -v node > /dev/null 2>&1; then
         info "Building React UI..."
-        UI_BUILD_DIR=$(mktemp -d /tmp/pidoors-ui-build-XXX)
+        UI_BUILD_DIR=$(mktemp -d /tmp/pidoors-ui-build-XXXXXX)
         cp -r "$EXTRACTED/pidoors-ui/"* "$UI_BUILD_DIR/"
         [ -f "$EXTRACTED/pidoors-ui/.env" ] && cp "$EXTRACTED/pidoors-ui/.env" "$UI_BUILD_DIR/"
 

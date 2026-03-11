@@ -22,6 +22,11 @@ function smtp_send($to, $subject, $html_body, $smtp) {
     $pass = $smtp['pass'] ?? '';
     $from = $smtp['from'] ?? $user;
 
+    // Strip CRLF to prevent header injection
+    $from = str_replace(["\r", "\n"], '', $from);
+    $to = str_replace(["\r", "\n"], '', $to);
+    $subject = str_replace(["\r", "\n"], '', $subject);
+
     if (empty($host) || empty($to)) {
         return 'SMTP host and recipient are required';
     }
