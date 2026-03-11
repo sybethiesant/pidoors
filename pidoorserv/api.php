@@ -33,17 +33,46 @@ try {
             if ($lock_fp && flock($lock_fp, LOCK_EX | LOCK_NB)) {
                 $migration_file = $config['apppath'] . 'database_migration.sql';
                 if (file_exists($migration_file)) {
-                    putenv('MYSQL_PWD=' . $config['sqlpass']);
-                    $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
-                        escapeshellarg($config['sqladdr']),
-                        escapeshellarg($config['sqluser']),
-                        escapeshellarg($config['sqldb2']),
-                        escapeshellarg($migration_file)
-                    );
-                    exec($mig_cmd, $mig_output, $mig_code);
-                    putenv('MYSQL_PWD');
-                    if ($mig_code !== 0) {
-                        error_log("Auto-migration failed (exit $mig_code): " . implode(' ', $mig_output ?? []));
+                    // Try mysql CLI first, fall back to PDO for Docker containers without mysql client
+                    $mysql_path = trim(@exec('which mysql 2>/dev/null'));
+                    if ($mysql_path) {
+                        putenv('MYSQL_PWD=' . $config['sqlpass']);
+                        $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
+                            escapeshellarg($config['sqladdr']),
+                            escapeshellarg($config['sqluser']),
+                            escapeshellarg($config['sqldb2']),
+                            escapeshellarg($migration_file)
+                        );
+                        exec($mig_cmd, $mig_output, $mig_code);
+                        putenv('MYSQL_PWD');
+                        if ($mig_code !== 0) {
+                            error_log("Auto-migration CLI failed (exit $mig_code): " . implode(' ', $mig_output ?? []));
+                        }
+                    } else {
+                        // PDO fallback: execute each statement from the migration SQL
+                        $sql = file_get_contents($migration_file);
+                        if ($sql) {
+                            try {
+                                $pdo_access->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
+                                // Split on semicolons, filtering out empty statements
+                                $statements = array_filter(array_map('trim', explode(';', $sql)), function($s) {
+                                    return !empty($s) && $s !== 'COMMIT';
+                                });
+                                foreach ($statements as $stmt_sql) {
+                                    try {
+                                        $pdo_access->exec($stmt_sql);
+                                    } catch (PDOException $stmt_e) {
+                                        // Ignore "already exists" type errors, log others
+                                        if (strpos($stmt_e->getMessage(), 'already exists') === false &&
+                                            strpos($stmt_e->getMessage(), 'Duplicate') === false) {
+                                            error_log("Auto-migration statement error: " . $stmt_e->getMessage());
+                                        }
+                                    }
+                                }
+                            } catch (Exception $mig_e) {
+                                error_log("Auto-migration PDO failed: " . $mig_e->getMessage());
+                            }
+                        }
                     }
                 }
                 // Also deploy bundled SPA if present

@@ -181,16 +181,33 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
         // Pre-built SPA — just copy files
         if (!is_dir($ui_root)) @mkdir($ui_root, 0755, true);
         if (is_dir($ui_root) && is_writable($ui_root)) {
-            @exec('rm -rf ' . escapeshellarg($ui_root) . '/*');
-            @exec('cp -r ' . escapeshellarg($ui_dist_src) . '/* ' . escapeshellarg($ui_root) . '/');
+            // Get expected JS bundle name from source dist
+            $expected_assets = glob($ui_dist_src . '/assets/index-*.js');
+            $expected_js = $expected_assets ? basename($expected_assets[0]) : null;
+
+            $rm_output = [];
+            exec('rm -rf ' . escapeshellarg($ui_root) . '/* 2>&1', $rm_output, $rm_code);
+            if ($rm_code !== 0) {
+                $details[] = 'WARNING: Could not clean React UI directory — ' . implode(' ', $rm_output);
+                error_log("SPA rm -rf failed: " . implode(' ', $rm_output));
+            }
+            $cp_output = [];
+            exec('cp -r ' . escapeshellarg($ui_dist_src) . '/* ' . escapeshellarg($ui_root) . '/ 2>&1', $cp_output, $cp_code);
             @exec('chown -R www-data:www-data ' . escapeshellarg($ui_root) . ' 2>/dev/null');
-            if (file_exists($ui_root . '/index.html')) {
+
+            // Verify the correct JS bundle was deployed, not a stale one
+            if ($cp_code !== 0) {
+                $details[] = 'WARNING: React SPA copy failed — ' . implode(' ', $cp_output);
+                error_log("SPA cp failed: " . implode(' ', $cp_output));
+            } elseif ($expected_js && !file_exists($ui_root . '/assets/' . $expected_js)) {
+                $details[] = 'WARNING: React SPA deployed but JS bundle mismatch — old files may remain due to permissions';
+            } elseif (file_exists($ui_root . '/index.html')) {
                 $details[] = 'React UI deployed (pre-built)';
             } else {
-                $details[] = 'React SPA copy failed';
+                $details[] = 'WARNING: React SPA copy failed — index.html missing after copy';
             }
         } else {
-            $details[] = "React SPA skipped — $ui_root is not writable";
+            $details[] = "WARNING: React SPA skipped — $ui_root is not writable";
         }
     } elseif (is_dir($ui_src) && file_exists($ui_src . '/package.json')) {
         // Source only — try to build
