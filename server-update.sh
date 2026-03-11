@@ -206,10 +206,35 @@ fi
 # ──────────────────────────────────────────────
 
 WEB_UI_ROOT="/var/www/pidoors-ui"
+UI_DEPLOYED=false
 
-if [ -d "$EXTRACTED/pidoors-ui" ]; then
+# Try pre-built SPA dist first (from build-release.sh tarball)
+UI_DIST=""
+if [ -d "$EXTRACTED/pidoors-ui-dist" ] && [ -f "$EXTRACTED/pidoors-ui-dist/index.html" ]; then
+    UI_DIST="$EXTRACTED/pidoors-ui-dist"
+elif [ -d "$EXTRACTED/pidoorserv/pidoors-ui-dist" ] && [ -f "$EXTRACTED/pidoorserv/pidoors-ui-dist/index.html" ]; then
+    UI_DIST="$EXTRACTED/pidoorserv/pidoors-ui-dist"
+fi
+
+if [ -n "$UI_DIST" ]; then
+    info "Deploying pre-built React UI..."
+    mkdir -p "$WEB_UI_ROOT"
+    rm -rf "$WEB_UI_ROOT/"*
+    cp -r "$UI_DIST/"* "$WEB_UI_ROOT/"
+    chown -R www-data:www-data "$WEB_UI_ROOT"
+    chmod -R 755 "$WEB_UI_ROOT"
+    if [ -f "$WEB_UI_ROOT/index.html" ]; then
+        ok "React UI deployed (pre-built)"
+        UI_DEPLOYED=true
+    else
+        warn "Pre-built React UI copy failed"
+    fi
+fi
+
+# Fallback: build from source if pre-built not available
+if [ "$UI_DEPLOYED" = false ] && [ -d "$EXTRACTED/pidoors-ui" ] && [ -f "$EXTRACTED/pidoors-ui/package.json" ]; then
     if command -v node > /dev/null 2>&1; then
-        info "Building React UI..."
+        info "Building React UI from source..."
         UI_BUILD_DIR=$(mktemp -d /tmp/pidoors-ui-build-XXXXXX)
         cp -r "$EXTRACTED/pidoors-ui/"* "$UI_BUILD_DIR/"
         [ -f "$EXTRACTED/pidoors-ui/.env" ] && cp "$EXTRACTED/pidoors-ui/.env" "$UI_BUILD_DIR/"
@@ -227,8 +252,8 @@ if [ -d "$EXTRACTED/pidoors-ui" ]; then
         fi
         rm -rf "$UI_BUILD_DIR"
     else
-        warn "Node.js is not installed — cannot build React UI"
-        warn "Install it with: sudo apt-get install -y nodejs npm"
+        warn "Node.js is not installed and no pre-built React UI in release"
+        warn "Install Node.js with: sudo apt-get install -y nodejs npm"
     fi
 fi
 
@@ -259,32 +284,45 @@ if [ -f "$EXTRACTED/database_migration.sql" ]; then
 fi
 
 DB_PASS=""
+DB_USER="pidoors"
+DB_HOST="localhost"
+DB_NAME="access"
 # Try --db-pass argument first
 if [ -n "$DB_PASS_ARG" ]; then
     DB_PASS="$DB_PASS_ARG"
-# Try reading from config.php
-elif [ -f "$WEB_ROOT/includes/config.php" ]; then
-    DB_PASS=$(php -r "
+fi
+# Read credentials from config.php
+if [ -f "$WEB_ROOT/includes/config.php" ]; then
+    if [ -z "$DB_PASS" ]; then
+        DB_PASS=$(php -r "
+            \$cfg = include '$WEB_ROOT/includes/config.php';
+            if (is_array(\$cfg) && isset(\$cfg['sqlpass'])) echo \$cfg['sqlpass'];
+        " 2>/dev/null) || true
+    fi
+    DB_USER=$(php -r "
         \$cfg = include '$WEB_ROOT/includes/config.php';
-        if (is_array(\$cfg) && isset(\$cfg['sqlpass'])) {
-            echo \$cfg['sqlpass'];
-        }
-    " 2>/dev/null) || true
+        if (is_array(\$cfg) && isset(\$cfg['sqluser'])) echo \$cfg['sqluser'];
+    " 2>/dev/null) || DB_USER="pidoors"
+    DB_HOST=$(php -r "
+        \$cfg = include '$WEB_ROOT/includes/config.php';
+        if (is_array(\$cfg) && isset(\$cfg['sqladdr'])) echo \$cfg['sqladdr'];
+    " 2>/dev/null) || DB_HOST="localhost"
+    DB_NAME=$(php -r "
+        \$cfg = include '$WEB_ROOT/includes/config.php';
+        if (is_array(\$cfg) && isset(\$cfg['sqldb2'])) echo \$cfg['sqldb2'];
+    " 2>/dev/null) || DB_NAME="access"
 fi
 
 if [ -n "$MIGRATION_SQL" ] && [ -n "$DB_PASS" ]; then
     info "Running database migration..."
-    if MYSQL_PWD="$DB_PASS" mysql -u pidoors access < "$MIGRATION_SQL" 2>/dev/null; then
+    if MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < "$MIGRATION_SQL" 2>/dev/null; then
         ok "Database migration completed"
     else
         warn "Database migration had errors (non-fatal for upgrades)"
     fi
-
-    # Also run the users DB portion if it switches contexts (it does via USE users)
-    # The migration script handles both databases internally, so one run is enough.
 elif [ -n "$MIGRATION_SQL" ]; then
     warn "Could not determine database password"
-    warn "Run manually: mysql -u pidoors -p access < $WEB_ROOT/database_migration.sql"
+    warn "Run manually: mysql -u $DB_USER -p $DB_NAME < $WEB_ROOT/database_migration.sql"
 else
     warn "No database_migration.sql found in release"
 fi

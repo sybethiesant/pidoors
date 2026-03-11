@@ -134,6 +134,14 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
     }
     if ($removed > 0) $details[] = "$removed orphaned file(s) removed";
 
+    // --- Fix file ownership and permissions ---
+    @exec('chown -R www-data:www-data ' . escapeshellarg($apppath) . ' 2>/dev/null');
+    @exec('chmod -R 755 ' . escapeshellarg($apppath) . ' 2>/dev/null');
+    $config_file = $apppath . '/includes/config.php';
+    if (file_exists($config_file)) {
+        @chmod($config_file, 0640);
+    }
+
     // --- Update VERSION ---
     $new_version = '';
     if (file_exists($extracted . '/VERSION')) {
@@ -236,8 +244,9 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
         if ($mig_code === 0) {
             $details[] = 'Database schema updated';
         } else {
-            $details[] = 'Database migration had errors';
-            error_log("Database migration failed (exit $mig_code): " . implode(' ', $mig_output));
+            $mig_err = implode(' ', $mig_output);
+            $details[] = 'WARNING: Database migration had errors — ' . $mig_err;
+            error_log("Database migration failed (exit $mig_code): $mig_err");
         }
     }
 

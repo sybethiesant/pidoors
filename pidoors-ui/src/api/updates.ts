@@ -31,3 +31,7 @@ export async function getControllers(): Promise<Controller[]> {
 export async function requestControllerUpdate(doorName: string): Promise<ApiResponse> {
   return api(`update/controllers/${encodeURIComponent(doorName)}`, { method: 'POST' });
 }
+
+export async function requestAllControllerUpdates(): Promise<ApiResponse> {
+  return api('update/controllers/all', { method: 'POST' });
+}

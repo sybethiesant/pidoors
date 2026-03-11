@@ -123,7 +123,8 @@ cp pidoors-ui/tsconfig.json "$STAGING/pidoors-ui/" 2>/dev/null || true
 cp pidoors-ui/tsconfig.app.json "$STAGING/pidoors-ui/" 2>/dev/null || true
 cp pidoors-ui/tsconfig.node.json "$STAGING/pidoors-ui/" 2>/dev/null || true
 cp pidoors-ui/vite.config.ts "$STAGING/pidoors-ui/" 2>/dev/null || true
-cp pidoors-ui/tailwind.config.js "$STAGING/pidoors-ui/" 2>/dev/null || true
+cp pidoors-ui/tailwind.config.js "$STAGING/pidoors-ui/" 2>/dev/null || \
+cp pidoors-ui/tailwind.config.ts "$STAGING/pidoors-ui/" 2>/dev/null || true
 cp pidoors-ui/postcss.config.js "$STAGING/pidoors-ui/" 2>/dev/null || true
 cp pidoors-ui/index.html "$STAGING/pidoors-ui/" 2>/dev/null || true
 [ -f pidoors-ui/.env ] && cp pidoors-ui/.env "$STAGING/pidoors-ui/"

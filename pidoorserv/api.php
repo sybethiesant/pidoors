@@ -20,6 +20,7 @@ header('Content-Type: application/json');
 
 // Auto-migration: run database_migration.sql when VERSION changes
 // This ensures schema is always up to date regardless of how files were deployed
+// Uses file-based locking to prevent concurrent migration runs
 try {
     $version_file = $config['apppath'] . 'VERSION';
     $file_version = file_exists($version_file) ? trim(file_get_contents($version_file)) : '';
@@ -27,22 +28,40 @@ try {
         $sv_row = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'server_version'")->fetch();
         $db_version = ($sv_row && !empty($sv_row['setting_value'])) ? $sv_row['setting_value'] : '';
         if ($db_version !== $file_version) {
-            $migration_file = $config['apppath'] . 'database_migration.sql';
-            if (file_exists($migration_file)) {
-                putenv('MYSQL_PWD=' . $config['sqlpass']);
-                $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
-                    escapeshellarg($config['sqladdr']),
-                    escapeshellarg($config['sqluser']),
-                    escapeshellarg($config['sqldb2']),
-                    escapeshellarg($migration_file)
-                );
-                exec($mig_cmd, $mig_output, $mig_code);
-                putenv('MYSQL_PWD');
-                if ($mig_code !== 0) {
-                    error_log("Auto-migration failed (exit $mig_code): " . implode(' ', $mig_output ?? []));
+            $lock_file = sys_get_temp_dir() . '/pidoors_migration.lock';
+            $lock_fp = @fopen($lock_file, 'w');
+            if ($lock_fp && flock($lock_fp, LOCK_EX | LOCK_NB)) {
+                $migration_file = $config['apppath'] . 'database_migration.sql';
+                if (file_exists($migration_file)) {
+                    putenv('MYSQL_PWD=' . $config['sqlpass']);
+                    $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
+                        escapeshellarg($config['sqladdr']),
+                        escapeshellarg($config['sqluser']),
+                        escapeshellarg($config['sqldb2']),
+                        escapeshellarg($migration_file)
+                    );
+                    exec($mig_cmd, $mig_output, $mig_code);
+                    putenv('MYSQL_PWD');
+                    if ($mig_code !== 0) {
+                        error_log("Auto-migration failed (exit $mig_code): " . implode(' ', $mig_output ?? []));
+                    }
                 }
+                // Also deploy bundled SPA if present
+                $ui_root = '/var/www/pidoors-ui';
+                $bundled_dist = rtrim($config['apppath'], '/') . '/pidoors-ui-dist';
+                if (is_dir($bundled_dist) && file_exists($bundled_dist . '/index.html')) {
+                    if (!is_dir($ui_root)) @mkdir($ui_root, 0755, true);
+                    if (is_dir($ui_root) && is_writable($ui_root)) {
+                        @exec('rm -rf ' . escapeshellarg($ui_root) . '/*');
+                        @exec('cp -r ' . escapeshellarg($bundled_dist) . '/* ' . escapeshellarg($ui_root) . '/');
+                        @exec('chown -R www-data:www-data ' . escapeshellarg($ui_root) . ' 2>/dev/null');
+                    }
+                    @exec('rm -rf ' . escapeshellarg($bundled_dist));
+                }
+                $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value, description) VALUES ('server_version', ?, 'Current server software version') ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)")->execute([$file_version]);
+                flock($lock_fp, LOCK_UN);
             }
-            $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value, description) VALUES ('server_version', ?, 'Current server software version') ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)")->execute([$file_version]);
+            if ($lock_fp) fclose($lock_fp);
         }
     }
 } catch (Exception $e) {
@@ -1758,19 +1777,49 @@ if ($resource === 'update') {
     require_admin_auth();
 
     if ($id === 'status' && $method === 'GET') {
-        // Current server version + latest GitHub version
+        // Current server version + latest GitHub version (cached 1 hour)
         $version = trim(file_get_contents($config['apppath'] . 'VERSION') ?: 'unknown');
         $latest = 'unknown';
+
+        // Check cache first
         try {
-            $gh_url = 'https://api.github.com/repos/sybethiesant/pidoors/releases/latest';
-            $opts = ['http' => ['header' => "User-Agent: PiDoors\r\n", 'timeout' => 5]];
-            $ctx = stream_context_create($opts);
-            $gh_json = @file_get_contents($gh_url, false, $ctx);
-            if ($gh_json) {
+            $cache_stmt = $pdo_access->query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('github_latest_version', 'github_check_time')");
+            $cache = [];
+            while ($row = $cache_stmt->fetch()) $cache[$row['setting_key']] = $row['setting_value'];
+        } catch (Exception $e) { $cache = []; }
+
+        $cache_stale = true;
+        if (!empty($cache['github_check_time'])) {
+            $check_time = strtotime($cache['github_check_time']);
+            if ($check_time && (time() - $check_time) < 3600) {
+                $cache_stale = false;
+                $latest = $cache['github_latest_version'] ?? 'unknown';
+            }
+        }
+
+        if ($cache_stale) {
+            $ch = curl_init('https://api.github.com/repos/sybethiesant/pidoors/releases/latest');
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 5,
+                CURLOPT_HTTPHEADER => ['User-Agent: PiDoors-Update-Check'],
+            ]);
+            $gh_json = curl_exec($ch);
+            $gh_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($gh_code === 200 && $gh_json) {
                 $gh = json_decode($gh_json, true);
                 $latest = $gh['tag_name'] ?? 'unknown';
+                try {
+                    $upd = $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+                    $upd->execute(['github_latest_version', ltrim($latest, 'v')]);
+                    $upd->execute(['github_check_time', date('Y-m-d H:i:s')]);
+                } catch (Exception $e) {}
+            } elseif (!empty($cache['github_latest_version'])) {
+                $latest = $cache['github_latest_version'];
             }
-        } catch (Exception $e) {}
+        }
 
         json_success(['current_version' => $version, 'latest_version' => $latest]);
     }
@@ -1780,16 +1829,19 @@ if ($resource === 'update') {
 
         // Determine target version
         $target = '';
-        try {
-            $gh_url = 'https://api.github.com/repos/sybethiesant/pidoors/releases/latest';
-            $opts = ['http' => ['header' => "User-Agent: PiDoors\r\n", 'timeout' => 10]];
-            $ctx = stream_context_create($opts);
-            $gh_json = @file_get_contents($gh_url, false, $ctx);
-            if ($gh_json) {
-                $gh = json_decode($gh_json, true);
-                $target = ltrim($gh['tag_name'] ?? '', 'v');
-            }
-        } catch (Exception $e) {}
+        $ch = curl_init('https://api.github.com/repos/sybethiesant/pidoors/releases/latest');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_HTTPHEADER => ['User-Agent: PiDoors-Update-Check'],
+        ]);
+        $gh_json = curl_exec($ch);
+        $gh_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($gh_code === 200 && $gh_json) {
+            $gh = json_decode($gh_json, true);
+            $target = ltrim($gh['tag_name'] ?? '', 'v');
+        }
 
         if (empty($target)) {
             json_error('Could not determine latest version from GitHub.');
@@ -1814,7 +1866,23 @@ if ($resource === 'update') {
         json_success(['controllers' => $doors]);
     }
 
-    if ($id === 'controllers' && $action !== null && $method === 'POST') {
+    if ($id === 'controllers' && $action === 'all' && $method === 'POST') {
+        // Update all online controllers
+        require_csrf();
+        $online_doors = $pdo_access->query("SELECT name FROM doors WHERE status = 'online'")->fetchAll(PDO::FETCH_COLUMN);
+        $count = 0;
+        foreach ($online_doors as $name) {
+            $result = push_to_controller($pdo_access, $name, 'update');
+            if (!$result['ok']) {
+                $pdo_access->prepare("UPDATE doors SET update_requested = 1 WHERE name = ?")->execute([$name]);
+            }
+            $count++;
+        }
+        log_security_event($pdo, 'controller_update_requested', $_SESSION['user_id'], "Update requested for all online controllers ($count)");
+        json_success(['count' => $count], "Update requested for $count controller(s)");
+    }
+
+    if ($id === 'controllers' && $action !== null && $action !== 'all' && $method === 'POST') {
         require_csrf();
         $door_name = urldecode($action);
 
