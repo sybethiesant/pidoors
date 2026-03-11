@@ -1108,26 +1108,26 @@ sudo systemctl restart pidoors
 | `*` (all doors)          | `*` (unchanged)         |
 | `single_door`            | `single_door` (unchanged) |
 
-### Enable HTTPS (Recommended for Production)
+### HTTPS (Automatic)
 
-1. **Generate a self-signed certificate** (or use Let's Encrypt):
+HTTPS is configured automatically during installation. The installer generates a CA-signed TLS certificate (valid for 10 years) using the PiDoors CA that is also used for MariaDB TLS. The nginx config includes:
+
+- TLS 1.2+ enforced with strong cipher suite
+- HSTS header (`max-age=63072000`)
+- Content-Security-Policy headers
+- API rate limiting
+- HTTP automatically redirects to HTTPS
+
+No manual configuration is needed. If you need to regenerate the certificate (e.g., after an IP change), run:
+
 ```bash
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout /etc/ssl/private/pidoors.key \
-    -out /etc/ssl/certs/pidoors.crt
-```
-
-2. **Edit the Nginx configuration**:
-```bash
-sudo nano /etc/nginx/sites-available/pidoors
-```
-
-3. **Uncomment the HTTPS server block** at the bottom of the file
-
-4. **Test and reload Nginx**:
-```bash
-sudo nginx -t
-sudo systemctl reload nginx
+sudo openssl genrsa 2048 > /etc/ssl/private/pidoors.key
+SERVER_IP=$(hostname -I | awk '{print $1}')
+sudo openssl req -new -key /etc/ssl/private/pidoors.key -out /tmp/pidoors.csr -subj "/CN=PiDoors Web"
+echo "subjectAltName = IP:${SERVER_IP},DNS:pidoors,DNS:pidoors.local,DNS:localhost,IP:127.0.0.1" > /tmp/pidoors-ext.cnf
+sudo openssl x509 -req -days 3650 -in /tmp/pidoors.csr -CA /etc/mysql/ssl/ca.pem -CAkey /etc/mysql/ssl/ca-key.pem -CAcreateserial -out /etc/ssl/certs/pidoors.crt -extfile /tmp/pidoors-ext.cnf
+rm -f /tmp/pidoors.csr /tmp/pidoors-ext.cnf
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
 ---
@@ -1142,8 +1142,7 @@ Now that your system is running:
 4. Create access groups for different user types
 5. Set up email notifications
 6. Test the backup system
-7. Enable HTTPS for production
-8. Monitor the system via the dashboard
+7. Monitor the system via the dashboard
 
 **Your PiDoors Access Control System is now operational!**
 
