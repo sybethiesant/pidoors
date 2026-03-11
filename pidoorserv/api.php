@@ -18,6 +18,37 @@ secure_session_start($config);
 
 header('Content-Type: application/json');
 
+// Auto-migration: run database_migration.sql when VERSION changes
+// This ensures schema is always up to date regardless of how files were deployed
+try {
+    $version_file = $config['apppath'] . 'VERSION';
+    $file_version = file_exists($version_file) ? trim(file_get_contents($version_file)) : '';
+    if ($file_version) {
+        $sv_row = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'server_version'")->fetch();
+        $db_version = ($sv_row && !empty($sv_row['setting_value'])) ? $sv_row['setting_value'] : '';
+        if ($db_version !== $file_version) {
+            $migration_file = $config['apppath'] . 'database_migration.sql';
+            if (file_exists($migration_file)) {
+                putenv('MYSQL_PWD=' . $config['sqlpass']);
+                $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
+                    escapeshellarg($config['sqladdr']),
+                    escapeshellarg($config['sqluser']),
+                    escapeshellarg($config['sqldb2']),
+                    escapeshellarg($migration_file)
+                );
+                exec($mig_cmd, $mig_output, $mig_code);
+                putenv('MYSQL_PWD');
+                if ($mig_code !== 0) {
+                    error_log("Auto-migration failed (exit $mig_code): " . implode(' ', $mig_output ?? []));
+                }
+            }
+            $pdo_access->prepare("INSERT INTO settings (setting_key, setting_value, description) VALUES ('server_version', ?, 'Current server software version') ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)")->execute([$file_version]);
+        }
+    }
+} catch (Exception $e) {
+    error_log("Auto-migration check error: " . $e->getMessage());
+}
+
 // Load configured timezone for timestamp conversion
 $app_timezone = null;
 try {

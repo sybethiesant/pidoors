@@ -41,8 +41,12 @@ function DoorFormModal({
     unlock_duration: 5,
     reader_type: 'wiegand',
     listen_port: null,
+    door_sensor_gpio: null,
     ...door,
   });
+
+  const sensorEnabled = form.door_sensor_gpio !== null && form.door_sensor_gpio !== undefined;
+  const SENSOR_GPIO_PINS = [4, 5, 6, 7, 12, 13, 16, 17, 19, 20, 21, 26, 27];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,6 +165,32 @@ function DoorFormModal({
                 max={65535}
               />
             </div>
+          </div>
+
+          <div className="border-t border-slate-200 pt-4 dark:border-slate-700">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={sensorEnabled}
+                onChange={(e) => setForm({ ...form, door_sensor_gpio: e.target.checked ? SENSOR_GPIO_PINS[0] : null })}
+                className="rounded border-slate-300"
+              />
+              Door contact sensor
+            </label>
+            {sensorEnabled && (
+              <div className="mt-2">
+                <label className="label">Sensor GPIO Pin</label>
+                <select
+                  className="input"
+                  value={form.door_sensor_gpio ?? ''}
+                  onChange={(e) => setForm({ ...form, door_sensor_gpio: parseInt(e.target.value) })}
+                >
+                  {SENSOR_GPIO_PINS.map((pin) => (
+                    <option key={pin} value={pin}>GPIO {pin}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
@@ -334,6 +364,15 @@ export function DoorsPage() {
                     <span className="badge badge-warning">Unlocked</span>
                   )}
 
+                  {door.door_sensor_gpio !== null && (
+                    door.door_open === 1 ? (
+                      <span className="badge badge-warning">Open</span>
+                    ) : door.door_open === 0 ? (
+                      <span className="badge badge-success">Closed</span>
+                    ) : (
+                      <span className="badge badge-secondary">Sensor N/A</span>
+                    )
+                  )}
                 </div>
 
                 {door.ip_address && (

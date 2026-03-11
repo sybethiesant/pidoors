@@ -46,6 +46,8 @@ export interface Door {
   poll_interval: number;
   listen_port: number | null;
   push_available: number;
+  door_sensor_gpio: number | null;
+  door_open: number | null;
 }
 
 export interface Card {

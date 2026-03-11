@@ -158,6 +158,11 @@ export function SettingsPage() {
                   <input type="number" className="input" value={form.push_fallback_poll_interval || ''} onChange={(e) => set('push_fallback_poll_interval', e.target.value)} min={5} max={60} />
                   <p className="mt-1 text-xs text-slate-400">Poll interval for controllers with push enabled (safety net, default: 15s)</p>
                 </div>
+                <div>
+                  <label className="label">Status Check Timeout (seconds)</label>
+                  <input type="number" className="input" value={form.status_check_timeout || ''} onChange={(e) => set('status_check_timeout', e.target.value)} min={1} max={10} />
+                  <p className="mt-1 text-xs text-slate-400">How long to wait when pinging controllers for live status (default: 2s)</p>
+                </div>
               </div>
             </div>
           </div>

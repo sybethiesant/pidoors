@@ -134,6 +134,15 @@ function DoorStatusItem({
 
       <div className="flex items-center gap-2 flex-wrap justify-end">
         {lockBadge}
+        {door.door_sensor_gpio !== null && (
+          door.door_open === 1 ? (
+            <span className="badge badge-warning">Open</span>
+          ) : door.door_open === 0 ? (
+            <span className="badge badge-success">Closed</span>
+          ) : (
+            <span className="badge badge-secondary">Sensor N/A</span>
+          )
+        )}
         <span
           className={`badge ${door.status === 'online' ? 'badge-success' : door.status === 'offline' ? 'badge-danger' : 'badge-secondary'}`}
         >

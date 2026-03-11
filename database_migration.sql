@@ -677,6 +677,25 @@ DEALLOCATE PREPARE stmt;
 INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
 ('default_listen_port', '8443', 'Default HTTPS listener port for controller push commands'),
 ('push_timeout', '3', 'Timeout in seconds for push commands to controllers'),
-('push_fallback_poll_interval', '15', 'Poll interval in seconds when push listener is active (fallback safety net)');
+('push_fallback_poll_interval', '15', 'Poll interval in seconds when push listener is active (fallback safety net)'),
+('status_check_timeout', '2', 'Timeout in seconds when pinging controllers for live status');
+
+-- --------------------------------------------------------
+-- v3.1.0 - Door sensor state columns
+-- --------------------------------------------------------
+
+-- door_sensor_gpio: GPIO pin number for magnetic reed switch (NULL = no sensor)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'door_sensor_gpio');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `door_sensor_gpio` int(11) DEFAULT NULL AFTER `push_available`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- door_open: current physical door state (NULL = no sensor, 0 = closed, 1 = open)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'door_open');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `door_open` tinyint(1) DEFAULT NULL AFTER `door_sensor_gpio`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 COMMIT;
