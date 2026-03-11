@@ -58,7 +58,7 @@ function push_to_controller($pdo_access, $door_name, $command, $body = []) {
     }
 
     $ch = curl_init($url);
-    curl_setopt_array($ch, array_merge([
+    curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => $timeout,
@@ -68,7 +68,7 @@ function push_to_controller($pdo_access, $door_name, $command, $body = []) {
             "Authorization: Bearer {$key}",
         ],
         CURLOPT_POSTFIELDS     => json_encode($body ?: new \stdClass()),
-    ], _push_ssl_opts()));
+    ] + _push_ssl_opts());
 
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -123,7 +123,7 @@ function ping_controller($pdo_access, $door_name) {
     }
 
     $ch = curl_init($url);
-    curl_setopt_array($ch, array_merge([
+    curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => $timeout,
@@ -133,7 +133,7 @@ function ping_controller($pdo_access, $door_name) {
             "Authorization: Bearer {$key}",
         ],
         CURLOPT_POSTFIELDS     => '{}',
-    ], _push_ssl_opts()));
+    ] + _push_ssl_opts());
 
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -146,7 +146,7 @@ function ping_controller($pdo_access, $door_name) {
         )->execute([$door_name]);
 
         $result = json_decode($response, true);
-        return is_array($result) ? array_merge(['ok' => true], $result) : ['ok' => true];
+        return is_array($result) ? ['ok' => true], $result) : ['ok' => true];
     }
 
     $pdo_access->prepare(
@@ -191,7 +191,7 @@ function poll_all_door_status($pdo_access) {
     foreach ($doors as $door) {
         $url = "https://{$door['ip_address']}:{$door['listen_port']}/ping";
         $ch = curl_init($url);
-        curl_setopt_array($ch, array_merge([
+        curl_setopt_array($ch, [
             CURLOPT_POST           => true,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT        => $timeout,
@@ -201,7 +201,7 @@ function poll_all_door_status($pdo_access) {
                 "Authorization: Bearer {$door['api_key']}",
             ],
             CURLOPT_POSTFIELDS     => '{}',
-        ], $ssl_opts));
+        ] + $ssl_opts);
         curl_multi_add_handle($mh, $ch);
         $handles[(int) $ch] = ['ch' => $ch, 'name' => $door['name']];
     }
