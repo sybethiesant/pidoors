@@ -146,7 +146,7 @@ function ping_controller($pdo_access, $door_name) {
         )->execute([$door_name]);
 
         $result = json_decode($response, true);
-        return is_array($result) ? ['ok' => true], $result) : ['ok' => true];
+        return is_array($result) ? array_merge(['ok' => true], $result) : ['ok' => true];
     }
 
     $pdo_access->prepare(
