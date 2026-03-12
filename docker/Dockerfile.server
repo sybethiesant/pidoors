@@ -1,0 +1,24 @@
+FROM debian:bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Same packages install.sh installs for a server (lines 147–165) ──
+RUN apt-get update -qq && \
+    apt-get install -y -qq \
+        nginx \
+        php-fpm php-mysql php-cli php-mbstring php-curl \
+        mariadb-server \
+        nodejs npm \
+        openssl curl procps && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Create directories mirroring bare-metal install paths
+RUN mkdir -p /var/www/pidoors /var/www/pidoors-ui /var/backups/pidoors && \
+    chown -R www-data:www-data /var/www/pidoors /var/www/pidoors-ui /var/backups/pidoors
+
+COPY docker/server-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 80 443
+
+ENTRYPOINT ["/entrypoint.sh"]

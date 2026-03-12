@@ -1,0 +1,26 @@
+FROM debian:bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Same packages install.sh installs for a door controller (lines 150–152, 704–710) ──
+RUN apt-get update -qq && \
+    apt-get install -y -qq \
+        python3 python3-pip python3-venv python3-dev \
+        openssl curl procps && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Create install directory mirroring bare-metal /opt/pidoors
+RUN mkdir -p /opt/pidoors/conf /opt/pidoors/cache /opt/pidoors/readers /opt/pidoors/formats /opt/pidoors/venv
+
+# ── Python venv with same packages as install.sh (line 708) ──
+RUN python3 -m venv /opt/pidoors/venv --system-site-packages && \
+    /opt/pidoors/venv/bin/pip install --upgrade pip -q && \
+    /opt/pidoors/venv/bin/pip install pymysql pyserial smbus2 -q
+
+# Bake in mock GPIO (replaces rpi-lgpio on real Pi)
+COPY docker/mock_gpio.py /opt/pidoors/mock_gpio.py
+
+COPY docker/door-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

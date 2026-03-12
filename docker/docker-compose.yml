@@ -1,97 +1,54 @@
+# PiDoors Docker — 2 Minimal Bookworm Containers
+# Mirrors a real Raspberry Pi OS install as closely as possible.
+#
+# server: MariaDB + PHP-FPM + Nginx (all-in-one, like install.sh option 3)
+# door:   Mock door controller connecting to server's MariaDB
+#
+# Usage:
+#   docker compose up --build -d
+#   docker compose logs -f
+
 services:
-  db:
-    image: mariadb:10.6
-    container_name: pidoors-db
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    container_name: pidoors-server
     restart: unless-stopped
-    environment:
-      MARIADB_ROOT_PASSWORD: pidoors_root_pass
-      MARIADB_USER: pidoors
-      MARIADB_PASSWORD: pidoors_pass
+    ports:
+      - "8088:443"
+      - "8080:80"
     volumes:
+      # Source bind-mounted read-only; copied into install paths at startup
+      - ../pidoorserv:/src/pidoorserv:ro
+      - ../pidoors-ui:/src/pidoors-ui:ro
+      - ../pidoors:/src/pidoors:ro
+      - ../nginx:/src/nginx:ro
+      - ../database_migration.sql:/src/database_migration.sql:ro
+      - ../VERSION:/src/VERSION:ro
+      # Persist database across restarts
       - db_data:/var/lib/mysql
-      - ./init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
     networks:
-      - pidoors-network
-    healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - pidoors-net
 
-  php:
+  door:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.php
-    container_name: pidoors-php
+      dockerfile: docker/Dockerfile.door
+    container_name: pidoors-door
     restart: unless-stopped
     depends_on:
-      db:
-        condition: service_healthy
+      - server
     volumes:
-      - app_data:/var/www/pidoors
-      - react_dist:/var/www/pidoors-ui
+      # Source bind-mounted read-only; copied into install paths at startup
+      - ../pidoors:/src/pidoors:ro
+      - ../VERSION:/src/VERSION:ro
     networks:
-      - pidoors-network
-
-  web:
-    image: nginx:1.25-alpine
-    container_name: pidoors-web
-    restart: unless-stopped
-    depends_on:
-      - php
-    ports:
-      - "8088:80"
-    volumes:
-      - app_data:/var/www/pidoors:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    networks:
-      - pidoors-network
-
-  controller:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.controller
-    container_name: pidoors-controller
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - pidoors-network
-
-  gateway:
-    image: nginx:1.25-alpine
-    container_name: pidoors-gateway
-    restart: unless-stopped
-    depends_on:
-      - web
-    ports:
-      - "8089:80"
-    volumes:
-      - react_dist:/var/www/pidoors-ui:ro
-      - ./nginx-gateway.conf:/etc/nginx/conf.d/default.conf:ro
-    networks:
-      - pidoors-network
-
-  react-dev:
-    image: node:20-alpine
-    container_name: pidoors-react-dev
-    profiles:
-      - dev
-    working_dir: /app
-    command: sh -c "npm install && npm run dev"
-    ports:
-      - "3000:3000"
-    volumes:
-      - ../pidoors-ui:/app
-    networks:
-      - pidoors-network
+      - pidoors-net
 
 volumes:
   db_data:
-  app_data:
-  react_dist:
 
 networks:
-  pidoors-network:
+  pidoors-net:
     driver: bridge

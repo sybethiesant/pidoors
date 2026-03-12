@@ -471,7 +471,7 @@ EOF
         ESCAPED_DB_PASS=$(printf '%s\n' "$DB_PASS" | sed 's/[&/\]/\\&/g; s/'"'"'/\\'"'"'/g')
         sed -i "s/'sqlpass' => ''/'sqlpass' => '$ESCAPED_DB_PASS'/g" "$WEB_ROOT/includes/config.php"
         SERVER_IP=$(hostname -I | awk '{print $1}')
-        sed -i "s|'url' => 'http://localhost'|'url' => 'http://$SERVER_IP'|g" "$WEB_ROOT/includes/config.php"
+        sed -i "s|'url' => 'http://localhost'|'url' => 'https://$SERVER_IP'|g" "$WEB_ROOT/includes/config.php"
         chmod 640 "$WEB_ROOT/includes/config.php"
         chown www-data:www-data "$WEB_ROOT/includes/config.php"
         ok "Config file created"
