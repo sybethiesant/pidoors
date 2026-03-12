@@ -19,6 +19,10 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
   return api<UpdateStatus>('update/status');
 }
 
+export async function checkForUpdates(): Promise<UpdateStatus> {
+  return api<UpdateStatus>('update/status?force=1');
+}
+
 export async function runServerUpdate(): Promise<ApiResponse & { output?: string }> {
   return api('update/server', { method: 'POST' });
 }

@@ -236,6 +236,11 @@ export function SettingsPage() {
         {activeTab === 'Maintenance' && (
           <div className="space-y-4 max-w-lg">
             <div className="flex items-center gap-2">
+              <input type="checkbox" id="auto_update_check" checked={form.auto_update_check !== '0'} onChange={(e) => set('auto_update_check', e.target.checked ? '1' : '0')} className="h-4 w-4 rounded border-slate-300 text-primary-600" />
+              <label htmlFor="auto_update_check" className="text-sm text-slate-700 dark:text-slate-300">Automatically check for updates</label>
+              <span className="text-xs text-slate-400">(disable for LAN-only systems)</span>
+            </div>
+            <div className="flex items-center gap-2">
               <input type="checkbox" id="maintenance" checked={form.maintenance_mode === '1'} onChange={(e) => set('maintenance_mode', e.target.checked ? '1' : '0')} className="h-4 w-4 rounded border-slate-300 text-primary-600" />
               <label htmlFor="maintenance" className="text-sm text-slate-700 dark:text-slate-300">Maintenance Mode</label>
             </div>

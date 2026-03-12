@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Loader2, CheckCircle, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
-import { getUpdateStatus, runServerUpdate, getControllers, requestControllerUpdate, requestAllControllerUpdates } from '../api/updates';
+import { getUpdateStatus, checkForUpdates, runServerUpdate, getControllers, requestControllerUpdate, requestAllControllerUpdates } from '../api/updates';
 import toast from 'react-hot-toast';
 
 export function UpdatePage() {
@@ -56,7 +56,18 @@ export function UpdatePage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const isUpToDate = status && status.current_version && status.latest_version &&
+  const checkMutation = useMutation({
+    mutationFn: checkForUpdates,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['update-status'], data);
+      queryClient.invalidateQueries({ queryKey: ['update-status'] });
+      toast.success('Update check complete');
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const autoCheckDisabled = status?.latest_version === 'disabled';
+  const isUpToDate = !autoCheckDisabled && status && status.current_version && status.latest_version &&
     status.current_version.replace(/^v/, '') === status.latest_version.replace(/^v/, '');
 
   const targetVersion = status?.current_version?.replace(/^v/, '') || '';
@@ -80,7 +91,17 @@ export function UpdatePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Updates</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Updates</h1>
+        <button
+          onClick={() => checkMutation.mutate()}
+          className="btn btn-outline btn-sm"
+          disabled={checkMutation.isPending}
+        >
+          {checkMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Check for Updates
+        </button>
+      </div>
 
       {/* Reload prompt */}
       {showReloadPrompt && (
@@ -125,7 +146,9 @@ export function UpdatePage() {
           </div>
           <div>
             <p className="text-sm text-slate-500">Latest Version</p>
-            <p className="text-lg font-mono font-bold text-slate-900 dark:text-white">{status?.latest_version || 'Unknown'}</p>
+            <p className="text-lg font-mono font-bold text-slate-900 dark:text-white">
+              {autoCheckDisabled ? <span className="text-slate-400">Auto-check disabled</span> : (status?.latest_version || 'Unknown')}
+            </p>
           </div>
           <div className="ml-auto">
             {isUpToDate ? (

@@ -1307,6 +1307,7 @@ if ($resource === 'settings') {
             'controller_update_url', 'default_poll_interval',
             'default_listen_port', 'push_timeout', 'push_fallback_poll_interval', 'status_check_timeout',
             'maintenance_mode', 'auto_backup', 'backup_retention_days',
+            'auto_update_check',
         ];
 
         // Load current settings to preserve smtp_pass if not changed
@@ -1807,8 +1808,22 @@ if ($resource === 'update') {
 
     if ($id === 'status' && $method === 'GET') {
         // Current server version + latest GitHub version (cached 1 hour)
+        // Pass ?force=1 to bypass cache. auto_update_check=0 disables automatic checks.
         $version = trim(file_get_contents($config['apppath'] . 'VERSION') ?: 'unknown');
         $latest = 'unknown';
+        $force_check = !empty($_GET['force']);
+
+        // Check if auto update checking is disabled
+        $auto_check = true;
+        try {
+            $ac = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'auto_update_check'")->fetch();
+            if ($ac && $ac['setting_value'] === '0') $auto_check = false;
+        } catch (Exception $e) {}
+
+        // If auto-check is off and not a manual force check, return current version only
+        if (!$auto_check && !$force_check) {
+            json_success(['current_version' => $version, 'latest_version' => 'disabled']);
+        }
 
         // Check cache first
         try {
@@ -1818,7 +1833,7 @@ if ($resource === 'update') {
         } catch (Exception $e) { $cache = []; }
 
         $cache_stale = true;
-        if (!empty($cache['github_check_time'])) {
+        if (!$force_check && !empty($cache['github_check_time'])) {
             $check_time = strtotime($cache['github_check_time']);
             if ($check_time && (time() - $check_time) < 3600) {
                 $cache_stale = false;
