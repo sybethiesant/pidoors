@@ -7,6 +7,17 @@ import type { Settings } from '../types';
 
 const TABS = ['General', 'Security', 'Controller', 'SMTP', 'Maintenance'] as const;
 
+const TIMEZONES = [
+  'Pacific/Midway', 'Pacific/Honolulu', 'America/Anchorage', 'America/Los_Angeles',
+  'America/Phoenix', 'America/Denver', 'America/Chicago', 'America/New_York',
+  'America/Halifax', 'America/St_Johns', 'America/Sao_Paulo', 'America/Argentina/Buenos_Aires',
+  'Atlantic/South_Georgia', 'Atlantic/Azores', 'UTC',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Helsinki',
+  'Europe/Moscow', 'Asia/Dubai', 'Asia/Karachi', 'Asia/Kolkata',
+  'Asia/Dhaka', 'Asia/Bangkok', 'Asia/Shanghai', 'Asia/Tokyo',
+  'Australia/Sydney', 'Pacific/Auckland', 'Pacific/Fiji',
+];
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]>('General');
@@ -76,7 +87,12 @@ export function SettingsPage() {
             </div>
             <div>
               <label className="label">Timezone</label>
-              <input className="input" value={form.timezone || ''} onChange={(e) => set('timezone', e.target.value)} placeholder="e.g. America/New_York" />
+              <select className="input" value={form.timezone || ''} onChange={(e) => set('timezone', e.target.value)}>
+                <option value="">Select timezone...</option>
+                {TIMEZONES.map((tz) => (
+                  <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="label">Log Retention (days)</label>

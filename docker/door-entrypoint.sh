@@ -43,6 +43,18 @@ done
 log "Database is ready"
 
 # ──────────────────────────────────────────────
+# Wait for server HTTPS API (nginx + PHP-FPM)
+# The cert signing endpoint must be available before we generate certs.
+# On bare-metal installs the server is already running; in Docker both
+# containers start simultaneously so we need to wait.
+# ──────────────────────────────────────────────
+log "Waiting for server API..."
+until curl -sk -o /dev/null -w '%{http_code}' "https://$DB_HOST/api/doors" 2>/dev/null | grep -q '^[2-5]'; do
+    sleep 2
+done
+log "Server API is ready"
+
+# ──────────────────────────────────────────────
 # Copy controller files (mirrors install.sh lines 731–741)
 # ──────────────────────────────────────────────
 log "Deploying controller files..."
@@ -57,7 +69,9 @@ chmod +x "$INSTALL_DIR/pidoors.py"
 # Generate TLS certificate for push listener
 # (mirrors install.sh lines 749–772)
 # ──────────────────────────────────────────────
-if [ ! -f "$INSTALL_DIR/conf/listener.crt" ]; then
+# Always regenerate cert on startup — ensures CA-signed cert now that API is ready
+# (On first run, no cert exists. On restart, the old self-signed cert gets replaced.)
+if true; then
     log "Generating TLS certificate for push listener..."
     openssl genrsa 2048 > "$INSTALL_DIR/conf/listener.key" 2>/dev/null
     openssl req -new -key "$INSTALL_DIR/conf/listener.key" \
@@ -87,7 +101,8 @@ fi
 # ──────────────────────────────────────────────
 # Download CA cert from server (mirrors install.sh lines 803–812)
 # ──────────────────────────────────────────────
-if [ ! -f "$INSTALL_DIR/conf/ca.pem" ]; then
+# Always download — server API is confirmed ready at this point
+if true; then
     log "Downloading database TLS certificate..."
     if curl -sf -k "https://$DB_HOST/ca.pem" -o "$INSTALL_DIR/conf/ca.pem" 2>/dev/null || \
        curl -sf "http://$DB_HOST/ca.pem" -o "$INSTALL_DIR/conf/ca.pem" 2>/dev/null; then
@@ -187,7 +202,8 @@ log "  Listen:     :$LISTEN_PORT"
 log "================================================"
 
 cd "$INSTALL_DIR"
-exec "$INSTALL_DIR/venv/bin/python3" -c "
+export PYTHONUNBUFFERED=1
+exec "$INSTALL_DIR/venv/bin/python3" -u -c "
 # Import mock GPIO before pidoors.py tries to import RPi.GPIO
 import sys
 sys.path.insert(0, '/opt/pidoors')

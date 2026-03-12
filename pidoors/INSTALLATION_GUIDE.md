@@ -246,7 +246,7 @@ You should see "active (running)" in green.
 
 3. **Access the web interface**:
    - Open a web browser on any computer on your network
-   - Navigate to: `http://192.168.1.100` (use your Pi's IP address)
+   - Navigate to: `https://192.168.1.100` (use your Pi's IP address)
    - You should see the PiDoors login page
 
 4. **Login with**:
@@ -551,7 +551,7 @@ Press `Ctrl + C` to stop viewing logs.
 
 ### Step 5.1: Change Default Password
 
-1. **Log into the web interface** (http://your-server-ip) using your username or email
+1. **Log into the web interface** (https://your-server-ip) using your username or email
 2. **Click your name** in the top right corner
 3. **Click "Profile"**
 4. **Update your profile details** (name, phone, department, etc.) and **change your password**
@@ -1203,6 +1203,11 @@ sudo /opt/pidoors/venv/bin/pip install rpi-lgpio -q
 
 | Version | Date | Migration Required | Notes |
 |---------|------|-------------------|-------|
+| v3.1.3 | Mar 2026 | No | Fix CA key permissions for cert signing, UI improvements |
+| v3.1.2 | Mar 2026 | No | Docker rewrite (2 containers), install.sh HTTPS fix, CSP fix |
+| v3.1.1 | Mar 2026 | No | Security hardening, CA-signed TLS, admin re-verification |
+| v3.1.0 | Mar 2026 | No | Server-initiated status polling, parallel curl_multi |
+| v3.0.x | Mar 2026 | No | React SPA, REST API, push-based communication |
 | v2.6.1 | Mar 2026 | No | Fix fresh install login, fix controller SSL errors |
 | v2.6.0 | Mar 2026 | No | TLS database encryption, centralized DB helper |
 | v2.5.20 | Mar 2026 | No | Remote door unlock from web UI, command poll loop |

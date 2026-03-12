@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.1.2-green)
+![Version](https://img.shields.io/badge/version-3.1.3-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -121,7 +121,7 @@ The installer presents three installation modes:
 
 #### After installation
 
-1. Open `http://your-pi-ip/` in a browser
+1. Open `https://your-pi-ip/` in a browser
 2. Log in with the email (or username `Admin`) and password you set during install
 3. Navigate to **Doors** to see your door controllers as they come online
 4. Navigate to **Cards** to add access cards
@@ -335,7 +335,7 @@ return [
     'sqldb2' => 'access',
     'sqluser' => 'pidoors',
     'sqlpass' => 'your_secure_password',
-    'url' => 'http://your-pi-ip',
+    'url' => 'https://your-pi-ip',
     // ... other settings
 ];
 ```
@@ -573,6 +573,14 @@ pidoors/
 │       └── config.json.example
 ├── nginx/                # Nginx configuration
 │   └── pidoors.conf
+├── docker/               # Docker dev/test environment
+│   ├── docker-compose.yml
+│   ├── Dockerfile.server
+│   ├── Dockerfile.door
+│   ├── server-entrypoint.sh
+│   ├── door-entrypoint.sh
+│   ├── deploy.sh         # Deploy to remote Docker host
+│   └── mock_gpio.py      # Mock GPIO for containerized door
 ├── pidoorspcb/           # PCB design files (KiCAD)
 ├── VERSION               # Current version number
 ├── install.sh            # Installation script
@@ -611,7 +619,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.1.1** - Production Ready
+**Current Version: 3.1.3** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -623,6 +631,22 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.1.3 (March 2026)
+- **Security**: CA key permissions fix — `ca-key.pem` now readable by www-data (`640 mysql:www-data`) so the `/api/certs/sign` endpoint can sign door controller TLS certificates on fresh installs
+- **Fix**: Door controller cert signing was silently failing on all installs (CA key was `600 mysql:mysql`, PHP-FPM couldn't read it) — all doors fell back to self-signed certs, breaking push verification
+- **UI**: Hide locked/unlocked and door sensor badges when a door is offline — stale state was misleading
+- **UI**: Timezone setting is now a dropdown menu instead of free-text input
+- **Docker**: Door container waits for server API before attempting cert signing (fixes race condition where both containers start simultaneously)
+- **Docker**: Server container symlinks `/etc/mysql/ssl/` to persisted volume so cert signing API finds the CA
+- **Docker**: Unbuffered Python output for door container logs
+
+### Version 3.1.2 (March 2026)
+- **Docker**: Complete rewrite — replaced 5-container setup with 2 minimal Debian Bookworm containers mirroring real Pi installs
+- **Docker**: Server container runs MariaDB + PHP-FPM + Nginx in one container with TLS, React build, and full install.sh parity
+- **Docker**: Door container runs pidoors.py with mock GPIO, CA-signed TLS certs, and database registration
+- **Fix**: `install.sh` config.php URL now uses `https://` instead of `http://` to match HTTPS-enforced nginx
+- **Security**: Nginx CSP header allows `'unsafe-inline'` for `script-src` to support Vite's module bootstrap
 
 ### Version 3.1.1 (March 2026)
 - **Security**: IP-based login rate limiting — survives cookie clearing, uses `audit_logs` table

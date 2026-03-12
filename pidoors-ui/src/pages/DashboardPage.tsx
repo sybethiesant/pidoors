@@ -109,14 +109,16 @@ function DoorStatusItem({
     );
 
   let lockBadge = null;
-  if (door.held_open) {
-    lockBadge = <span className="badge badge-warning">Held Open</span>;
-  } else if (door.unlock_requested) {
-    lockBadge = <span className="badge badge-info">Unlocking</span>;
-  } else if (door.locked) {
-    lockBadge = <span className="badge badge-success">Locked</span>;
-  } else {
-    lockBadge = <span className="badge badge-warning">Unlocked</span>;
+  if (door.status === 'online') {
+    if (door.held_open) {
+      lockBadge = <span className="badge badge-warning">Held Open</span>;
+    } else if (door.unlock_requested) {
+      lockBadge = <span className="badge badge-info">Unlocking</span>;
+    } else if (door.locked) {
+      lockBadge = <span className="badge badge-success">Locked</span>;
+    } else {
+      lockBadge = <span className="badge badge-warning">Unlocked</span>;
+    }
   }
 
   return (
@@ -134,7 +136,7 @@ function DoorStatusItem({
 
       <div className="flex items-center gap-2 flex-wrap justify-end">
         {lockBadge}
-        {door.door_sensor_gpio !== null && (
+        {door.status === 'online' && door.door_sensor_gpio !== null && (
           door.door_open === 1 ? (
             <span className="badge badge-warning">Open</span>
           ) : door.door_open === 0 ? (

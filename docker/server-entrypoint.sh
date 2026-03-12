@@ -214,12 +214,25 @@ if [ ! -f "$CERT_DIR/ca.pem" ]; then
         -CAcreateserial \
         -out "$CERT_DIR/server-cert.pem" 2>/dev/null
 
-    chown mysql:mysql "$CERT_DIR"/*
-    chmod 600 "$CERT_DIR"/*-key.pem
+    # www-data needs read access to ca-key.pem for cert signing API,
+    # and write access to the directory for the ca.srl serial file
+    chown mysql:www-data "$CERT_DIR"
+    chmod 770 "$CERT_DIR"
+    chown mysql:mysql "$CERT_DIR"/server-*.pem
+    chown mysql:www-data "$CERT_DIR"/ca-key.pem "$CERT_DIR"/ca.pem
+    chmod 600 "$CERT_DIR"/server-key.pem
+    chmod 640 "$CERT_DIR"/ca-key.pem
     chmod 644 "$CERT_DIR/ca.pem" "$CERT_DIR/server-cert.pem"
     rm -f "$CERT_DIR/server-req.pem" "$CERT_DIR/ca.srl"
     log "MariaDB TLS certificates generated"
     NEED_MARIADB_RESTART=true
+fi
+
+# Ensure CA key is always readable by www-data (fix existing volumes)
+if [ -f "$CERT_DIR/ca-key.pem" ]; then
+    chown mysql:www-data "$CERT_DIR" "$CERT_DIR"/ca-key.pem "$CERT_DIR"/ca.pem 2>/dev/null || true
+    chmod 770 "$CERT_DIR" 2>/dev/null || true
+    chmod 640 "$CERT_DIR"/ca-key.pem 2>/dev/null || true
 fi
 
 # Configure MariaDB TLS + remote access (only on first setup)
@@ -276,6 +289,10 @@ fi
 mkdir -p /etc/ssl/private /etc/ssl/certs
 ln -sf "$CERT_DIR/nginx.key" /etc/ssl/private/pidoors.key
 ln -sf "$CERT_DIR/nginx.crt" /etc/ssl/certs/pidoors.crt
+
+# Symlink CA certs to /etc/mysql/ssl/ — api.php cert signing endpoint expects them here
+# (on bare-metal installs, install.sh creates certs directly at /etc/mysql/ssl/)
+ln -sfn "$CERT_DIR" /etc/mysql/ssl
 
 # ──────────────────────────────────────────────
 # Deploy web files (every startup, mirrors install.sh lines 411–421)

@@ -238,9 +238,14 @@ if [ "$INSTALL_SERVER" = true ]; then
                 -CAcreateserial \
                 -out "$CERT_DIR/server-cert.pem" 2>/dev/null
 
-            # Permissions
-            chown mysql:mysql "$CERT_DIR"/*
-            chmod 600 "$CERT_DIR"/*-key.pem
+            # Permissions — www-data needs read access to ca-key.pem for cert signing API,
+            # and write access to the directory for the ca.srl serial file
+            chown mysql:www-data "$CERT_DIR"
+            chmod 770 "$CERT_DIR"
+            chown mysql:mysql "$CERT_DIR"/server-*.pem
+            chown mysql:www-data "$CERT_DIR"/ca-key.pem "$CERT_DIR"/ca.pem
+            chmod 600 "$CERT_DIR"/server-key.pem
+            chmod 640 "$CERT_DIR"/ca-key.pem
             chmod 644 "$CERT_DIR/ca.pem" "$CERT_DIR/server-cert.pem"
 
             rm -f "$CERT_DIR/server-req.pem" "$CERT_DIR/ca.srl"

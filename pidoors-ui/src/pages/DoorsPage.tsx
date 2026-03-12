@@ -354,17 +354,19 @@ export function DoorsPage() {
                     {door.status.charAt(0).toUpperCase() + door.status.slice(1)}
                   </span>
 
-                  {door.held_open ? (
-                    <span className="badge badge-warning">Held Open</span>
-                  ) : door.unlock_requested ? (
-                    <span className="badge badge-info">Unlocking</span>
-                  ) : door.locked ? (
-                    <span className="badge badge-success">Locked</span>
-                  ) : (
-                    <span className="badge badge-warning">Unlocked</span>
+                  {isOnline && (
+                    door.held_open ? (
+                      <span className="badge badge-warning">Held Open</span>
+                    ) : door.unlock_requested ? (
+                      <span className="badge badge-info">Unlocking</span>
+                    ) : door.locked ? (
+                      <span className="badge badge-success">Locked</span>
+                    ) : (
+                      <span className="badge badge-warning">Unlocked</span>
+                    )
                   )}
 
-                  {door.door_sensor_gpio !== null && (
+                  {isOnline && door.door_sensor_gpio !== null && (
                     door.door_open === 1 ? (
                       <span className="badge badge-warning">Open</span>
                     ) : door.door_open === 0 ? (
