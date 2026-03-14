@@ -1203,6 +1203,7 @@ sudo /opt/pidoors/venv/bin/pip install rpi-lgpio -q
 
 | Version | Date | Migration Required | Notes |
 |---------|------|-------------------|-------|
+| v3.1.5 | Mar 2026 | No | Fix updater deleting ca.pem, auto-restore CA cert on update |
 | v3.1.4 | Mar 2026 | No | Fix false offline status when push fails, better install diagnostics |
 | v3.1.3 | Mar 2026 | No | Fix CA key permissions for cert signing, UI improvements |
 | v3.1.2 | Mar 2026 | No | Docker rewrite (2 containers), install.sh HTTPS fix, CSP fix |

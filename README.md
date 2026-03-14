@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.1.4-green)
+![Version](https://img.shields.io/badge/version-3.1.5-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -619,7 +619,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.1.4** - Production Ready
+**Current Version: 3.1.5** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -631,6 +631,10 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.1.5 (March 2026)
+- **Fix**: Server updater no longer deletes `ca.pem` from web root during orphan file cleanup — was breaking TLS verification for push pings and door controller DB connections after every update
+- **Fix**: Server updater now auto-restores `ca.pem` from `/etc/mysql/ssl/` if missing (repairs systems affected by previous updates)
 
 ### Version 3.1.4 (March 2026)
 - **Fix**: Push status poll no longer aggressively marks doors offline — doors stay online if heartbeat is recent (<10 min), only `push_available` is cleared on push failure

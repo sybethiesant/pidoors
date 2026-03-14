@@ -121,7 +121,7 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
     foreach ($remove_iterator as $item) {
         $sub = substr($item->getPathname(), strlen($apppath) + 1);
         if ($sub === 'includes' . DIRECTORY_SEPARATOR . 'config.php' || $sub === 'includes/config.php') continue;
-        if ($sub === 'VERSION' || $sub === 'database_migration.sql') continue;
+        if ($sub === 'VERSION' || $sub === 'database_migration.sql' || $sub === 'ca.pem') continue;
         if (str_starts_with($sub, 'pidoors-ui-dist') || str_starts_with($sub, 'pidoors-ui-dist' . DIRECTORY_SEPARATOR)) continue;
         if (str_starts_with(basename($sub), '.')) continue;
 
@@ -154,6 +154,16 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
     // --- Copy database migration ---
     if (file_exists($extracted . '/database_migration.sql')) {
         copy($extracted . '/database_migration.sql', $apppath . '/database_migration.sql');
+    }
+
+    // --- Restore ca.pem if missing (may have been deleted by older updater versions) ---
+    $ca_web = $apppath . '/ca.pem';
+    $ca_src = '/etc/mysql/ssl/ca.pem';
+    if (!file_exists($ca_web) && file_exists($ca_src)) {
+        if (copy($ca_src, $ca_web)) {
+            @chmod($ca_web, 0644);
+            $details[] = 'CA certificate restored to web root';
+        }
     }
 
     // --- Ensure required directories ---
