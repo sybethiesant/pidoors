@@ -759,20 +759,30 @@ if [ "$INSTALL_DOOR" = true ]; then
         -subj "/CN=$DOOR_NAME" 2>/dev/null
 
     CSR_PEM=$(cat /tmp/pidoors-controller.csr)
-    SIGN_RESPONSE=$(curl -sf -k "https://$DB_HOST/api/certs/sign" \
+    SIGN_RESPONSE=$(curl -s -k --max-time 10 "https://$DB_HOST/api/certs/sign" \
         -H 'Content-Type: application/json' \
         -d "{\"db_user\":\"$DB_USER\",\"db_pass\":\"$(echo "$DB_PASS_DOOR" | sed 's/"/\\"/g')\",\"csr\":$(echo "$CSR_PEM" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),\"door_name\":\"$DOOR_NAME\",\"door_ip\":\"$CONTROLLER_IP\"}" \
-        2>/dev/null) || SIGN_RESPONSE=""
+        2>&1)
+    CURL_EXIT=$?
 
-    if echo "$SIGN_RESPONSE" | python3 -c "import sys,json; cert=json.load(sys.stdin)['cert']; open('$INSTALL_DIR/conf/listener.crt','w').write(cert)" 2>/dev/null; then
+    if [ $CURL_EXIT -ne 0 ]; then
+        warn "Could not reach server API for cert signing (curl exit $CURL_EXIT)"
+        SIGN_RESPONSE=""
+    fi
+
+    if [ -n "$SIGN_RESPONSE" ] && echo "$SIGN_RESPONSE" | python3 -c "import sys,json; cert=json.load(sys.stdin)['cert']; open('$INSTALL_DIR/conf/listener.crt','w').write(cert)" 2>/dev/null; then
         ok "TLS certificate signed by PiDoors CA"
     else
+        if [ -n "$SIGN_RESPONSE" ]; then
+            warn "CA signing failed: $SIGN_RESPONSE"
+        fi
         # Fallback to self-signed
         openssl req -x509 -key "$INSTALL_DIR/conf/listener.key" \
             -in /tmp/pidoors-controller.csr \
             -out "$INSTALL_DIR/conf/listener.crt" \
             -days 3650 > /dev/null 2>&1
-        ok "TLS certificate generated (self-signed — CA signing unavailable)"
+        warn "TLS certificate is self-signed (push status checks may not work)"
+        info "To fix: re-run install or manually request a CA-signed cert via the server API"
     fi
     rm -f /tmp/pidoors-controller.csr
 
@@ -1062,7 +1072,7 @@ echo
 if [ "$INSTALL_SERVER" = true ]; then
     SERVER_IP=$(hostname -I | awk '{print $1}')
     echo -e "  ${BOLD}Web Interface${NC}"
-    echo -e "    URL:        ${GREEN}http://${SERVER_IP}/${NC}"
+    echo -e "    URL:        ${GREEN}https://${SERVER_IP}/${NC}"
     echo -e "    Login:      $ADMIN_EMAIL"
     echo -e "    Web root:   $WEB_ROOT"
     echo -e "    Nginx:      /etc/nginx/sites-available/pidoors"
@@ -1086,7 +1096,7 @@ if [ "$INSTALL_SERVER" = true ] && [ "$INSTALL_DOOR" = true ]; then
     echo "    1. Start the door controller:"
     echo "       sudo systemctl start pidoors"
     echo
-    echo "    2. Log in to the web interface at http://${SERVER_IP}/"
+    echo "    2. Log in to the web interface at https://${SERVER_IP}/"
     echo
     echo "    3. The door '${DOOR_NAME}' will auto-register within 60 seconds"
     echo "       Open Doors page to see it come online"
@@ -1094,7 +1104,7 @@ if [ "$INSTALL_SERVER" = true ] && [ "$INSTALL_DOOR" = true ]; then
     echo "    4. Add cards in the Cards page with access to '${DOOR_NAME}'"
     echo
 elif [ "$INSTALL_SERVER" = true ]; then
-    echo "    1. Log in to the web interface at http://${SERVER_IP}/"
+    echo "    1. Log in to the web interface at https://${SERVER_IP}/"
     echo
     echo "    2. On each door controller Pi, run:"
     echo "       sudo ./install.sh   (select option 2)"

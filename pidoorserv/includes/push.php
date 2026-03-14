@@ -162,7 +162,7 @@ function ping_controller($pdo_access, $door_name) {
  * For each door with ip_address, listen_port, and api_key configured:
  * - Successful response: update status=online, last_seen, locked, held_open,
  *   controller_version, door_open, push_available=1
- * - Failed response: update status=offline, push_available=0
+ * - Failed response: push_available=0, status only set to offline if last heartbeat >10min ago
  * - Doors without push config: skipped (status unchanged)
  *
  * @param PDO $pdo_access Database connection (access DB)
@@ -219,8 +219,10 @@ function poll_all_door_status($pdo_access) {
     $online_stmt = $pdo_access->prepare(
         "UPDATE doors SET status = 'online', last_seen = NOW(), locked = ?, held_open = ?, controller_version = ?, door_open = ?, push_available = 1 WHERE name = ?"
     );
+    // When push fails, only mark offline if last heartbeat is stale (>10 min).
+    // This prevents false "offline" when push/TLS is broken but controller is running fine.
     $offline_stmt = $pdo_access->prepare(
-        "UPDATE doors SET status = 'offline', push_available = 0 WHERE name = ?"
+        "UPDATE doors SET push_available = 0, status = IF(last_seen > NOW() - INTERVAL 600 SECOND, status, 'offline') WHERE name = ?"
     );
 
     foreach ($handles as $info) {

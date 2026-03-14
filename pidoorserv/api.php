@@ -417,7 +417,7 @@ if ($resource === 'doors') {
             $vals[] = $door_name;
             $pdo_access->prepare("UPDATE doors SET " . implode(', ', $cols) . " WHERE name = ?")->execute($vals);
         } elseif (isset($ping['reason']) && $ping['reason'] !== 'no_push_config') {
-            $pdo_access->prepare("UPDATE doors SET status = 'offline', push_available = 0 WHERE name = ?")->execute([$door_name]);
+            $pdo_access->prepare("UPDATE doors SET push_available = 0, status = IF(last_seen > NOW() - INTERVAL 600 SECOND, status, 'offline') WHERE name = ?")->execute([$door_name]);
         }
 
         $stmt = $pdo_access->prepare("SELECT * FROM doors WHERE name = ?");
@@ -626,7 +626,7 @@ if ($resource === 'doors') {
             $vals[] = $door_name;
             $pdo_access->prepare("UPDATE doors SET " . implode(', ', $cols) . " WHERE name = ?")->execute($vals);
         } else {
-            $pdo_access->prepare("UPDATE doors SET status = 'offline', push_available = 0 WHERE name = ?")->execute([$door_name]);
+            $pdo_access->prepare("UPDATE doors SET push_available = 0, status = IF(last_seen > NOW() - INTERVAL 600 SECOND, status, 'offline') WHERE name = ?")->execute([$door_name]);
         }
         json_success(['ping' => $result]);
     }

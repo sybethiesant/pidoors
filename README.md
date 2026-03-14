@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.1.3-green)
+![Version](https://img.shields.io/badge/version-3.1.4-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -619,7 +619,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.1.3** - Production Ready
+**Current Version: 3.1.4** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -631,6 +631,11 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.1.4 (March 2026)
+- **Fix**: Push status poll no longer aggressively marks doors offline — doors stay online if heartbeat is recent (<10 min), only `push_available` is cleared on push failure
+- **Fix**: Install cert signing now shows error details instead of failing silently — warns user if CA signing fails and self-signed cert is used
+- **Fix**: Install output URLs changed from `http://` to `https://` to match actual server config
 
 ### Version 3.1.3 (March 2026)
 - **Security**: CA key permissions fix — `ca-key.pem` now readable by www-data (`640 mysql:www-data`) so the `/api/certs/sign` endpoint can sign door controller TLS certificates on fresh installs
