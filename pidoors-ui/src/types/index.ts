@@ -48,6 +48,7 @@ export interface Door {
   push_available: number;
   door_sensor_gpio: number | null;
   door_open: number | null;
+  door_sensor_invert: number;
 }
 
 export interface Card {

@@ -178,17 +178,28 @@ function DoorFormModal({
               Door contact sensor
             </label>
             {sensorEnabled && (
-              <div className="mt-2">
-                <label className="label">Sensor GPIO Pin</label>
-                <select
-                  className="input"
-                  value={form.door_sensor_gpio ?? ''}
-                  onChange={(e) => setForm({ ...form, door_sensor_gpio: parseInt(e.target.value) })}
-                >
-                  {SENSOR_GPIO_PINS.map((pin) => (
-                    <option key={pin} value={pin}>GPIO {pin}</option>
-                  ))}
-                </select>
+              <div className="mt-2 space-y-2">
+                <div>
+                  <label className="label">Sensor GPIO Pin</label>
+                  <select
+                    className="input"
+                    value={form.door_sensor_gpio ?? ''}
+                    onChange={(e) => setForm({ ...form, door_sensor_gpio: parseInt(e.target.value) })}
+                  >
+                    {SENSOR_GPIO_PINS.map((pin) => (
+                      <option key={pin} value={pin}>GPIO {pin}</option>
+                    ))}
+                  </select>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                  <input
+                    type="checkbox"
+                    checked={!!form.door_sensor_invert}
+                    onChange={(e) => setForm({ ...form, door_sensor_invert: e.target.checked ? 1 : 0 })}
+                    className="rounded border-slate-300"
+                  />
+                  Invert sensor logic (for normally-open sensors)
+                </label>
               </div>
             )}
           </div>

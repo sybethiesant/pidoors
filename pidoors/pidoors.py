@@ -759,6 +759,18 @@ def setup_readers():
             debug(f"Reader configured on GPIO {reader['d0']}/{reader['d1']}")
 
 
+def _read_door_sensor(pin):
+    """Read door sensor state, accounting for invert setting.
+    Default: LOW (grounded) = closed, HIGH = open.
+    With invert: LOW = open, HIGH = closed.
+    Returns True if door is open, False if closed."""
+    raw = GPIO.input(pin)
+    inverted = config.get(zone, {}).get("door_sensor_invert", False)
+    if inverted:
+        return raw == GPIO.LOW   # Inverted: grounded = open
+    return raw == GPIO.HIGH      # Normal: grounded = closed, not grounded = open
+
+
 def setup_door_sensor():
     """Setup door sensor GPIO pin (optional, from zone config for first boot)"""
     global current_sensor_pin, door_sensor_open
@@ -771,7 +783,7 @@ def setup_door_sensor():
         GPIO.add_event_detect(door_sensor_gpio, GPIO.BOTH,
                              callback=door_sensor_event, bouncetime=200)
         current_sensor_pin = door_sensor_gpio
-        door_sensor_open = GPIO.input(door_sensor_gpio) == GPIO.LOW
+        door_sensor_open = _read_door_sensor(door_sensor_gpio)
         debug(f"Door sensor configured on GPIO {door_sensor_gpio}")
 
 
@@ -794,7 +806,7 @@ def reconfigure_door_sensor(new_pin):
         GPIO.add_event_detect(new_pin, GPIO.BOTH,
                              callback=door_sensor_event, bouncetime=200)
         current_sensor_pin = new_pin
-        door_sensor_open = GPIO.input(new_pin) == GPIO.LOW
+        door_sensor_open = _read_door_sensor(new_pin)
         debug(f"Door sensor reconfigured to GPIO {new_pin}")
     else:
         door_sensor_open = None
@@ -816,8 +828,7 @@ def setup_rex_button():
 def door_sensor_event(channel):
     """Handle door sensor state change"""
     global door_sensor_open
-    zone_config = config.get(zone, {})
-    door_open = GPIO.input(channel) == GPIO.LOW  # Assuming active-low sensor
+    door_open = _read_door_sensor(channel)
     door_sensor_open = door_open
 
     if door_open:
@@ -1635,7 +1646,7 @@ def send_heartbeat():
 
         # Check if an update has been requested
         cursor.execute("""
-            SELECT update_requested, door_sensor_gpio FROM doors WHERE name = %s
+            SELECT update_requested, door_sensor_gpio, door_sensor_invert FROM doors WHERE name = %s
         """, (zone,))
         row = cursor.fetchone()
         if row and row.get('update_requested'):
@@ -1650,9 +1661,22 @@ def send_heartbeat():
             db.commit()
             trigger_update()
 
-        # Check if door sensor GPIO pin changed in DB
+        # Check if door sensor GPIO pin or invert setting changed in DB
         if row:
             db_sensor_pin = int(row['door_sensor_gpio']) if row.get('door_sensor_gpio') is not None else None
+            db_invert = bool(int(row['door_sensor_invert'])) if row.get('door_sensor_invert') is not None else False
+            zone_config = config.get(zone, {})
+            old_invert = zone_config.get("door_sensor_invert", False)
+
+            # Update invert setting in config
+            if db_invert != old_invert:
+                report(f"Door sensor invert changed: {old_invert} -> {db_invert}")
+                zone_config["door_sensor_invert"] = db_invert
+                config[zone] = zone_config
+                # Re-read sensor with new invert setting
+                if current_sensor_pin is not None:
+                    door_sensor_open = _read_door_sensor(current_sensor_pin)
+
             if db_sensor_pin != current_sensor_pin:
                 report(f"Door sensor GPIO changed: {current_sensor_pin} -> {db_sensor_pin}")
                 reconfigure_door_sensor(db_sensor_pin)

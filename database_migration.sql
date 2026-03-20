@@ -698,4 +698,11 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- door_sensor_invert: invert door sensor logic (0 = normal NC, 1 = inverted NO)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'door_sensor_invert');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `door_sensor_invert` tinyint(1) NOT NULL DEFAULT 0 AFTER `door_open`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 COMMIT;

@@ -322,7 +322,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
         $today_granted = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 1")->fetchColumn();
         $today_denied = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 0")->fetchColumn();
 
-        $doors = $pdo_access->query("SELECT name, location, status, locked, held_open, hold_requested, unlock_requested, push_available, door_sensor_gpio, door_open FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+        $doors = $pdo_access->query("SELECT name, location, status, locked, held_open, hold_requested, unlock_requested, push_available, door_sensor_gpio, door_open, door_sensor_invert FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
         // Cast numeric fields
         foreach ($doors as &$d) {
             $d['locked'] = (int)$d['locked'];
@@ -332,6 +332,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
             $d['push_available'] = (int)($d['push_available'] ?? 0);
             $d['door_sensor_gpio'] = $d['door_sensor_gpio'] !== null ? (int)$d['door_sensor_gpio'] : null;
             $d['door_open'] = $d['door_open'] !== null ? (int)$d['door_open'] : null;
+            $d['door_sensor_invert'] = (int)($d['door_sensor_invert'] ?? 0);
         }
         unset($d);
 
@@ -393,6 +394,7 @@ if ($resource === 'doors') {
             $d['push_available'] = (int)($d['push_available'] ?? 0);
             $d['door_sensor_gpio'] = $d['door_sensor_gpio'] !== null ? (int)$d['door_sensor_gpio'] : null;
             $d['door_open'] = $d['door_open'] !== null ? (int)$d['door_open'] : null;
+            $d['door_sensor_invert'] = (int)($d['door_sensor_invert'] ?? 0);
             unset($d['api_key']); // Never expose API key to browser
         }
         unset($d);
@@ -432,6 +434,7 @@ if ($resource === 'doors') {
         $door['push_available'] = (int)($door['push_available'] ?? 0);
         $door['door_sensor_gpio'] = $door['door_sensor_gpio'] !== null ? (int)$door['door_sensor_gpio'] : null;
         $door['door_open'] = $door['door_open'] !== null ? (int)$door['door_open'] : null;
+        $door['door_sensor_invert'] = (int)($door['door_sensor_invert'] ?? 0);
         unset($door['api_key']);
         json_success(['door' => $door]);
     }
@@ -458,7 +461,7 @@ if ($resource === 'doors') {
             $reader_type = 'wiegand';
         }
 
-        $stmt = $pdo_access->prepare("INSERT INTO doors (name, location, doornum, description, ip_address, schedule_id, unlock_duration, reader_type, poll_interval, listen_port, door_sensor_gpio, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown')");
+        $stmt = $pdo_access->prepare("INSERT INTO doors (name, location, doornum, description, ip_address, schedule_id, unlock_duration, reader_type, poll_interval, listen_port, door_sensor_gpio, door_sensor_invert, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown')");
         $stmt->execute([
             $name,
             sanitize_string($input['location'] ?? ''),
@@ -471,6 +474,7 @@ if ($resource === 'doors') {
             (int)($input['poll_interval'] ?? 10),
             !empty($input['listen_port']) ? (int)$input['listen_port'] : null,
             isset($input['door_sensor_gpio']) && $input['door_sensor_gpio'] !== null && $input['door_sensor_gpio'] !== '' ? (int)$input['door_sensor_gpio'] : null,
+            !empty($input['door_sensor_invert']) ? 1 : 0,
         ]);
         log_security_event($pdo, 'door_created', $_SESSION['user_id'], "Door created: $name");
         json_success([], 'Door created');
@@ -521,6 +525,10 @@ if ($resource === 'doors') {
         if (array_key_exists('door_sensor_gpio', $input)) {
             $fields[] = "door_sensor_gpio = ?";
             $params[] = ($input['door_sensor_gpio'] !== null && $input['door_sensor_gpio'] !== '') ? (int)$input['door_sensor_gpio'] : null;
+        }
+        if (array_key_exists('door_sensor_invert', $input)) {
+            $fields[] = "door_sensor_invert = ?";
+            $params[] = !empty($input['door_sensor_invert']) ? 1 : 0;
         }
 
         if (empty($fields)) json_error('No fields to update');
