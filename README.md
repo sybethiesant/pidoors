@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.2.0-green)
+![Version](https://img.shields.io/badge/version-0.3.2-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -619,7 +619,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.2.0** - Production Ready
+**Current Version: 0.3.2** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -632,8 +632,9 @@ Contributions welcome! Please:
 
 ## Changelog
 
-### Version 3.2.0 (April 2026)
-- **Fix**: Controller self-updates now fully reliable — update script self-detaches from service cgroup (scope AND service patterns) and uses `/var/cache/` for temp files instead of `/tmp/` (which is ephemeral under PrivateTmp)
+### Version 0.3.2 (April 2026)
+- **Version reset** — renumbered from 3.2.x to 0.x.y pre-release scheme; will climb properly to 1.0.0 when production-ready
+- **Fix**: Controller self-updates now fully reliable — update script self-detaches from service cgroup and uses `/var/cache/` for temp files instead of `/tmp/` (ephemeral under PrivateTmp)
 - **Fix**: Self-update patches older release scripts with cgroup detach, venv python, and temp dir fixes for seamless upgrades from any prior version
 - **Fix**: Sudoers entry allows `systemd-run` for the pidoors user
 
