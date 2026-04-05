@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.1.5-green)
+![Version](https://img.shields.io/badge/version-3.1.6-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -619,7 +619,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.1.5** - Production Ready
+**Current Version: 3.1.6** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -631,6 +631,20 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.1.6 (April 2026)
+- **Fix**: Heartbeat broken — `door_sensor_open` missing global declaration in `send_heartbeat()`, doors never auto-registered or showed online
+- **Fix**: MariaDB TLS never enabled on fresh installs — grep matched commented-out default `#ssl-ca`, and `[mysqld]` section header doesn't exist on newer MariaDB (`[mariadbd]`)
+- **Fix**: Server cert generated without SAN IP — TLS connections failed with "IP address mismatch"
+- **Fix**: CA cert signing failed — `api.php` wrote serial file to `/etc/mysql/ssl/` (www-data can't write) and `tempnam()` created empty file OpenSSL couldn't read
+- **Fix**: Controller update script used system Python instead of venv — pymysql import failed, breaking DB migrations and status updates during self-update
+- **Fix**: Listener cert only re-signed when missing — controllers stuck with self-signed certs after failed initial signing, breaking push commands
+- **Fix**: MySQL root password always prompted during install — now tries socket auth first (Debian default)
+- **Fix**: SSL directory permissions only set during initial cert generation — MariaDB package updates could reset ownership
+- **Fix**: `server-update.sh` rsync deleted `ca.pem` from web root — controllers couldn't download CA cert after server updates
+- **Fix**: No curl timeouts in update scripts — updates could hang indefinitely on slow/broken internet
+- **Fix**: Heartbeat errors silently swallowed (logged via `debug()` instead of `report()`)
+- **Fix**: Install menu bold formatting showed raw escape codes (missing `echo -e`)
 
 ### Version 3.1.5 (March 2026)
 - **Fix**: Server updater no longer deletes `ca.pem` from web root during orphan file cleanup — was breaking TLS verification for push pings and door controller DB connections after every update

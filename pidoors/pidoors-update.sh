@@ -31,7 +31,7 @@ update_db_status() {
 
     PIDOORS_CONFIG="$config_file" PIDOORS_ZONE="$ZONE" \
     PIDOORS_STATUS="$status" PIDOORS_DETAIL="$detail" PIDOORS_VERSION="$version" \
-    python3 -c "
+    /opt/pidoors/venv/bin/python3 -c "
 import os, json, pymysql
 cfg = json.load(open(os.environ['PIDOORS_CONFIG']))
 zc = cfg[os.environ['PIDOORS_ZONE']]
@@ -92,7 +92,7 @@ run_db_migration() {
 
     PIDOORS_CONFIG="$config_file" PIDOORS_ZONE="$ZONE" \
     PIDOORS_MIGRATION="$migration_file" \
-    python3 -c "
+    /opt/pidoors/venv/bin/python3 -c "
 import os, json, pymysql
 
 cfg = json.load(open(os.environ['PIDOORS_CONFIG']))
@@ -201,7 +201,7 @@ if [ -n "$TMPDIR" ] && [ -d "$TMPDIR" ]; then
 else
     # Fetch latest release tag from GitHub
     log "Checking latest release..."
-    LATEST_TAG=$(curl -sf "https://api.github.com/repos/$REPO/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || {
+    LATEST_TAG=$(curl -sf --connect-timeout 15 --max-time 30 "https://api.github.com/repos/$REPO/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || {
         fail "Could not reach GitHub API. Check internet connection."
     }
 
@@ -212,8 +212,8 @@ else
     TMPDIR=$(mktemp -d /tmp/pidoors-update-XXXXXX)
     TARBALL="$TMPDIR/release.tar.gz"
     log "Downloading release tarball..."
-    curl -sfL "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
-    curl -sfL "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
+    curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
+    curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
         fail "Failed to download release $LATEST_TAG. Tag may not exist on GitHub."
     }
 
@@ -254,6 +254,11 @@ log "Pre-flight checks passed."
 # This ensures any future changes to the update process take effect
 # before the rest of the update runs.
 if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
+    # Patch the incoming script to use venv Python (needed for pymysql)
+    # This ensures even older releases work correctly after self-update
+    if ! grep -q '/opt/pidoors/venv/bin/python3' "$SRC_DIR/pidoors-update.sh" 2>/dev/null; then
+        sed -i 's|    python3 -c "|    /opt/pidoors/venv/bin/python3 -c "|g' "$SRC_DIR/pidoors-update.sh"
+    fi
     if ! cmp -s "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null; then
         log "Update script has changed — self-updating and re-executing..."
         cp "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh"
@@ -366,22 +371,42 @@ if [ -f "$INSTALL_DIR/VERSION" ]; then
     NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" | tr -d '[:space:]')
 fi
 
-# ── Upgrade path: generate push listener cert/key/api_key if missing ──
+# ── Upgrade path: ensure push listener cert is CA-signed ──
 CONF_DIR="$INSTALL_DIR/conf"
 
-if [ ! -f "$CONF_DIR/listener.crt" ] || [ ! -f "$CONF_DIR/listener.key" ]; then
-    log "Generating TLS certificate for push listener..."
+# Re-download ca.pem from server (server may have regenerated certs)
+if [ -f "$CONF_DIR/config.json" ]; then
+    SERVER_ADDR=$(python3 -c "import json; cfg=json.load(open('$CONF_DIR/config.json')); print(cfg.get('$ZONE',{}).get('sqladdr',''))" 2>/dev/null)
+    if [ -n "$SERVER_ADDR" ]; then
+        if curl -sf -k --connect-timeout 5 --max-time 10 "https://$SERVER_ADDR/ca.pem" -o "$CONF_DIR/ca.pem.new" 2>/dev/null || \
+           curl -sf --connect-timeout 5 --max-time 10 "http://$SERVER_ADDR/ca.pem" -o "$CONF_DIR/ca.pem.new" 2>/dev/null; then
+            if grep -q 'BEGIN CERTIFICATE' "$CONF_DIR/ca.pem.new" 2>/dev/null; then
+                mv "$CONF_DIR/ca.pem.new" "$CONF_DIR/ca.pem"
+                chown pidoors:pidoors "$CONF_DIR/ca.pem" 2>/dev/null || true
+                chmod 600 "$CONF_DIR/ca.pem" 2>/dev/null || true
+                log "Database CA certificate refreshed from server"
+            else
+                rm -f "$CONF_DIR/ca.pem.new"
+            fi
+        else
+            rm -f "$CONF_DIR/ca.pem.new"
+        fi
+    fi
+fi
 
-    # Generate key + CSR
-    openssl genrsa 2048 > "$CONF_DIR/listener.key" 2>/dev/null
+# Always re-sign the listener cert on update (fixes previously self-signed certs)
+if [ -f "$CONF_DIR/config.json" ]; then
+    log "Requesting CA-signed TLS certificate for push listener..."
+
+    # Generate key only if missing
+    if [ ! -f "$CONF_DIR/listener.key" ]; then
+        openssl genrsa 2048 > "$CONF_DIR/listener.key" 2>/dev/null
+    fi
     openssl req -new -key "$CONF_DIR/listener.key" \
         -out /tmp/pidoors-controller.csr \
         -subj "/CN=$ZONE" 2>/dev/null
 
-    # Try CA-signed via server API, fall back to self-signed
-    CERT_SIGNED=false
-    if [ -f "$CONF_DIR/config.json" ]; then
-        SIGN_RESULT=$(python3 -c "
+    SIGN_RESULT=$(python3 -c "
 import json, sys, subprocess
 cfg = json.load(open('$CONF_DIR/config.json'))
 zc = cfg.get('$ZONE', {})
@@ -404,18 +429,18 @@ else:
     print('fail')
 " 2>/dev/null) || SIGN_RESULT="fail"
 
-        if [ "$SIGN_RESULT" = "ok" ]; then
-            CERT_SIGNED=true
-            log "TLS certificate signed by PiDoors CA"
+    if [ "$SIGN_RESULT" = "ok" ]; then
+        log "TLS certificate signed by PiDoors CA"
+    else
+        # Only generate self-signed if no cert exists at all
+        if [ ! -f "$CONF_DIR/listener.crt" ]; then
+            openssl req -x509 -key "$CONF_DIR/listener.key" \
+                -in /tmp/pidoors-controller.csr \
+                -out "$CONF_DIR/listener.crt" \
+                -days 3650 > /dev/null 2>&1 && log "TLS certificate generated (self-signed fallback)" || log "Warning: TLS cert generation failed"
+        else
+            log "Warning: CA signing failed, keeping existing listener cert"
         fi
-    fi
-
-    if [ "$CERT_SIGNED" = "false" ]; then
-        # Fallback to self-signed
-        openssl req -x509 -key "$CONF_DIR/listener.key" \
-            -in /tmp/pidoors-controller.csr \
-            -out "$CONF_DIR/listener.crt" \
-            -days 3650 > /dev/null 2>&1 && log "TLS certificate generated (self-signed)" || log "Warning: TLS cert generation failed"
     fi
 
     rm -f /tmp/pidoors-controller.csr
@@ -426,7 +451,7 @@ fi
 
 # Add api_key and listen_port to config.json if missing
 if [ -f "$CONF_DIR/config.json" ]; then
-    python3 -c "
+    /opt/pidoors/venv/bin/python3 -c "
 import json, os, subprocess
 config_path = '$CONF_DIR/config.json'
 zone = '$ZONE'

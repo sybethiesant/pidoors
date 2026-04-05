@@ -1580,14 +1580,14 @@ def heartbeat_loop():
                 sync_cache_from_server()
 
         except Exception as e:
-            debug(f"Heartbeat error: {e}")
+            report(f"Heartbeat error: {e}")
 
         time.sleep(HEARTBEAT_INTERVAL)
 
 
 def send_heartbeat():
     """Send heartbeat to update door status in database"""
-    global db_connected
+    global db_connected, door_sensor_open
 
     if not MYSQL_AVAILABLE:
         return

@@ -2008,12 +2008,15 @@ if ($resource === 'certs' && $id === 'sign' && $method === 'POST') {
     }
     file_put_contents($ext_tmp, $san_entries);
 
-    // Sign with CA
+    // Sign with CA — use temp serial file to avoid needing write access to /etc/mysql/ssl/
+    $serial_tmp = tempnam(sys_get_temp_dir(), 'pidoors_serial_');
+    file_put_contents($serial_tmp, dechex(time()) . "\n");
     $cmd = sprintf(
-        'openssl x509 -req -days 3650 -in %s -CA %s -CAkey %s -CAcreateserial -out %s -extfile %s 2>&1',
+        'openssl x509 -req -days 3650 -in %s -CA %s -CAkey %s -CAserial %s -out %s -extfile %s 2>&1',
         escapeshellarg($csr_tmp),
         escapeshellarg($ca_cert),
         escapeshellarg($ca_key),
+        escapeshellarg($serial_tmp),
         escapeshellarg($cert_tmp),
         escapeshellarg($ext_tmp)
     );
@@ -2028,7 +2031,7 @@ if ($resource === 'certs' && $id === 'sign' && $method === 'POST') {
     @unlink($csr_tmp);
     @unlink($cert_tmp);
     @unlink($ext_tmp);
-    @unlink('/etc/mysql/ssl/ca.srl');
+    @unlink($serial_tmp);
 
     if (empty($signed_cert) || strpos($signed_cert, '-----BEGIN CERTIFICATE-----') === false) {
         json_error('Certificate signing failed: ' . implode(' ', $output), 500);

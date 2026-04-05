@@ -119,13 +119,13 @@ step "Installation type"
 
 echo "  What would you like to install?"
 echo
-echo "    ${BOLD}1) Server${NC}          - Web interface + Database"
+echo -e "    ${BOLD}1) Server${NC}          - Web interface + Database"
 echo "                       Install on the central Pi that hosts the dashboard"
 echo
-echo "    ${BOLD}2) Door Controller${NC} - GPIO + Card reader"
+echo -e "    ${BOLD}2) Door Controller${NC} - GPIO + Card reader"
 echo "                       Install on each Pi that controls a door"
 echo
-echo "    ${BOLD}3) Both${NC}            - Server + Door Controller on one Pi"
+echo -e "    ${BOLD}3) Both${NC}            - Server + Door Controller on one Pi"
 echo "                       For single-door setups or testing"
 echo
 read -p "  Enter choice [1-3]: " INSTALL_TYPE
@@ -226,39 +226,59 @@ if [ "$INSTALL_SERVER" = true ]; then
                 -out "$CERT_DIR/ca.pem" \
                 -subj "/CN=PiDoors CA" 2>/dev/null
 
-            # Generate server key and cert signed by CA
+            # Generate server key and cert signed by CA (with SAN for IP verification)
+            local SERVER_IP
+            SERVER_IP=$(hostname -I | awk '{print $1}')
             openssl genrsa 2048 > "$CERT_DIR/server-key.pem" 2>/dev/null
             openssl req -new -key "$CERT_DIR/server-key.pem" \
                 -out "$CERT_DIR/server-req.pem" \
                 -subj "/CN=PiDoors DB Server" 2>/dev/null
+            echo "subjectAltName = IP:${SERVER_IP},IP:127.0.0.1,DNS:localhost" > "$CERT_DIR/server-ext.cnf"
             openssl x509 -req -days 3650 \
                 -in "$CERT_DIR/server-req.pem" \
                 -CA "$CERT_DIR/ca.pem" \
                 -CAkey "$CERT_DIR/ca-key.pem" \
                 -CAcreateserial \
-                -out "$CERT_DIR/server-cert.pem" 2>/dev/null
+                -out "$CERT_DIR/server-cert.pem" \
+                -extfile "$CERT_DIR/server-ext.cnf" 2>/dev/null
 
-            # Permissions — www-data needs read access to ca-key.pem for cert signing API,
-            # and write access to the directory for the ca.srl serial file
-            chown mysql:www-data "$CERT_DIR"
-            chmod 770 "$CERT_DIR"
-            chown mysql:mysql "$CERT_DIR"/server-*.pem
-            chown mysql:www-data "$CERT_DIR"/ca-key.pem "$CERT_DIR"/ca.pem
-            chmod 600 "$CERT_DIR"/server-key.pem
-            chmod 640 "$CERT_DIR"/ca-key.pem
-            chmod 644 "$CERT_DIR/ca.pem" "$CERT_DIR/server-cert.pem"
-
-            rm -f "$CERT_DIR/server-req.pem" "$CERT_DIR/ca.srl"
+            rm -f "$CERT_DIR/server-req.pem" "$CERT_DIR/server-ext.cnf" "$CERT_DIR/ca.srl"
 
             ok "TLS certificates generated"
         fi
 
+        # Always fix permissions (MariaDB package updates can reset ownership)
+        # www-data needs read access to ca-key.pem for cert signing API
+        chown mysql:www-data "$CERT_DIR"
+        chmod 770 "$CERT_DIR"
+        chown mysql:mysql "$CERT_DIR"/server-*.pem 2>/dev/null || true
+        chown mysql:www-data "$CERT_DIR"/ca-key.pem "$CERT_DIR"/ca.pem 2>/dev/null || true
+        chmod 600 "$CERT_DIR"/server-key.pem 2>/dev/null || true
+        chmod 640 "$CERT_DIR"/ca-key.pem 2>/dev/null || true
+        chmod 644 "$CERT_DIR/ca.pem" "$CERT_DIR/server-cert.pem" 2>/dev/null || true
+
         # Add TLS config to MariaDB if not already present
-        if [ -f "$MARIADB_CNF" ] && ! grep -q "ssl-ca" "$MARIADB_CNF"; then
+        # Match only uncommented ssl-ca lines (default config has #ssl-ca which is not active)
+        if [ -f "$MARIADB_CNF" ] && ! grep -q "^ssl-ca" "$MARIADB_CNF"; then
             info "Configuring MariaDB TLS..."
-            sed -i '/^\[mysqld\]/a ssl-ca = /etc/mysql/ssl/ca.pem\nssl-cert = /etc/mysql/ssl/server-cert.pem\nssl-key = /etc/mysql/ssl/server-key.pem' "$MARIADB_CNF"
-            systemctl restart mariadb
-            ok "MariaDB TLS enabled"
+            # Find the server section header ([mysqld] on older, [mariadbd] on newer MariaDB)
+            local SECTION_HEADER
+            if grep -q '^\[mysqld\]' "$MARIADB_CNF"; then
+                SECTION_HEADER='^\[mysqld\]'
+            elif grep -q '^\[mariadbd\]' "$MARIADB_CNF"; then
+                SECTION_HEADER='^\[mariadbd\]'
+            elif grep -q '^\[server\]' "$MARIADB_CNF"; then
+                SECTION_HEADER='^\[server\]'
+            else
+                SECTION_HEADER=""
+            fi
+            if [ -n "$SECTION_HEADER" ]; then
+                sed -i "/${SECTION_HEADER}/a ssl-ca = /etc/mysql/ssl/ca.pem\nssl-cert = /etc/mysql/ssl/server-cert.pem\nssl-key = /etc/mysql/ssl/server-key.pem" "$MARIADB_CNF"
+                systemctl restart mariadb
+                ok "MariaDB TLS enabled"
+            else
+                warn "Could not find server section in MariaDB config — add ssl-ca/ssl-cert/ssl-key manually"
+            fi
         fi
     }
 
@@ -320,15 +340,19 @@ SANEOF
 
     setup_nginx_tls
 
+    # Test root connection — try socket auth first (Debian default), fall back to password
     echo
-    prompt_secret MYSQL_ROOT_PASS "MySQL root password"
-
-    # Test root connection
-    if MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root -e "SELECT 1" > /dev/null 2>&1; then
-        ok "MySQL root connection verified"
+    MYSQL_ROOT_PASS=""
+    if mysql -u root -e "SELECT 1" > /dev/null 2>&1; then
+        ok "MySQL root connection verified (socket auth)"
     else
-        fail "Cannot connect to MySQL as root. Check password."
-        exit 1
+        prompt_secret MYSQL_ROOT_PASS "MySQL root password"
+        if MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root -e "SELECT 1" > /dev/null 2>&1; then
+            ok "MySQL root connection verified"
+        else
+            fail "Cannot connect to MySQL as root. Check password."
+            exit 1
+        fi
     fi
 
     echo
@@ -621,10 +645,10 @@ if [ "$INSTALL_DOOR" = true ]; then
 
     echo "  Select the type of card reader connected to this door:"
     echo
-    echo "    ${BOLD}1)${NC} Wiegand (GPIO)     - Most common, HID/generic readers"
-    echo "    ${BOLD}2)${NC} OSDP (RS-485)      - Encrypted, modern readers"
-    echo "    ${BOLD}3)${NC} NFC PN532 (I2C)    - NFC/RFID module"
-    echo "    ${BOLD}4)${NC} NFC MFRC522 (SPI)  - NFC/RFID module"
+    echo -e "    ${BOLD}1)${NC} Wiegand (GPIO)     - Most common, HID/generic readers"
+    echo -e "    ${BOLD}2)${NC} OSDP (RS-485)      - Encrypted, modern readers"
+    echo -e "    ${BOLD}3)${NC} NFC PN532 (I2C)    - NFC/RFID module"
+    echo -e "    ${BOLD}4)${NC} NFC MFRC522 (SPI)  - NFC/RFID module"
     echo
     read -p "  Enter choice [1-4]: " READER_CHOICE
 

@@ -90,7 +90,7 @@ info "Current version: $CURRENT_VERSION"
 # ──────────────────────────────────────────────
 
 info "Checking latest release on GitHub..."
-LATEST_TAG=$(curl -sf "https://api.github.com/repos/$REPO/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || {
+LATEST_TAG=$(curl -sf --connect-timeout 15 --max-time 30 "https://api.github.com/repos/$REPO/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null) || {
     fail "Could not reach GitHub API. Check internet connection."
     exit 1
 }
@@ -114,8 +114,8 @@ TMPDIR=$(mktemp -d /tmp/pidoors-server-update-XXXXXX)
 TARBALL="$TMPDIR/release.tar.gz"
 
 info "Downloading release $LATEST_TAG..."
-curl -sfL "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
-curl -sfL "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
+curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
+curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
     fail "Failed to download release $LATEST_TAG"
     exit 1
 }
@@ -164,7 +164,7 @@ SKIPPED=0
 
 # Use rsync if available, otherwise cp with exclusion
 if command -v rsync > /dev/null 2>&1; then
-    rsync -a --delete --exclude='includes/config.php' "$EXTRACTED/pidoorserv/" "$WEB_ROOT/"
+    rsync -a --delete --exclude='includes/config.php' --exclude='ca.pem' "$EXTRACTED/pidoorserv/" "$WEB_ROOT/"
     ok "Web files updated (rsync, stale files removed)"
 else
     # Manual copy, preserving config.php
@@ -341,6 +341,28 @@ if [ -f "$WEB_ROOT/includes/config.php" ]; then
     chown www-data:www-data "$WEB_ROOT/includes/config.php"
 fi
 ok "Ownership and permissions set"
+
+# ──────────────────────────────────────────────
+# Restore ca.pem and fix SSL directory permissions
+# ──────────────────────────────────────────────
+
+# Ensure ca.pem exists in web root (controllers download it for TLS DB connections)
+if [ ! -f "$WEB_ROOT/ca.pem" ] && [ -f /etc/mysql/ssl/ca.pem ]; then
+    cp /etc/mysql/ssl/ca.pem "$WEB_ROOT/ca.pem"
+    chown www-data:www-data "$WEB_ROOT/ca.pem"
+    chmod 644 "$WEB_ROOT/ca.pem"
+    ok "CA certificate restored to web root"
+fi
+
+# Fix SSL directory permissions (MariaDB package updates can reset ownership)
+if [ -d /etc/mysql/ssl ]; then
+    chown mysql:www-data /etc/mysql/ssl
+    chmod 770 /etc/mysql/ssl
+    chown mysql:www-data /etc/mysql/ssl/ca-key.pem /etc/mysql/ssl/ca.pem 2>/dev/null || true
+    chmod 640 /etc/mysql/ssl/ca-key.pem 2>/dev/null || true
+    chmod 644 /etc/mysql/ssl/ca.pem /etc/mysql/ssl/server-cert.pem 2>/dev/null || true
+    ok "SSL directory permissions verified"
+fi
 
 # ──────────────────────────────────────────────
 # Ensure backup directory exists

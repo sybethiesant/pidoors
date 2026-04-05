@@ -165,6 +165,8 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
             $details[] = 'CA certificate restored to web root';
         }
     }
+    // Note: SSL directory permissions (/etc/mysql/ssl/) are fixed by server-update.sh
+    // and install.sh which run as root. The web updater runs as www-data and cannot chown.
 
     // --- Ensure required directories ---
     $required_dirs = ['/var/backups/pidoors' => ['owner' => 'www-data:www-data', 'mode' => '750']];
