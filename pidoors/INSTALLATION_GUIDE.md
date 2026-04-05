@@ -354,12 +354,15 @@ Wiegand is the most common card reader interface. Supports 26, 32, 34, 35, 36, 3
 
 **Wiegand Reader Wiring:**
 
-| Wiegand Reader | Raspberry Pi | Pin # |
-|----------------|--------------|-------|
-| DATA0 (Green)  | GPIO 24      | 18    |
-| DATA1 (White)  | GPIO 23      | 16    |
-| GND (Black)    | GND          | 6     |
-| 5V+ (Red)      | 5V           | 2     |
+> **Voltage Warning:** Wiegand readers output 5V logic, but the Pi's GPIO pins are 3.3V. Use a **bi-directional logic level shifter** on the DATA0 and DATA1 lines to protect the Pi. Connecting 5V signals directly to GPIO pins can damage them.
+
+| Wiegand Reader | Level Shifter | Raspberry Pi | Pin # |
+|----------------|---------------|--------------|-------|
+| DATA0 (Green)  | HV1 → LV1    | GPIO 24      | 18    |
+| DATA1 (White)  | HV2 → LV2    | GPIO 23      | 16    |
+| GND (Black)    | GND (shared)  | GND          | 6     |
+| 5V+ (Red)      | HV ref        | 5V           | 2     |
+| —              | LV ref        | 3V3          | 1     |
 
 **Lock Control (Relay) - All Reader Types:**
 

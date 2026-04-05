@@ -382,12 +382,15 @@ nano pidoors/conf/config.json
 
 ### Wiegand Reader to Raspberry Pi
 
-| Wiegand Reader | Raspberry Pi |
-|----------------|--------------|
-| DATA0 (Green)  | GPIO 24      |
-| DATA1 (White)  | GPIO 23      |
-| GND (Black)    | GND (Pin 6)  |
-| 5V+ (Red)      | 5V (Pin 2)   |
+**Important:** Most Wiegand readers output 5V logic signals, but Raspberry Pi GPIO pins are 3.3V only. A **bi-directional logic level shifter** (5V to 3.3V) is recommended on the DATA0 and DATA1 lines to protect the Pi's GPIO pins. Without one, the Pi may work initially but the GPIO pins can be damaged over time.
+
+| Wiegand Reader | Level Shifter | Raspberry Pi |
+|----------------|---------------|--------------|
+| DATA0 (Green)  | HV1 → LV1    | GPIO 24      |
+| DATA1 (White)  | HV2 → LV2    | GPIO 23      |
+| GND (Black)    | GND (shared)  | GND (Pin 6)  |
+| 5V+ (Red)      | HV            | 5V (Pin 2)   |
+| —              | LV            | 3V3 (Pin 1)  |
 
 ### Lock Relay Control
 
@@ -581,7 +584,6 @@ pidoors/
 │   ├── door-entrypoint.sh
 │   ├── deploy.sh         # Deploy to remote Docker host
 │   └── mock_gpio.py      # Mock GPIO for containerized door
-├── pidoorspcb/           # PCB design files (KiCAD)
 ├── VERSION               # Current version number
 ├── install.sh            # Installation script
 ├── server-update.sh      # Server self-update script
