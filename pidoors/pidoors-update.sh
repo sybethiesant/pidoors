@@ -13,6 +13,17 @@ ZONE="${1:-}"
 INSTALL_DIR="/opt/pidoors"
 REPO="sybethiesant/pidoors"
 TMPDIR="${2:-}"  # May be passed by self-update re-exec
+DETACHED="${3:-}"  # Set to "detached" when re-launched outside cgroup
+
+# Self-detach: if running inside the pidoors.service cgroup, re-launch as an
+# independent transient service so we survive systemctl stop pidoors.
+if [ "$DETACHED" != "detached" ] && [ -z "$TMPDIR" ]; then
+    if grep -q 'pidoors\.service' /proc/self/cgroup 2>/dev/null; then
+        exec systemd-run --unit=pidoors-update --quiet \
+            --description="PiDoors Controller Update" \
+            "$0" "$ZONE" "" "detached"
+    fi
+fi
 
 log() {
     echo "[pidoors-update] $1"
@@ -254,10 +265,14 @@ log "Pre-flight checks passed."
 # This ensures any future changes to the update process take effect
 # before the rest of the update runs.
 if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
-    # Patch the incoming script to use venv Python (needed for pymysql)
-    # This ensures even older releases work correctly after self-update
+    # Patch the incoming script for compatibility with older releases:
+    # 1. Use venv Python (needed for pymysql)
     if ! grep -q '/opt/pidoors/venv/bin/python3' "$SRC_DIR/pidoors-update.sh" 2>/dev/null; then
         sed -i 's|    python3 -c "|    /opt/pidoors/venv/bin/python3 -c "|g' "$SRC_DIR/pidoors-update.sh"
+    fi
+    # 2. Add self-detach from pidoors.service cgroup (so update survives service stop)
+    if ! grep -q 'DETACHED=' "$SRC_DIR/pidoors-update.sh" 2>/dev/null; then
+        sed -i '/^TMPDIR=.*self-update re-exec/a DETACHED="${3:-}"\n\nif [ "$DETACHED" != "detached" ] \&\& [ -z "$TMPDIR" ]; then\n    if grep -q "pidoors\\\\.service" /proc/self/cgroup 2>/dev/null; then\n        exec systemd-run --unit=pidoors-update --quiet --description="PiDoors Controller Update" "$0" "$ZONE" "" "detached"\n    fi\nfi' "$SRC_DIR/pidoors-update.sh"
     fi
     if ! cmp -s "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null; then
         log "Update script has changed — self-updating and re-executing..."
@@ -266,7 +281,7 @@ if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
         chown root:root "$INSTALL_DIR/pidoors-update.sh"
         # Re-run the new script with the same arguments, passing the
         # already-downloaded temp dir to skip re-downloading
-        exec "$INSTALL_DIR/pidoors-update.sh" "$ZONE" "$TMPDIR"
+        exec "$INSTALL_DIR/pidoors-update.sh" "$ZONE" "$TMPDIR" "$DETACHED"
     fi
 fi
 
