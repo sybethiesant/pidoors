@@ -865,7 +865,10 @@ EOF
 
     # Add sudoers entry for update script (allows pidoors user to run update as root)
     SUDOERS_FILE="/etc/sudoers.d/pidoors-update"
-    echo "pidoors ALL=(ALL) NOPASSWD: $INSTALL_DIR/pidoors-update.sh" > "$SUDOERS_FILE"
+    cat > "$SUDOERS_FILE" <<SUDOEOF
+pidoors ALL=(ALL) NOPASSWD: $INSTALL_DIR/pidoors-update.sh
+pidoors ALL=(ALL) NOPASSWD: /usr/bin/systemd-run
+SUDOEOF
     chmod 440 "$SUDOERS_FILE"
     ok "Sudoers entry for self-update configured"
 

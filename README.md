@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-3.1.6-green)
+![Version](https://img.shields.io/badge/version-3.1.7-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -619,7 +619,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 3.1.6** - Production Ready
+**Current Version: 3.1.7** - Production Ready
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -631,6 +631,10 @@ Contributions welcome! Please:
 ---
 
 ## Changelog
+
+### Version 3.1.7 (April 2026)
+- **Fix**: Controller updates killed by systemd when stopping the service — update script now runs in a separate systemd scope
+- **Fix**: Sudoers entry updated to allow `systemd-run` for the pidoors user
 
 ### Version 3.1.6 (April 2026)
 - **Fix**: Heartbeat broken — `door_sensor_open` missing global declaration in `send_heartbeat()`, doors never auto-registered or showed online
