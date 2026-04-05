@@ -73,7 +73,6 @@ function DoorFormModal({
               value={form.name || ''}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               required
-              disabled={!!isEdit}
               placeholder="e.g., front-door"
             />
           </div>

@@ -486,9 +486,39 @@ if ($resource === 'doors') {
         require_csrf();
         $door_name = urldecode($id);
 
-        $stmt = $pdo_access->prepare("SELECT name FROM doors WHERE name = ?");
+        $stmt = $pdo_access->prepare("SELECT name, status FROM doors WHERE name = ?");
         $stmt->execute([$door_name]);
-        if (!$stmt->fetch()) json_error('Door not found', 404);
+        $door = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$door) json_error('Door not found', 404);
+
+        // Handle door rename
+        if (isset($input['name']) && $input['name'] !== $door_name) {
+            require_once __DIR__ . '/includes/push.php';
+            $new_name = preg_replace('/[^a-z0-9_]/', '', strtolower(str_replace(' ', '_', $input['name'])));
+            if (empty($new_name)) json_error('Invalid door name');
+
+            // Check for duplicate
+            $dup = $pdo_access->prepare("SELECT name FROM doors WHERE name = ?");
+            $dup->execute([$new_name]);
+            if ($dup->fetch()) json_error('A door with that name already exists');
+
+            // Must be online to rename
+            if ($door['status'] !== 'online') {
+                json_error('Door must be online to rename. The controller needs to update its configuration.');
+            }
+
+            // Push the name change to the controller
+            $result = push_to_controller($pdo_access, $door_name, 'rename', ['new_name' => $new_name]);
+            if (!$result['ok']) {
+                json_error('Could not reach the door controller. Ensure it is online and try again.');
+            }
+
+            // Update DB — rename the door
+            $pdo_access->prepare("UPDATE doors SET name = ? WHERE name = ?")->execute([$new_name, $door_name]);
+            $pdo_access->prepare("UPDATE cards SET doors = REPLACE(doors, ?, ?) WHERE doors LIKE ?")->execute([$door_name, $new_name, "%$door_name%"]);
+            log_security_event($pdo, 'door_renamed', $_SESSION['user_id'], "Door renamed: $door_name → $new_name");
+            json_success(['new_name' => $new_name], 'Door renamed');
+        }
 
         $fields = [];
         $params = [];

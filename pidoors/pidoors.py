@@ -1945,6 +1945,32 @@ def _run_push_listener(port, api_key, cert_file, key_file):
                     report(f"Push: hold released from {client_ip}")
                 self._respond(200, {'ok': True, 'held_open': False})
 
+            elif path == '/cmd/rename':
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = json.loads(self.rfile.read(content_length)) if content_length else {}
+                new_name = body.get('new_name', '').strip()
+                if not new_name:
+                    self._respond(400, {'ok': False, 'error': 'new_name required'})
+                    return
+                report(f"Push: rename to '{new_name}' from {client_ip}")
+                try:
+                    # Update zone.json
+                    zone_file = os.path.join(CONF_DIR, 'zone.json')
+                    save_json(zone_file, {'zone': new_name})
+                    # Update config.json — move the zone key
+                    config_file = os.path.join(CONF_DIR, 'config.json')
+                    cfg = load_json(config_file)
+                    if zone in cfg:
+                        cfg[new_name] = cfg.pop(zone)
+                    save_json(config_file, cfg)
+                    self._respond(200, {'ok': True, 'old_name': zone, 'new_name': new_name, 'restarting': True})
+                    # Restart the service to pick up the new name
+                    report(f"Door renamed from '{zone}' to '{new_name}', restarting...")
+                    threading.Thread(target=lambda: os.system('sudo systemctl restart pidoors'), daemon=True).start()
+                except Exception as e:
+                    report(f"Rename failed: {e}")
+                    self._respond(500, {'ok': False, 'error': str(e)})
+
             elif path == '/cmd/update':
                 report(f"Push: update requested from {client_ip}")
                 trigger_update()

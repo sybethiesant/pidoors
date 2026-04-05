@@ -59,7 +59,11 @@ if (is_logged_in() && is_admin()) {
         $vf = ($config['apppath'] ?? '') . 'VERSION';
         if (file_exists($vf)) { $uc_server_version = trim(file_get_contents($vf)); }
         $uc_latest = $uc_data['github_latest_version'] ?? '';
-        if ($uc_latest && $uc_server_version && version_compare($uc_latest, $uc_server_version, '>')) {
+        $uc_update = $uc_latest && $uc_server_version && (
+            version_compare($uc_latest, $uc_server_version, '>') ||
+            (version_compare($uc_server_version, '3.0.0', '>=') && version_compare($uc_latest, '1.0.0', '<'))
+        );
+        if ($uc_update) {
             $update_banner = '<div class="alert alert-warning alert-dismissible mb-0 rounded-0 text-center py-2" role="alert">'
                 . 'A new version of PiDoors is available: <strong>v' . htmlspecialchars($uc_latest) . '</strong> '
                 . '(current: v' . htmlspecialchars($uc_server_version) . ') &mdash; '

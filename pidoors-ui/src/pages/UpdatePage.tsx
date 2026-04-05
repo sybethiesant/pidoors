@@ -67,8 +67,12 @@ export function UpdatePage() {
   });
 
   const autoCheckDisabled = status?.latest_version === 'disabled';
-  const isUpToDate = !autoCheckDisabled && status && status.current_version && status.latest_version &&
-    status.current_version.replace(/^v/, '') === status.latest_version.replace(/^v/, '');
+  const currentVer = status?.current_version?.replace(/^v/, '') || '';
+  const latestVer = status?.latest_version?.replace(/^v/, '') || '';
+  // Handle version reset: 3.x was renumbered to 0.x
+  const isVersionReset = currentVer >= '3.0.0' && latestVer < '1.0.0' && latestVer !== '';
+  const isUpToDate = !autoCheckDisabled && status && currentVer && latestVer &&
+    !isVersionReset && currentVer === latestVer;
 
   const targetVersion = status?.current_version?.replace(/^v/, '') || '';
   const hasOutdatedControllers = controllers.some(

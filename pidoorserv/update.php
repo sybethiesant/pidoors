@@ -205,8 +205,13 @@ if ($github_check_time) {
 }
 
 $update_available = false;
-if ($github_latest && $current_version !== 'unknown' && version_compare($github_latest, $current_version, '>')) {
-    $update_available = true;
+if ($github_latest && $current_version !== 'unknown') {
+    // Handle version reset: 3.x was renumbered to 0.x in April 2026
+    if (version_compare($current_version, '3.0.0', '>=') && version_compare($github_latest, '1.0.0', '<')) {
+        $update_available = true;
+    } elseif (version_compare($github_latest, $current_version, '>')) {
+        $update_available = true;
+    }
 }
 
 // Fetch door controller versions
