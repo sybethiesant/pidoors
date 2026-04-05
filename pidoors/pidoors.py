@@ -2016,16 +2016,21 @@ _start_time = time.time()
 # ============================================================
 
 def trigger_update():
-    """Launch the update script in a separate systemd scope so it survives service restart"""
+    """Launch the update script detached so it survives service restart"""
     update_script = os.path.join(INSTALL_DIR, 'pidoors-update.sh')
     if not os.path.isfile(update_script):
         report(f"Update script not found: {update_script}")
         return
     try:
-        # Use systemd-run to escape the pidoors.service cgroup — otherwise
-        # systemctl stop pidoors (inside the update script) kills the updater too
+        # Use systemd-run to launch the update in its own transient service.
+        # This fully escapes the pidoors.service cgroup so the update script
+        # is not killed when systemctl stop pidoors runs.
         subprocess.Popen(
-            ['sudo', 'systemd-run', '--scope', '--quiet', update_script, zone],
+            ['sudo', 'systemd-run', '--unit=pidoors-update',
+             '--description=PiDoors Controller Update',
+             '--property=Type=oneshot',
+             '--property=RemainAfterExit=no',
+             update_script, zone],
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
