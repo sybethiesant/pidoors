@@ -20,8 +20,9 @@ DETACHED="${3:-}"  # Set to "detached" when re-launched outside cgroup
 # survive systemctl stop pidoors.
 if [ "$DETACHED" != "detached" ] && [ -z "$TMPDIR" ]; then
     CGROUP=$(cat /proc/self/cgroup 2>/dev/null || true)
-    if echo "$CGROUP" | grep -qE 'pidoors\.service|pidoors-update|run-p[0-9]' 2>/dev/null; then
-        exec systemd-run --unit=pidoors-update --quiet \
+    # Only detach if inside pidoors.service or a systemd scope (run-pXXXX) — NOT if already in a pidoors-update service
+    if echo "$CGROUP" | grep -qE 'pidoors\.service|run-p[0-9]' 2>/dev/null && ! echo "$CGROUP" | grep -q 'pidoors-update' 2>/dev/null; then
+        exec systemd-run --unit="pidoors-update-$(date +%s)" --quiet \
             --description="PiDoors Controller Update" \
             "$0" "$ZONE" "" "detached"
     fi

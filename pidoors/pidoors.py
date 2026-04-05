@@ -2051,11 +2051,11 @@ def trigger_update():
         # Use systemd-run to launch the update in its own transient service.
         # This fully escapes the pidoors.service cgroup so the update script
         # is not killed when systemctl stop pidoors runs.
+        import time as _time
+        unit_name = f'pidoors-update-{int(_time.time())}'
         subprocess.Popen(
-            ['sudo', 'systemd-run', '--unit=pidoors-update',
+            ['sudo', 'systemd-run', f'--unit={unit_name}',
              '--description=PiDoors Controller Update',
-             '--property=Type=oneshot',
-             '--property=RemainAfterExit=no',
              update_script, zone],
             start_new_session=True,
             stdout=subprocess.DEVNULL,
