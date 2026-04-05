@@ -15,10 +15,12 @@ REPO="sybethiesant/pidoors"
 TMPDIR="${2:-}"  # May be passed by self-update re-exec
 DETACHED="${3:-}"  # Set to "detached" when re-launched outside cgroup
 
-# Self-detach: if running inside the pidoors.service cgroup, re-launch as an
-# independent transient service so we survive systemctl stop pidoors.
+# Self-detach: if running inside the pidoors.service cgroup (or a scope
+# spawned by it), re-launch as an independent transient service so we
+# survive systemctl stop pidoors.
 if [ "$DETACHED" != "detached" ] && [ -z "$TMPDIR" ]; then
-    if grep -q 'pidoors\.service' /proc/self/cgroup 2>/dev/null; then
+    CGROUP=$(cat /proc/self/cgroup 2>/dev/null || true)
+    if echo "$CGROUP" | grep -qE 'pidoors\.service|pidoors-update|run-p[0-9]' 2>/dev/null; then
         exec systemd-run --unit=pidoors-update --quiet \
             --description="PiDoors Controller Update" \
             "$0" "$ZONE" "" "detached"
@@ -220,7 +222,8 @@ else
     log "Latest version: $LATEST_VERSION"
 
     # Download tarball
-    TMPDIR=$(mktemp -d /tmp/pidoors-update-XXXXXX)
+    # Use /var/cache (not /tmp) — PrivateTmp in pidoors.service makes /tmp ephemeral
+    TMPDIR=$(mktemp -d /var/cache/pidoors-update-XXXXXX)
     TARBALL="$TMPDIR/release.tar.gz"
     log "Downloading release tarball..."
     curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
@@ -270,10 +273,12 @@ if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
     if ! grep -q '/opt/pidoors/venv/bin/python3' "$SRC_DIR/pidoors-update.sh" 2>/dev/null; then
         sed -i 's|    python3 -c "|    /opt/pidoors/venv/bin/python3 -c "|g' "$SRC_DIR/pidoors-update.sh"
     fi
-    # 2. Add self-detach from pidoors.service cgroup (so update survives service stop)
+    # 2. Add self-detach from service cgroup (so update survives service stop)
     if ! grep -q 'DETACHED=' "$SRC_DIR/pidoors-update.sh" 2>/dev/null; then
-        sed -i '/^TMPDIR=.*self-update re-exec/a DETACHED="${3:-}"\n\nif [ "$DETACHED" != "detached" ] \&\& [ -z "$TMPDIR" ]; then\n    if grep -q "pidoors\\\\.service" /proc/self/cgroup 2>/dev/null; then\n        exec systemd-run --unit=pidoors-update --quiet --description="PiDoors Controller Update" "$0" "$ZONE" "" "detached"\n    fi\nfi' "$SRC_DIR/pidoors-update.sh"
+        sed -i '/^TMPDIR=.*self-update re-exec/a DETACHED="${3:-}"\n\nif [ "$DETACHED" != "detached" ] \&\& [ -z "$TMPDIR" ]; then\n    CGROUP=$(cat /proc/self/cgroup 2>/dev/null || true)\n    if echo "$CGROUP" | grep -qE "pidoors|run-p[0-9]" 2>/dev/null; then\n        exec systemd-run --unit=pidoors-update --quiet --description="PiDoors Controller Update" "$0" "$ZONE" "" "detached"\n    fi\nfi' "$SRC_DIR/pidoors-update.sh"
     fi
+    # 3. Fix /tmp usage (PrivateTmp makes it ephemeral inside pidoors.service)
+    sed -i 's|mktemp -d /tmp/pidoors-update|mktemp -d /var/cache/pidoors-update|g' "$SRC_DIR/pidoors-update.sh" 2>/dev/null || true
     if ! cmp -s "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null; then
         log "Update script has changed — self-updating and re-executing..."
         cp "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh"
