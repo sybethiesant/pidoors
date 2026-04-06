@@ -23,6 +23,35 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 
 ---
 
+## Screenshots
+
+| Dashboard | Doors |
+|-----------|-------|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Doors](docs/screenshots/doors.png) |
+
+| Cards | Access Logs |
+|-------|-------------|
+| ![Cards](docs/screenshots/cards.png) | ![Access Logs](docs/screenshots/access-logs.png) |
+
+| Schedules | Access Groups |
+|-----------|---------------|
+| ![Schedules](docs/screenshots/schedules.png) | ![Access Groups](docs/screenshots/access-groups.png) |
+
+| Reports | Updates |
+|---------|---------|
+| ![Reports](docs/screenshots/reports.png) | ![Updates](docs/screenshots/updates.png) |
+
+<details>
+<summary>More screenshots</summary>
+
+| Door Settings | Card Edit | Audit Log |
+|---------------|-----------|-----------|
+| ![Door Edit](docs/screenshots/doors-edit.png) | ![Card Edit](docs/screenshots/card-edit.png) | ![Audit Log](docs/screenshots/audit-log.png) |
+
+</details>
+
+---
+
 ## Features
 
 ### Access Control

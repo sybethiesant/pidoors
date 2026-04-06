@@ -26,6 +26,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Original screenshots (use docs/screenshots/ for repo)
+screen shots/
+
 # Test / coverage artifacts
 .coverage
 .coveragerc
