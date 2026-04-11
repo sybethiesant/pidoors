@@ -557,6 +557,8 @@ if ($resource === 'doors') {
             if (isset($ping['held_open'])) $sets['held_open'] = (int) $ping['held_open'];
             if (isset($ping['version'])) $sets['controller_version'] = $ping['version'];
             if (array_key_exists('door_open', $ping)) $sets['door_open'] = $ping['door_open'];
+            if (isset($ping['gate_state'])) $sets['gate_state'] = $ping['gate_state'];
+            if (isset($ping['gate_held'])) $sets['gate_held'] = !empty($ping['gate_held']) ? 1 : 0;
             $cols = []; $vals = [];
             foreach ($sets as $col => $val) { $cols[] = "$col = ?"; $vals[] = $val; }
             $vals[] = $door_name;
@@ -890,13 +892,40 @@ if ($resource === 'doors') {
         ];
         $push_cmd = $cmd_map[$action];
         $result = push_to_controller($pdo_access, $door_name, $push_cmd);
-        if (!$result['ok']) {
+
+        // Distinguish network/transport failure from command-refused.
+        // push_to_controller returns ['ok' => false, 'fallback' => true, 'reason' => ...] on transport failure.
+        // The controller itself returns ['ok' => false, 'gate_state' => ..., 'gate_held' => ...] when the command is refused.
+        if (!empty($result['fallback'])) {
             json_error('Could not reach the gate controller. Ensure it is online.');
+        }
+        if (empty($result['ok'])) {
+            // Command reached the controller but was refused
+            $reason = $result['reason'] ?? '';
+            $messages = [
+                'held' => 'Gate is held. Release the hold first.',
+                'no_output_configured' => 'No output pin is configured for this direction. Open the door settings and assign a pin to the ' . str_replace('gate-', '', $action) . ' relay.',
+                'already_running' => 'Gate is already ' . ($action === 'gate-open' ? 'opening' : 'closing') . '.',
+                'not_a_gate' => 'This door is not configured as a gate.',
+                'unknown_command' => 'Unknown gate command.',
+            ];
+            $msg = $messages[$reason] ?? 'Gate command refused (state: ' . ($result['gate_state'] ?? 'unknown') . ')';
+            json_error($msg);
+        }
+
+        // Update DB immediately so the UI reflects the new state right away
+        if (isset($result['gate_state']) || isset($result['gate_held'])) {
+            $sets = [];
+            $vals = [];
+            if (isset($result['gate_state'])) { $sets[] = 'gate_state = ?'; $vals[] = $result['gate_state']; }
+            if (isset($result['gate_held'])) { $sets[] = 'gate_held = ?'; $vals[] = !empty($result['gate_held']) ? 1 : 0; }
+            $vals[] = $door_name;
+            $pdo_access->prepare("UPDATE doors SET " . implode(', ', $sets) . " WHERE name = ?")->execute($vals);
         }
 
         $label = str_replace('-', ' ', $action);
         log_security_event($pdo, 'gate_command', $_SESSION['user_id'], "$label via API: $door_name");
-        json_success([], ucfirst($label) . ' sent');
+        json_success($result, ucfirst($label) . ' sent');
     }
 
     if ($method === 'POST' && $id !== null && $action === 'ping') {
@@ -916,6 +945,8 @@ if ($resource === 'doors') {
             if (isset($result['held_open'])) $sets['held_open'] = (int) $result['held_open'];
             if (isset($result['version'])) $sets['controller_version'] = $result['version'];
             if (array_key_exists('door_open', $result)) $sets['door_open'] = $result['door_open'];
+            if (isset($result['gate_state'])) $sets['gate_state'] = $result['gate_state'];
+            if (isset($result['gate_held'])) $sets['gate_held'] = !empty($result['gate_held']) ? 1 : 0;
             $cols = []; $vals = [];
             foreach ($sets as $col => $val) { $cols[] = "$col = ?"; $vals[] = $val; }
             $vals[] = $door_name;

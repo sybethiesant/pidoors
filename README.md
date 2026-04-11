@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.6-green)
+![Version](https://img.shields.io/badge/version-0.3.7-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -692,7 +692,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.6** - Pre-release
+**Current Version: 0.3.7** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -706,6 +706,12 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.3.7 (April 2026)
+- **Gate command errors are actionable** — instead of the generic "Could not reach the gate controller" message, the web UI now shows specific reasons: "Gate is held. Release the hold first.", "No output pin is configured for this direction.", "Gate is already opening.", etc.
+- **Gate state syncs immediately** — server-side status polling now reads `gate_state` and `gate_held` from the controller's `/ping` response, so the `Held` badge and current state update in near-real-time on the doors page
+- **Gate commands update DB immediately** — clicking open/close/stop/hold/release reflects on the UI on the next poll (no more waiting for the 5-minute heartbeat)
+- **Fix**: `push_to_controller` failure now correctly distinguished from "controller reached but command refused"
 
 ### Version 0.3.6 (April 2026)
 - **Fix**: `index.html` no longer cached by browsers — nginx now sends `Cache-Control: no-cache` for the SPA entry point so users don't see stale UI after an update. Hashed JS/CSS assets still cache for a year.

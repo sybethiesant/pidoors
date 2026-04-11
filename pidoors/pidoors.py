@@ -1090,26 +1090,28 @@ def _gate_run_output(name, transient_state):
 
 
 def gate_command(cmd, source='unknown', hold_after=False):
-    """Execute a gate command. Returns True if accepted, False if blocked."""
+    """Execute a gate command. Returns (ok, reason) tuple.
+    ok=True, reason=None if accepted.
+    ok=False, reason='...' if blocked."""
     global gate_active_output, gate_stop_event
 
     if not gate_enabled:
-        return False
+        return False, 'not_a_gate'
 
-    # Hold check (stop is always allowed)
+    # Hold check (stop and release are always allowed)
     if gate_held and cmd != 'stop' and cmd != 'release':
         debug(f"Gate command '{cmd}' from {source} ignored (held)")
-        return False
+        return False, 'held'
 
     if cmd == 'release':
         gate_set_state(gate_state, held=False)
         report(f"Gate hold released ({source})")
-        return True
+        return True, None
 
     if cmd == 'hold':
         gate_set_state(gate_state, held=True)
         report(f"Gate held in current state: {gate_state} ({source})")
-        return True
+        return True, None
 
     if cmd == 'stop':
         # Cut any active output
@@ -1127,13 +1129,17 @@ def gate_command(cmd, source='unknown', hold_after=False):
             time.sleep(0.1)
             gate_set_state('stopped', held=True)
         report(f"Gate stop ({source})")
-        return True
+        return True, None
 
     if cmd in ('open', 'close'):
+        if cmd not in gate_output_pins:
+            report(f"Gate '{cmd}' refused: no output pin configured")
+            return False, 'no_output_configured'
+
         # Same-direction = ignore (let current cycle complete)
         if gate_active_output == cmd:
             debug(f"Gate '{cmd}' ignored — already in progress")
-            return False
+            return False, 'already_running'
 
         # Opposite-direction = stop, brief pause, then reverse
         if gate_active_output and gate_active_output != cmd:
@@ -1144,10 +1150,6 @@ def gate_command(cmd, source='unknown', hold_after=False):
         # Make sure stop_event is fresh for the new run
         gate_stop_event = threading.Event()
 
-        if cmd not in gate_output_pins:
-            debug(f"Gate '{cmd}' has no output configured")
-            return False
-
         transient = 'opening' if cmd == 'open' else 'closing'
 
         def _runner():
@@ -1157,9 +1159,9 @@ def gate_command(cmd, source='unknown', hold_after=False):
 
         threading.Thread(target=_runner, daemon=True).start()
         report(f"Gate {cmd} ({source})")
-        return True
+        return True, None
 
-    return False
+    return False, 'unknown_command'
 
 
 def gate_grant_access(name):
@@ -1169,7 +1171,8 @@ def gate_grant_access(name):
     if gate_held:
         report(f"Card access denied — gate is held. Master scan to release.")
         return False
-    return gate_command('open', source=f'access:{name}')
+    ok, _reason = gate_command('open', source=f'access:{name}')
+    return ok
 
 
 def apply_door_settings(door_info):
@@ -2412,8 +2415,11 @@ def _run_push_listener(port, api_key, cert_file, key_file):
                     self._respond(400, {'ok': False, 'error': 'Door is not configured as a gate'})
                     return
                 report(f"Push: gate/{gate_action} from {client_ip}")
-                ok = gate_command(gate_action, source=f'push:{client_ip}')
-                self._respond(200, {'ok': ok, 'gate_state': gate_state, 'gate_held': gate_held})
+                ok, reason = gate_command(gate_action, source=f'push:{client_ip}')
+                response = {'ok': ok, 'gate_state': gate_state, 'gate_held': gate_held}
+                if reason:
+                    response['reason'] = reason
+                self._respond(200, response)
 
             elif path == '/ping':
                 self._respond(200, _get_status_dict())

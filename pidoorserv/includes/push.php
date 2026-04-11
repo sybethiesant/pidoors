@@ -218,7 +218,7 @@ function poll_all_door_status($pdo_access) {
 
     // Process results
     $online_stmt = $pdo_access->prepare(
-        "UPDATE doors SET status = 'online', last_seen = NOW(), locked = ?, held_open = ?, controller_version = ?, door_open = ?, push_available = 1 WHERE name = ?"
+        "UPDATE doors SET status = 'online', last_seen = NOW(), locked = ?, held_open = ?, controller_version = ?, door_open = ?, gate_state = ?, gate_held = ?, push_available = 1 WHERE name = ?"
     );
     // When push fails, only mark offline if last heartbeat is stale (>10 min).
     // This prevents false "offline" when push/TLS is broken but controller is running fine.
@@ -239,10 +239,12 @@ function poll_all_door_status($pdo_access) {
                 $held_open = isset($data['held_open']) ? (int) $data['held_open'] : 0;
                 $version = $data['version'] ?? $data['controller_version'] ?? null;
                 $door_open = array_key_exists('door_open', $data) ? $data['door_open'] : null;
-                $online_stmt->execute([$locked, $held_open, $version, $door_open, $name]);
+                $gate_state = $data['gate_state'] ?? 'idle';
+                $gate_held = !empty($data['gate_held']) ? 1 : 0;
+                $online_stmt->execute([$locked, $held_open, $version, $door_open, $gate_state, $gate_held, $name]);
             } else {
                 // Valid HTTP response but bad JSON — still mark online
-                $online_stmt->execute([1, 0, null, null, $name]);
+                $online_stmt->execute([1, 0, null, null, 'idle', 0, $name]);
             }
         } else {
             $offline_stmt->execute([$name]);
