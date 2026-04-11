@@ -74,8 +74,9 @@ function DoorFormModal({
     }
   }, [isEdit, form.name]);
 
-  const sensorEnabled = form.door_sensor_gpio !== null && form.door_sensor_gpio !== undefined;
-  const SENSOR_GPIO_PINS = [4, 5, 6, 7, 12, 13, 16, 17, 19, 20, 21, 26, 27];
+  const [sensorEnabled, setSensorEnabled] = useState<boolean>(
+    form.door_sensor_gpio !== null && form.door_sensor_gpio !== undefined
+  );
 
   const updateGateIO = (section: 'inputs' | 'outputs', name: 'open' | 'stop' | 'close', patch: Partial<GateIO>) => {
     const current = (form.gate_config || {}) as GateConfig;
@@ -100,13 +101,47 @@ function DoorFormModal({
     onSave(form);
   };
 
+  // Compute pins currently in use by other features in this form.
+  // Pass excludeSelf to exclude the field that's calling this (so its own pin doesn't filter itself out).
+  type SelfRef =
+    | { kind: 'gate'; section: 'inputs' | 'outputs'; name: 'open' | 'stop' | 'close' }
+    | { kind: 'led' }
+    | { kind: 'sensor' };
+
+  const getUsedPins = (excludeSelf?: SelfRef): Set<number> => {
+    const used = new Set<number>();
+    // Gate I/O
+    const sections: ('inputs' | 'outputs')[] = ['inputs', 'outputs'];
+    const names: ('open' | 'stop' | 'close')[] = ['open', 'stop', 'close'];
+    for (const section of sections) {
+      for (const name of names) {
+        if (excludeSelf?.kind === 'gate' && excludeSelf.section === section && excludeSelf.name === name) continue;
+        const entry = form.gate_config?.[section]?.[name] as GateIO | undefined;
+        if (entry?.enabled && entry.pin != null) used.add(entry.pin);
+      }
+    }
+    // Status LED
+    if (excludeSelf?.kind !== 'led' && form.status_led_config?.enabled && form.status_led_config.pin != null) {
+      used.add(form.status_led_config.pin);
+    }
+    // Door sensor
+    if (excludeSelf?.kind !== 'sensor' && form.door_sensor_gpio != null) {
+      used.add(form.door_sensor_gpio);
+    }
+    return used;
+  };
+
   const renderPinSelect = (
     value: number | null | undefined,
     onChange: (v: number | null) => void,
-    extra?: number  // currently-selected pin (always allowed)
+    excludeSelf?: SelfRef
   ) => {
-    const options = new Set([...availablePins, ...(extra ? [extra] : [])]);
-    const sorted = [...options].sort((a, b) => a - b);
+    const used = getUsedPins(excludeSelf);
+    // Build a set of all pins to show: available + reserved (from API) + currently selected
+    const optionSet = new Set<number>(availablePins);
+    Object.keys(reservedPins).forEach((p) => optionSet.add(parseInt(p)));
+    if (value != null) optionSet.add(value);
+    const sorted = [...optionSet].sort((a, b) => a - b);
     return (
       <select
         className="input"
@@ -114,9 +149,21 @@ function DoorFormModal({
         onChange={(e) => onChange(e.target.value ? parseInt(e.target.value) : null)}
       >
         <option value="">Select pin…</option>
-        {sorted.map((p) => (
-          <option key={p} value={p}>GPIO {p}</option>
-        ))}
+        {sorted.map((p) => {
+          const inUseByOther = used.has(p) && p !== value;
+          const reservedBy = reservedPins[p];
+          const disabled = inUseByOther || (!!reservedBy && p !== value);
+          const label = inUseByOther
+            ? `GPIO ${p} (in use)`
+            : reservedBy
+            ? `GPIO ${p} (${reservedBy})`
+            : `GPIO ${p}`;
+          return (
+            <option key={p} value={p} disabled={disabled}>
+              {label}
+            </option>
+          );
+        })}
       </select>
     );
   };
@@ -142,7 +189,7 @@ function DoorFormModal({
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div>
               <label className="label text-xs">Pin</label>
-              {renderPinSelect(cfg.pin, (v) => updateGateIO(section, name, { pin: v }), cfg.pin || undefined)}
+              {renderPinSelect(cfg.pin, (v) => updateGateIO(section, name, { pin: v }), { kind: 'gate', section, name })}
             </div>
             <div>
               <label className="label text-xs">Active</label>
@@ -263,16 +310,18 @@ function DoorFormModal({
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Unlock Duration (sec)</label>
-              <input
-                type="number"
-                className="input"
-                value={form.unlock_duration || 5}
-                onChange={(e) => setForm({ ...form, unlock_duration: parseInt(e.target.value) || 5 })}
-                min={1}
-              />
-            </div>
+            {!form.is_gate && (
+              <div>
+                <label className="label">Unlock Duration (sec)</label>
+                <input
+                  type="number"
+                  className="input"
+                  value={form.unlock_duration || 5}
+                  onChange={(e) => setForm({ ...form, unlock_duration: parseInt(e.target.value) || 5 })}
+                  min={1}
+                />
+              </div>
+            )}
             <div>
               <label className="label">Listen Port</label>
               <input
@@ -292,7 +341,10 @@ function DoorFormModal({
               <input
                 type="checkbox"
                 checked={sensorEnabled}
-                onChange={(e) => setForm({ ...form, door_sensor_gpio: e.target.checked ? SENSOR_GPIO_PINS[0] : null })}
+                onChange={(e) => {
+                  setSensorEnabled(e.target.checked);
+                  if (!e.target.checked) setForm({ ...form, door_sensor_gpio: null });
+                }}
                 className="rounded border-slate-300"
               />
               Door contact sensor
@@ -301,15 +353,11 @@ function DoorFormModal({
               <div className="mt-2 space-y-2">
                 <div>
                   <label className="label">Sensor GPIO Pin</label>
-                  <select
-                    className="input"
-                    value={form.door_sensor_gpio ?? ''}
-                    onChange={(e) => setForm({ ...form, door_sensor_gpio: parseInt(e.target.value) })}
-                  >
-                    {SENSOR_GPIO_PINS.map((pin) => (
-                      <option key={pin} value={pin}>GPIO {pin}</option>
-                    ))}
-                  </select>
+                  {renderPinSelect(
+                    form.door_sensor_gpio,
+                    (v) => setForm({ ...form, door_sensor_gpio: v }),
+                    { kind: 'sensor' }
+                  )}
                 </div>
                 <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
                   <input

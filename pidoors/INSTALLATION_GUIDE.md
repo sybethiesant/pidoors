@@ -690,6 +690,49 @@ Now that card only works during business hours!
 
 Cards will respect holiday settings automatically!
 
+### Gate Mode (Rolling/Sliding Gates)
+
+PiDoors supports **gate motor controllers** in addition to electronic door locks. Gate mode replaces the lock relay with a set of input/output relays that interface with commercial gate motor controllers.
+
+**To enable gate mode:**
+
+1. **Go to "Doors"** in the web UI
+2. **Click the edit (pencil) icon** on the door you want to convert
+3. **Check the "Gate mode" box**
+4. **Configure the I/O** under "Gate I/O Configuration":
+
+   **Inputs (physical buttons or RF remote relays):**
+   - **Open button** — Triggers the open output. Triple-tap = enter hold-open state.
+   - **Stop button** — Cuts the active output immediately. Triple-tap = hold at current position.
+   - **Close button** — Triggers the close output. Triple-tap = enter hold-closed state.
+
+   **Outputs (relays to gate motor):**
+   - **Open relay** — Held active for the configured duration to open the gate
+   - **Stop relay** — Optional, fires when stop is triggered (only needed if your motor has a dedicated stop input)
+   - **Close relay** — Held active for the configured duration to close the gate
+
+5. **Each input/output is optional** — only enable what your hardware supports. Pin numbers, polarity (active high/low), and (for outputs) hold duration are configurable per input/output.
+
+6. **Save**. The controller will reload its config and switch to gate mode.
+
+**Hold duration:** Each output relay has its own configurable hold time (default 30 seconds). This is how long the relay stays active to drive the gate motor.
+
+**Polarity:** "Active high" = relay engages when GPIO is at 3.3V. "Active low" = relay engages when GPIO is at GND. Most relay modules with optocouplers are active low.
+
+**Pin conflicts:** The web UI shows only available GPIO pins (excluding ones used by your reader, sensor, status LED, and other gate I/O). The system prevents double-assignment.
+
+**Card scans on a gate:** A successful card scan triggers the open output (just like a card scan unlocks a door). Master card 3-scan enters the hold-open state. A single master scan releases any hold state.
+
+**Web UI control:** When a door is in gate mode, the door card on the Doors page shows dedicated **Open / Stop / Close / Hold / Release** buttons and a live state badge (idle / opening / closing / stopped / open / closed / held).
+
+**Wiring:** Wire each output relay's NO/COM terminals to the corresponding input on your gate motor controller. Wire each input button between the assigned GPIO pin and GND (default pull-up mode). For dry-contact switches no level shifter is needed; for 5V signals (like RF remote relay outputs) use a bi-directional logic level shifter.
+
+**Status persistence:** The current gate state and hold flag are saved to the database and restored on controller restart, so a power cycle won't accidentally release a held gate.
+
+### Status LED (Optional)
+
+For Wiegand keypads with a status LED input pin, you can configure PiDoors to drive the LED on access events. Edit any door, check **"Status LED"**, assign a GPIO pin and polarity. The LED will pulse on access granted and flash on access denied. Works on both doors and gates.
+
 ### Importing Multiple Cards from CSV
 
 1. **Create a CSV file** with this format:

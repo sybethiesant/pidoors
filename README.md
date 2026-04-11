@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.3-green)
+![Version](https://img.shields.io/badge/version-0.3.4-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -64,6 +64,24 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - Card validity date ranges
 - Persistent master cards (never expire for emergency access)
 - **Master card toggle** in web UI — promote any card to master with a checkbox
+
+### Gate Mode
+- Toggle any door into **gate mode** for rolling/sliding gates with motor controllers
+- 3 configurable inputs (open / stop / close physical buttons)
+- 3 configurable outputs (open / stop / close relays to gate motor)
+- Per-output hold duration, configurable polarity, configurable GPIO pins
+- Triple-tap any button to enter hold-current-state
+- Master card 3-scan = hold open (configurable)
+- Stop interrupts the active output immediately
+- Reverse direction commands automatically stop and reverse
+- Web UI shows live gate state (idle/opening/closing/stopped/open/closed) and dedicated control buttons
+- State persists across controller restarts
+- Server-side pin conflict checker prevents double-assigning GPIO pins
+
+### Status LED
+- Universal configurable LED that lights on access events and during hold states
+- Per-door GPIO pin assignment, hi/lo polarity
+- Works on both doors and gates
 
 ### Management
 - Modern React SPA with REST API backend
@@ -431,6 +449,30 @@ nano pidoors/conf/config.json
 
 Connect lock to relay NO/COM terminals with 12V power supply.
 
+### Gate Mode Wiring (Optional)
+
+For rolling/sliding gates with motor controllers, enable **Gate Mode** in the door edit page. Each gate has up to 3 inputs (physical buttons) and 3 outputs (relays to the gate motor). All inputs and outputs are optional — only enable the ones your hardware supports. GPIO pins are assigned in the web UI from the available pin list.
+
+**Gate Outputs (relays to motor)** — typically wire each relay's NO/COM terminals to the corresponding input on your gate motor controller (open, stop, close terminals).
+
+| Gate Output | Purpose |
+|-------------|---------|
+| Open relay  | Held active for the configured duration to open the gate |
+| Close relay | Held active for the configured duration to close the gate |
+| Stop relay  | Optional — fires when stop is triggered, for motor controllers with a dedicated stop input |
+
+**Gate Inputs (physical buttons or RF remote relays)** — wire the button/relay between the assigned GPIO pin and GND (default pull-up mode).
+
+| Gate Input  | Purpose |
+|-------------|---------|
+| Open button | Triggers the open output (3-tap = hold open) |
+| Close button | Triggers the close output (3-tap = hold closed) |
+| Stop button | Cuts the active output immediately (3-tap = hold at current position) |
+
+**Voltage Warning:** Same as Wiegand readers — if your buttons or RF remote relays output 5V signals, use a level shifter to protect the Pi's 3.3V GPIO inputs. For dry-contact switches (relay closures to ground) no level shifter is needed.
+
+In gate mode, the regular **Lock Relay** is unused — the gate's open/close outputs replace it. The "Unlock Duration" field in the door edit page is automatically hidden when gate mode is enabled. Each gate output has its own configurable hold duration.
+
 ### GPIO Pin Reference
 ```
     3V3  (1)  (2)  5V
@@ -650,7 +692,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.3** - Pre-release
+**Current Version: 0.3.4** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
