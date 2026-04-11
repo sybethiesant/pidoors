@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   DoorOpen,
@@ -13,11 +13,16 @@ import {
   Loader2,
   X,
   Radio,
+  ChevronRight,
+  ChevronDown,
+  Square,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
-import { getDoors, createDoor, updateDoor, deleteDoor, unlockDoor, holdDoor, pingDoor } from '../api/doors';
+import { getDoors, createDoor, updateDoor, deleteDoor, unlockDoor, holdDoor, pingDoor, getAvailablePins, gateCommand } from '../api/doors';
 import { getSchedules } from '../api/schedules';
 import toast from 'react-hot-toast';
-import type { Door, Schedule } from '../types';
+import type { Door, Schedule, GateConfig, GateIO, StatusLedConfig } from '../types';
 
 function DoorFormModal({
   door,
@@ -42,15 +47,131 @@ function DoorFormModal({
     reader_type: 'wiegand',
     listen_port: null,
     door_sensor_gpio: null,
+    is_gate: 0,
+    gate_config: null,
+    status_led_config: null,
     ...door,
   });
+
+  const [availablePins, setAvailablePins] = useState<number[]>([]);
+  const [reservedPins, setReservedPins] = useState<Record<number, string>>({});
+  const [gateExpanded, setGateExpanded] = useState<boolean>(!!form.is_gate);
+  const [ledExpanded, setLedExpanded] = useState<boolean>(!!form.status_led_config?.enabled);
+  const [advExpanded, setAdvExpanded] = useState<boolean>(false);
+
+  // Fetch available pins when editing an existing door
+  useEffect(() => {
+    if (isEdit && form.name) {
+      getAvailablePins(form.name).then((res) => {
+        setAvailablePins(res.available);
+        setReservedPins(res.reserved);
+      }).catch(() => {
+        // Fallback: show all GPIO pins
+        setAvailablePins([4, 5, 6, 7, 12, 13, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+      });
+    } else {
+      setAvailablePins([4, 5, 6, 7, 12, 13, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+    }
+  }, [isEdit, form.name]);
 
   const sensorEnabled = form.door_sensor_gpio !== null && form.door_sensor_gpio !== undefined;
   const SENSOR_GPIO_PINS = [4, 5, 6, 7, 12, 13, 16, 17, 19, 20, 21, 26, 27];
 
+  const updateGateIO = (section: 'inputs' | 'outputs', name: 'open' | 'stop' | 'close', patch: Partial<GateIO>) => {
+    const current = (form.gate_config || {}) as GateConfig;
+    const sectionData = { ...(current[section] || {}) };
+    const existing = (sectionData[name] || { enabled: false, pin: null }) as GateIO;
+    sectionData[name] = { ...existing, ...patch };
+    setForm({ ...form, gate_config: { ...current, [section]: sectionData } });
+  };
+
+  const updateAdvanced = (patch: Partial<NonNullable<GateConfig['advanced']>>) => {
+    const current = (form.gate_config || {}) as GateConfig;
+    setForm({ ...form, gate_config: { ...current, advanced: { ...(current.advanced || {}), ...patch } } });
+  };
+
+  const updateStatusLed = (patch: Partial<StatusLedConfig>) => {
+    const current = (form.status_led_config || { enabled: false, pin: null, active_high: true }) as StatusLedConfig;
+    setForm({ ...form, status_led_config: { ...current, ...patch } });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave(form);
+  };
+
+  const renderPinSelect = (
+    value: number | null | undefined,
+    onChange: (v: number | null) => void,
+    extra?: number  // currently-selected pin (always allowed)
+  ) => {
+    const options = new Set([...availablePins, ...(extra ? [extra] : [])]);
+    const sorted = [...options].sort((a, b) => a - b);
+    return (
+      <select
+        className="input"
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value ? parseInt(e.target.value) : null)}
+      >
+        <option value="">Select pin…</option>
+        {sorted.map((p) => (
+          <option key={p} value={p}>GPIO {p}</option>
+        ))}
+      </select>
+    );
+  };
+
+  const renderGateIORow = (
+    section: 'inputs' | 'outputs',
+    name: 'open' | 'stop' | 'close',
+    label: string
+  ) => {
+    const cfg = (form.gate_config?.[section]?.[name] || { enabled: false, pin: null }) as GateIO;
+    return (
+      <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+        <label className="flex items-center justify-between gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <span>{label}</span>
+          <input
+            type="checkbox"
+            checked={!!cfg.enabled}
+            onChange={(e) => updateGateIO(section, name, { enabled: e.target.checked })}
+            className="rounded border-slate-300"
+          />
+        </label>
+        {cfg.enabled && (
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div>
+              <label className="label text-xs">Pin</label>
+              {renderPinSelect(cfg.pin, (v) => updateGateIO(section, name, { pin: v }), cfg.pin || undefined)}
+            </div>
+            <div>
+              <label className="label text-xs">Active</label>
+              <select
+                className="input"
+                value={cfg.active_high === false ? 'low' : 'high'}
+                onChange={(e) => updateGateIO(section, name, { active_high: e.target.value === 'high' })}
+              >
+                <option value="high">High (3.3V)</option>
+                <option value="low">Low (GND)</option>
+              </select>
+            </div>
+            {section === 'outputs' && (
+              <div>
+                <label className="label text-xs">Hold (sec)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={300}
+                  className="input"
+                  value={cfg.duration_seconds ?? 30}
+                  onChange={(e) => updateGateIO(section, name, { duration_seconds: parseInt(e.target.value) || 30 })}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -203,6 +324,147 @@ function DoorFormModal({
             )}
           </div>
 
+          {/* ── GATE MODE ── */}
+          <div className="border-t border-slate-200 pt-4 dark:border-slate-700">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={!!form.is_gate}
+                onChange={(e) => {
+                  const en = e.target.checked;
+                  setForm({ ...form, is_gate: en ? 1 : 0, gate_config: en ? (form.gate_config || {}) : null });
+                  setGateExpanded(en);
+                }}
+                className="rounded border-slate-300"
+              />
+              Gate mode (replaces lock with open/close/stop control)
+            </label>
+            {!!form.is_gate && (
+              <div className="mt-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setGateExpanded(!gateExpanded)}
+                    className="flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900 dark:text-slate-400"
+                  >
+                    {gateExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    Gate I/O Configuration
+                  </button>
+                </div>
+                {gateExpanded && (
+                  <div className="space-y-4 rounded-md bg-slate-50 p-3 dark:bg-slate-800">
+                    <div>
+                      <h4 className="mb-2 text-xs font-semibold uppercase text-slate-500">Inputs (physical buttons)</h4>
+                      <div className="space-y-2">
+                        {renderGateIORow('inputs', 'open', 'Open button')}
+                        {renderGateIORow('inputs', 'stop', 'Stop button')}
+                        {renderGateIORow('inputs', 'close', 'Close button')}
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="mb-2 text-xs font-semibold uppercase text-slate-500">Outputs (relays to gate motor)</h4>
+                      <div className="space-y-2">
+                        {renderGateIORow('outputs', 'open', 'Open relay')}
+                        {renderGateIORow('outputs', 'stop', 'Stop relay')}
+                        {renderGateIORow('outputs', 'close', 'Close relay')}
+                      </div>
+                    </div>
+                    {/* Advanced options */}
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setAdvExpanded(!advExpanded)}
+                        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400"
+                      >
+                        {advExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                        Advanced options
+                      </button>
+                      {advExpanded && (
+                        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          <div>
+                            <label className="label text-xs">Debounce (ms)</label>
+                            <input
+                              type="number"
+                              className="input"
+                              min={10}
+                              max={500}
+                              value={form.gate_config?.advanced?.debounce_ms ?? 50}
+                              onChange={(e) => updateAdvanced({ debounce_ms: parseInt(e.target.value) || 50 })}
+                            />
+                          </div>
+                          <div>
+                            <label className="label text-xs">Triple-tap window (ms)</label>
+                            <input
+                              type="number"
+                              className="input"
+                              min={500}
+                              max={5000}
+                              value={form.gate_config?.advanced?.triple_tap_window_ms ?? 2000}
+                              onChange={(e) => updateAdvanced({ triple_tap_window_ms: parseInt(e.target.value) || 2000 })}
+                            />
+                          </div>
+                          <div>
+                            <label className="label text-xs">Input pull-resistor</label>
+                            <select
+                              className="input"
+                              value={form.gate_config?.advanced?.pull ?? 'up'}
+                              onChange={(e) => updateAdvanced({ pull: e.target.value as 'up' | 'down' | 'none' })}
+                            >
+                              <option value="up">Pull-up (button to GND)</option>
+                              <option value="down">Pull-down (button to 3.3V)</option>
+                              <option value="none">None</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── STATUS LED ── */}
+          <div className="border-t border-slate-200 pt-4 dark:border-slate-700">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={!!form.status_led_config?.enabled}
+                onChange={(e) => updateStatusLed({ enabled: e.target.checked })}
+                className="rounded border-slate-300"
+              />
+              Status LED (lights on access events)
+            </label>
+            {!!form.status_led_config?.enabled && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="label text-xs">LED GPIO pin</label>
+                  {renderPinSelect(
+                    form.status_led_config?.pin,
+                    (v) => updateStatusLed({ pin: v }),
+                    form.status_led_config?.pin || undefined
+                  )}
+                </div>
+                <div>
+                  <label className="label text-xs">Active</label>
+                  <select
+                    className="input"
+                    value={form.status_led_config?.active_high === false ? 'low' : 'high'}
+                    onChange={(e) => updateStatusLed({ active_high: e.target.value === 'high' })}
+                  >
+                    <option value="high">High (3.3V)</option>
+                    <option value="low">Low (GND)</option>
+                  </select>
+                </div>
+              </div>
+            )}
+            {Object.keys(reservedPins).length > 0 && (
+              <p className="mt-2 text-xs text-slate-400">
+                Reserved pins: {Object.entries(reservedPins).map(([p, w]) => `GPIO ${p} (${w})`).join(', ')}
+              </p>
+            )}
+          </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="btn btn-secondary">
               Cancel
@@ -298,6 +560,16 @@ export function DoorsPage() {
     }
   };
 
+  const handleGateCmd = async (name: string, action: 'open' | 'close' | 'stop' | 'hold' | 'release') => {
+    try {
+      await gateCommand(name, action);
+      toast.success(`${name}: ${action}`);
+      queryClient.invalidateQueries({ queryKey: ['doors'] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Gate command failed');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -364,7 +636,19 @@ export function DoorsPage() {
                     {door.status.charAt(0).toUpperCase() + door.status.slice(1)}
                   </span>
 
-                  {isOnline && (
+                  {isOnline && door.is_gate ? (
+                    <>
+                      <span className={`badge ${
+                        door.gate_state === 'open' ? 'badge-warning' :
+                        door.gate_state === 'closed' ? 'badge-success' :
+                        door.gate_state === 'opening' || door.gate_state === 'closing' ? 'badge-info' :
+                        door.gate_state === 'stopped' ? 'badge-danger' : 'badge-secondary'
+                      }`}>
+                        Gate: {door.gate_state}
+                      </span>
+                      {door.gate_held ? <span className="badge badge-warning">Held</span> : null}
+                    </>
+                  ) : isOnline && (
                     door.held_open ? (
                       <span className="badge badge-warning">Held Open</span>
                     ) : door.unlock_requested ? (
@@ -378,9 +662,9 @@ export function DoorsPage() {
 
                   {isOnline && door.door_sensor_gpio !== null && (
                     door.door_open === 1 ? (
-                      <span className="badge badge-warning">Open</span>
+                      <span className="badge badge-warning">Sensor: Open</span>
                     ) : door.door_open === 0 ? (
-                      <span className="badge badge-success">Closed</span>
+                      <span className="badge badge-success">Sensor: Closed</span>
                     ) : (
                       <span className="badge badge-secondary">Sensor N/A</span>
                     )
@@ -393,7 +677,61 @@ export function DoorsPage() {
                   </p>
                 )}
 
-                {isOnline && !door.unlock_requested && (
+                {isOnline && door.is_gate ? (
+                  <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3 dark:border-slate-700">
+                    <button
+                      onClick={() => handleGateCmd(door.name, 'open')}
+                      className="btn btn-sm btn-success"
+                      disabled={!!door.gate_held}
+                      title={door.gate_held ? 'Release hold first' : 'Open gate'}
+                    >
+                      <ArrowUp className="h-3 w-3" />
+                      Open
+                    </button>
+                    <button
+                      onClick={() => handleGateCmd(door.name, 'stop')}
+                      className="btn btn-sm btn-warning"
+                    >
+                      <Square className="h-3 w-3" />
+                      Stop
+                    </button>
+                    <button
+                      onClick={() => handleGateCmd(door.name, 'close')}
+                      className="btn btn-sm btn-secondary"
+                      disabled={!!door.gate_held}
+                      title={door.gate_held ? 'Release hold first' : 'Close gate'}
+                    >
+                      <ArrowDown className="h-3 w-3" />
+                      Close
+                    </button>
+                    {door.gate_held ? (
+                      <button
+                        onClick={() => handleGateCmd(door.name, 'release')}
+                        className="btn btn-sm btn-danger"
+                      >
+                        <LockOpen className="h-3 w-3" />
+                        Release
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleGateCmd(door.name, 'hold')}
+                        className="btn btn-sm btn-ghost"
+                      >
+                        <Lock className="h-3 w-3" />
+                        Hold
+                      </button>
+                    )}
+                    {door.listen_port && (
+                      <button
+                        onClick={() => handlePing(door.name)}
+                        className="btn btn-sm btn-ghost"
+                        title="Ping controller"
+                      >
+                        <Radio className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                ) : isOnline && !door.unlock_requested && (
                   <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3 dark:border-slate-700">
                     {door.held_open ? (
                       <button

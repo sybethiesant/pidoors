@@ -50,11 +50,12 @@ function push_to_controller($pdo_access, $door_name, $command, $body = []) {
     $key  = $door['api_key'];
     $url  = "https://{$ip}:{$port}/cmd/{$command}";
 
-    // Load push timeout from settings, default 3s
-    $timeout = 3;
+    // Load push timeout from settings, default 5s
+    // TLS handshake on Pi Zero hardware can take 1-2s, so 3s was too tight
+    $timeout = 5;
     $ts = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'push_timeout'")->fetch(PDO::FETCH_ASSOC);
     if ($ts && $ts['setting_value']) {
-        $timeout = max(1, (int) $ts['setting_value']);
+        $timeout = max(2, (int) $ts['setting_value']);
     }
 
     $ch = curl_init($url);
@@ -62,7 +63,7 @@ function push_to_controller($pdo_access, $door_name, $command, $body = []) {
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => $timeout,
-        CURLOPT_CONNECTTIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => $timeout - 1,
         CURLOPT_HTTPHEADER     => [
             'Content-Type: application/json',
             "Authorization: Bearer {$key}",
@@ -116,10 +117,10 @@ function ping_controller($pdo_access, $door_name) {
     $key  = $door['api_key'];
     $url  = "https://{$ip}:{$port}/ping";
 
-    $timeout = 3;
+    $timeout = 5;
     $ts = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'push_timeout'")->fetch(PDO::FETCH_ASSOC);
     if ($ts && $ts['setting_value']) {
-        $timeout = max(1, (int) $ts['setting_value']);
+        $timeout = max(2, (int) $ts['setting_value']);
     }
 
     $ch = curl_init($url);
@@ -127,7 +128,7 @@ function ping_controller($pdo_access, $door_name) {
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => $timeout,
-        CURLOPT_CONNECTTIMEOUT => $timeout,
+        CURLOPT_CONNECTTIMEOUT => $timeout - 1,
         CURLOPT_HTTPHEADER     => [
             'Content-Type: application/json',
             "Authorization: Bearer {$key}",
@@ -168,11 +169,11 @@ function ping_controller($pdo_access, $door_name) {
  * @param PDO $pdo_access Database connection (access DB)
  */
 function poll_all_door_status($pdo_access) {
-    // Load status_check_timeout setting (default 2s)
-    $timeout = 2;
+    // Load status_check_timeout setting (default 4s — TLS handshake on Pi Zero takes 1-2s)
+    $timeout = 4;
     $ts = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'status_check_timeout'")->fetch(PDO::FETCH_ASSOC);
     if ($ts && $ts['setting_value']) {
-        $timeout = max(1, min(10, (int) $ts['setting_value']));
+        $timeout = max(2, min(10, (int) $ts['setting_value']));
     }
 
     // Get all doors with push config

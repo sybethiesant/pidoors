@@ -49,6 +49,42 @@ export interface Door {
   door_sensor_gpio: number | null;
   door_open: number | null;
   door_sensor_invert: number;
+  is_gate: number;
+  gate_state: 'idle' | 'opening' | 'closing' | 'stopped' | 'open' | 'closed';
+  gate_held: number;
+  gate_config: GateConfig | null;
+  status_led_config: StatusLedConfig | null;
+}
+
+export interface GateIO {
+  enabled: boolean;
+  pin: number | null;
+  active_high?: boolean;
+  duration_seconds?: number;
+}
+
+export interface GateConfig {
+  inputs?: {
+    open?: GateIO;
+    stop?: GateIO;
+    close?: GateIO;
+  };
+  outputs?: {
+    open?: GateIO;
+    stop?: GateIO;
+    close?: GateIO;
+  };
+  advanced?: {
+    debounce_ms?: number;
+    triple_tap_window_ms?: number;
+    pull?: 'up' | 'down' | 'none';
+  };
+}
+
+export interface StatusLedConfig {
+  enabled: boolean;
+  pin: number | null;
+  active_high: boolean;
 }
 
 export interface Card {

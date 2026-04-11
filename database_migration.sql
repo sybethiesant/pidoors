@@ -705,4 +705,48 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- --------------------------------------------------------
+-- v0.3.3 - Gate mode + status LED
+-- --------------------------------------------------------
+
+-- is_gate: when 1, this door is a gate with open/close/stop I/O
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'is_gate');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `is_gate` tinyint(1) NOT NULL DEFAULT 0 AFTER `door_sensor_invert`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- gate_state: current gate state (only meaningful when is_gate=1)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'gate_state');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `gate_state` enum(\'idle\',\'opening\',\'closing\',\'stopped\',\'open\',\'closed\') DEFAULT \'idle\' AFTER `is_gate`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- gate_held: when 1, gate ignores movement commands until released
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'gate_held');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `gate_held` tinyint(1) NOT NULL DEFAULT 0 AFTER `gate_state`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- gate_config: JSON config for gate I/O (input pins, output pins, polarities, durations, advanced options)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'gate_config');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `gate_config` longtext DEFAULT NULL AFTER `gate_held`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- status_led_config: JSON config for status LED (pin, polarity, behaviors)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'status_led_config');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `status_led_config` longtext DEFAULT NULL AFTER `gate_config`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Master card hold settings
+INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
+('master_scans_hold_open', '3', 'Number of consecutive master card scans required to enter hold-open state'),
+('master_scans_release_hold', '1', 'Number of master card scans required to release any hold state');
+
 COMMIT;

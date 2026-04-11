@@ -181,6 +181,21 @@ export function SettingsPage() {
                 </div>
               </div>
             </div>
+            <div className="border-t border-slate-200 dark:border-slate-700 pt-4 mt-4">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Master Card Behavior</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="label">Master Scans to Hold Open</label>
+                  <input type="number" className="input" value={form.master_scans_hold_open || ''} onChange={(e) => set('master_scans_hold_open', e.target.value)} min={1} max={10} />
+                  <p className="mt-1 text-xs text-slate-400">Number of consecutive master card scans required to enter hold-open state (default: 3)</p>
+                </div>
+                <div>
+                  <label className="label">Master Scans to Release Hold</label>
+                  <input type="number" className="input" value={form.master_scans_release_hold || ''} onChange={(e) => set('master_scans_release_hold', e.target.value)} min={1} max={10} />
+                  <p className="mt-1 text-xs text-slate-400">Number of master card scans required to release hold-open or gate-held state (default: 1)</p>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

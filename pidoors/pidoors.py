@@ -101,12 +101,32 @@ format_registry = None  # Wiegand format registry
 door_sensor_open = None  # Current door sensor state (None/True/False)
 current_sensor_pin = None  # Currently active door sensor GPIO pin
 
+# Gate mode state
+gate_enabled = False           # True if this door is configured as a gate
+gate_state = 'idle'            # idle / opening / closing / stopped / open / closed
+gate_held = False              # True = ignore movement commands until released
+gate_config = {}               # Loaded from DB doors.gate_config
+gate_active_output = None      # Currently active output ('open'/'close'/'stop'/None)
+gate_stop_event = None         # threading.Event used to interrupt active output
+gate_input_pins = {}           # Map of pin number -> input name ('open'/'stop'/'close')
+gate_output_pins = {}          # Map of output name -> pin number
+gate_tap_state = {}            # Per-input tap counter state: {name: {'count':n, 'expires':t}}
+
+# Status LED state
+status_led_pin = None          # Configured LED pin (None = disabled)
+status_led_active = 1          # Polarity: 1 = active high, 0 = active low
+
+# Master card hold settings (loaded from DB settings)
+master_scans_hold_open = 3
+master_scans_release_hold = 1
+
 # Thread locks for shared state
 state_lock = threading.Lock()  # For db_connected, last_db_attempt, cache_last_sync
 cache_lock = threading.Lock()  # For local_cache access
 card_lock = threading.Lock()   # For last_card, repeat_read_count, repeat_read_timeout
 master_lock = threading.Lock() # For master_cards access
 wiegand_lock = threading.Lock() # For legacy Wiegand stream access
+gate_lock = threading.Lock()   # For gate state mutations
 
 
 def _try_db_connect(kwargs, use_tls):
@@ -689,6 +709,17 @@ def sync_cache_from_server():
         save_cache()
         report(f"Cache synced from server: {len(new_cache['cards'])} cards")
 
+        # Apply gate config + status LED config + master scan settings from door settings
+        apply_door_settings(door_info)
+
+        # Load global settings
+        try:
+            cursor.execute("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('master_scans_hold_open', 'master_scans_release_hold')")
+            for row in cursor.fetchall():
+                _apply_global_setting(row['setting_key'], row['setting_value'])
+        except Exception:
+            pass
+
     except pymysql.Error as e:
         with state_lock:
             db_connected = False
@@ -849,6 +880,343 @@ def rex_button_pressed(channel):
         unlock_briefly(latch_gpio)
     else:
         debug(f"REX: latch_gpio not configured for zone {zone}")
+
+
+# ============================================================
+# STATUS LED
+# ============================================================
+
+def setup_status_led(led_cfg):
+    """Set up the status LED if configured. Called from setup_from_door_settings()."""
+    global status_led_pin, status_led_active
+    if not led_cfg or not led_cfg.get('enabled'):
+        status_led_pin = None
+        return
+    pin = led_cfg.get('pin')
+    if not pin:
+        status_led_pin = None
+        return
+    pin = int(pin)
+    status_led_pin = pin
+    status_led_active = 1 if led_cfg.get('active_high', True) else 0
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, status_led_active ^ 1)  # Idle = off
+    debug(f"Status LED configured on GPIO {pin} (active {'high' if status_led_active else 'low'})")
+
+
+def status_led_set(on):
+    """Set status LED on or off."""
+    if status_led_pin is None:
+        return
+    try:
+        GPIO.output(status_led_pin, status_led_active if on else (status_led_active ^ 1))
+    except Exception:
+        pass
+
+
+def status_led_pulse(seconds=1.5):
+    """Briefly turn the status LED on for the given duration."""
+    if status_led_pin is None:
+        return
+    def _pulse():
+        status_led_set(True)
+        time.sleep(seconds)
+        status_led_set(False)
+    threading.Thread(target=_pulse, daemon=True).start()
+
+
+def status_led_flash(times=3, interval=0.1):
+    """Flash the status LED."""
+    if status_led_pin is None:
+        return
+    def _flash():
+        for _ in range(times):
+            status_led_set(True)
+            time.sleep(interval)
+            status_led_set(False)
+            time.sleep(interval)
+    threading.Thread(target=_flash, daemon=True).start()
+
+
+# ============================================================
+# GATE MODE
+# ============================================================
+
+def setup_gate_io(cfg):
+    """Set up gate input/output GPIO pins from config."""
+    global gate_enabled, gate_config, gate_input_pins, gate_output_pins, gate_stop_event
+    gate_config = cfg or {}
+    gate_input_pins = {}
+    gate_output_pins = {}
+    gate_stop_event = threading.Event()
+
+    if not gate_config:
+        gate_enabled = False
+        return
+
+    gate_enabled = True
+
+    # Set up output pins (open/stop/close)
+    outputs = gate_config.get('outputs', {})
+    for name in ('open', 'stop', 'close'):
+        entry = outputs.get(name) or {}
+        if not entry.get('enabled'):
+            continue
+        pin = entry.get('pin')
+        if not pin:
+            continue
+        pin = int(pin)
+        gate_output_pins[name] = pin
+        GPIO.setup(pin, GPIO.OUT)
+        # Initial state = inactive
+        active = 1 if entry.get('active_high', True) else 0
+        GPIO.output(pin, active ^ 1)
+        debug(f"Gate output '{name}' on GPIO {pin}")
+
+    # Set up input pins (open/stop/close) with debounce + triple-tap detection
+    inputs = gate_config.get('inputs', {})
+    advanced = gate_config.get('advanced', {})
+    debounce_ms = int(advanced.get('debounce_ms', 50))
+    pull = advanced.get('pull', 'up')
+    pull_mode = GPIO.PUD_UP if pull == 'up' else (GPIO.PUD_DOWN if pull == 'down' else GPIO.PUD_OFF)
+
+    for name in ('open', 'stop', 'close'):
+        entry = inputs.get(name) or {}
+        if not entry.get('enabled'):
+            continue
+        pin = entry.get('pin')
+        if not pin:
+            continue
+        pin = int(pin)
+        gate_input_pins[pin] = name
+        GPIO.setup(pin, GPIO.IN, pull_up_down=pull_mode)
+        # Active edge: low if pull=up (button grounds pin), high otherwise
+        edge = GPIO.FALLING if pull == 'up' else GPIO.RISING
+        GPIO.add_event_detect(pin, edge, callback=gate_input_event, bouncetime=debounce_ms)
+        debug(f"Gate input '{name}' on GPIO {pin} (pull {pull}, debounce {debounce_ms}ms)")
+
+
+def gate_input_event(channel):
+    """Handle a physical gate button press (open/stop/close)."""
+    name = gate_input_pins.get(channel)
+    if not name:
+        return
+    advanced = gate_config.get('advanced', {})
+    triple_window = float(advanced.get('triple_tap_window_ms', 2000)) / 1000.0
+    now = time.time()
+
+    # Triple-tap detection
+    state = gate_tap_state.get(name)
+    if state and now <= state['expires']:
+        state['count'] += 1
+    else:
+        state = {'count': 1, 'expires': now + triple_window}
+    state['expires'] = now + triple_window
+    gate_tap_state[name] = state
+
+    if state['count'] >= 3:
+        # Triple tap = hold action
+        report(f"Gate {name} button: triple-tap detected, entering hold")
+        gate_tap_state[name] = {'count': 0, 'expires': 0}
+        if name == 'open':
+            gate_command('open', source='button-3tap', hold_after=True)
+        elif name == 'close':
+            gate_command('close', source='button-3tap', hold_after=True)
+        elif name == 'stop':
+            gate_command('stop', source='button-3tap', hold_after=True)
+    else:
+        # Single press = normal action
+        report(f"Gate {name} button pressed")
+        gate_command(name, source='button')
+
+
+def gate_set_state(new_state, held=None):
+    """Update gate state and persist to DB on next heartbeat."""
+    global gate_state, gate_held
+    with gate_lock:
+        gate_state = new_state
+        if held is not None:
+            gate_held = held
+    debug(f"Gate state -> {new_state}" + (f" held={held}" if held is not None else ""))
+
+
+def _gate_output_active_value(name):
+    """Get the active GPIO value (0 or 1) for an output."""
+    entry = (gate_config.get('outputs', {}) or {}).get(name) or {}
+    return 1 if entry.get('active_high', True) else 0
+
+
+def _gate_output_duration(name):
+    """Get the configured hold duration for an output (seconds, default 30)."""
+    entry = (gate_config.get('outputs', {}) or {}).get(name) or {}
+    return max(0.1, float(entry.get('duration_seconds', 30)))
+
+
+def _gate_set_output(name, on):
+    """Drive a gate output GPIO on or off, respecting polarity."""
+    pin = gate_output_pins.get(name)
+    if pin is None:
+        return False
+    active = _gate_output_active_value(name)
+    GPIO.output(pin, active if on else (active ^ 1))
+    return True
+
+
+def _gate_run_output(name, transient_state):
+    """Run a gate output for its configured duration. Cuts early if stop_event is set."""
+    global gate_active_output
+    duration = _gate_output_duration(name)
+    if not _gate_set_output(name, True):
+        return
+    with gate_lock:
+        gate_active_output = name
+    gate_set_state(transient_state)
+    debug(f"Gate output '{name}' active for {duration}s")
+
+    # Wait for duration OR stop event
+    if gate_stop_event.wait(timeout=duration):
+        debug(f"Gate output '{name}' interrupted by stop")
+    _gate_set_output(name, False)
+    with gate_lock:
+        if gate_active_output == name:
+            gate_active_output = None
+    # Settle final state
+    if name == 'open':
+        gate_set_state('open')
+    elif name == 'close':
+        gate_set_state('closed')
+    else:
+        gate_set_state('stopped')
+
+
+def gate_command(cmd, source='unknown', hold_after=False):
+    """Execute a gate command. Returns True if accepted, False if blocked."""
+    global gate_active_output, gate_stop_event
+
+    if not gate_enabled:
+        return False
+
+    # Hold check (stop is always allowed)
+    if gate_held and cmd != 'stop' and cmd != 'release':
+        debug(f"Gate command '{cmd}' from {source} ignored (held)")
+        return False
+
+    if cmd == 'release':
+        gate_set_state(gate_state, held=False)
+        report(f"Gate hold released ({source})")
+        return True
+
+    if cmd == 'hold':
+        gate_set_state(gate_state, held=True)
+        report(f"Gate held in current state: {gate_state} ({source})")
+        return True
+
+    if cmd == 'stop':
+        # Cut any active output
+        if gate_active_output:
+            debug(f"Gate stop interrupting active output '{gate_active_output}'")
+            gate_stop_event.set()
+            time.sleep(0.05)  # Let the output thread react
+            gate_stop_event = threading.Event()
+        # Fire stop output if configured
+        if 'stop' in gate_output_pins:
+            threading.Thread(target=_gate_run_output, args=('stop', 'stopped'), daemon=True).start()
+        else:
+            gate_set_state('stopped')
+        if hold_after:
+            time.sleep(0.1)
+            gate_set_state('stopped', held=True)
+        report(f"Gate stop ({source})")
+        return True
+
+    if cmd in ('open', 'close'):
+        # Same-direction = ignore (let current cycle complete)
+        if gate_active_output == cmd:
+            debug(f"Gate '{cmd}' ignored — already in progress")
+            return False
+
+        # Opposite-direction = stop, brief pause, then reverse
+        if gate_active_output and gate_active_output != cmd:
+            debug(f"Gate '{cmd}' reversing from active '{gate_active_output}'")
+            gate_stop_event.set()
+            time.sleep(0.1)
+
+        # Make sure stop_event is fresh for the new run
+        gate_stop_event = threading.Event()
+
+        if cmd not in gate_output_pins:
+            debug(f"Gate '{cmd}' has no output configured")
+            return False
+
+        transient = 'opening' if cmd == 'open' else 'closing'
+
+        def _runner():
+            _gate_run_output(cmd, transient)
+            if hold_after:
+                gate_set_state(gate_state, held=True)
+
+        threading.Thread(target=_runner, daemon=True).start()
+        report(f"Gate {cmd} ({source})")
+        return True
+
+    return False
+
+
+def gate_grant_access(name):
+    """Called when a card scan or REX grants access on a gate. Triggers open output."""
+    if not gate_enabled:
+        return False
+    if gate_held:
+        report(f"Card access denied — gate is held. Master scan to release.")
+        return False
+    return gate_command('open', source=f'access:{name}')
+
+
+def apply_door_settings(door_info):
+    """Apply gate config, LED config, and persisted hold state from DB door row."""
+    global gate_state, gate_held
+    if not door_info:
+        return
+
+    # Gate config
+    is_gate = bool(door_info.get('is_gate'))
+    if is_gate:
+        cfg_str = door_info.get('gate_config')
+        cfg = None
+        if cfg_str:
+            try:
+                cfg = json.loads(cfg_str) if isinstance(cfg_str, str) else cfg_str
+            except Exception as e:
+                report(f"Failed to parse gate_config: {e}")
+        setup_gate_io(cfg)
+        # Restore persisted state
+        with gate_lock:
+            gate_state = door_info.get('gate_state') or 'idle'
+            gate_held = bool(door_info.get('gate_held'))
+        debug(f"Gate restored: state={gate_state} held={gate_held}")
+
+    # Status LED config
+    led_str = door_info.get('status_led_config')
+    led_cfg = None
+    if led_str:
+        try:
+            led_cfg = json.loads(led_str) if isinstance(led_str, str) else led_str
+        except Exception:
+            pass
+    if led_cfg:
+        setup_status_led(led_cfg)
+
+
+def _apply_global_setting(key, value):
+    """Apply a global setting fetched from the settings table."""
+    global master_scans_hold_open, master_scans_release_hold
+    try:
+        if key == 'master_scans_hold_open':
+            master_scans_hold_open = max(1, int(value))
+        elif key == 'master_scans_release_hold':
+            master_scans_release_hold = max(1, int(value))
+    except (TypeError, ValueError):
+        pass
 
 
 # ============================================================
@@ -1397,14 +1765,14 @@ def is_holiday_denied_db(cursor, now):
 
 def open_door(user_id, name, is_master=False):
     """Handle door open logic with repeat swipe detection.
-    Only master cards can toggle held-open state.
-    A single master scan releases held-open; triple scan enters it."""
+    Only master cards can toggle held-open / hold state.
+    Configurable via master_scans_hold_open / master_scans_release_hold settings."""
     global last_card, repeat_read_timeout, repeat_read_count
 
     now = time.time()
 
     with card_lock:
-        # Check for repeat swipe (3 swipes within 30 seconds = toggle lock)
+        # Track consecutive scans of the same card within 30 seconds
         if user_id == last_card and now <= repeat_read_timeout:
             repeat_read_count += 1
         else:
@@ -1412,11 +1780,33 @@ def open_door(user_id, name, is_master=False):
             repeat_read_timeout = now + 30
 
         last_card = user_id
-        current_repeat_count = repeat_read_count
+        current_repeat_count = repeat_read_count + 1  # 1-indexed scan count
 
+    # ── Status LED feedback for the access event ──
+    status_led_pulse(2)
+
+    # ── Gate mode routing ──
+    if gate_enabled:
+        if is_master and gate_held and current_repeat_count >= master_scans_release_hold:
+            # Release any hold state
+            gate_command('release', source=f'master:{name}')
+            log_door_event('lock', f"Hold released by {name}")
+            with card_lock:
+                repeat_read_count = 0
+        elif is_master and current_repeat_count >= master_scans_hold_open:
+            # Triple master scan = hold (after firing open)
+            report(f"{zone} GATE HOLD by {name}")
+            gate_command('open', source=f'master:{name}', hold_after=True)
+            log_door_event('door_held_open', f"Held by {name}")
+        else:
+            report(f"{name} granted gate access to {zone}")
+            gate_grant_access(name)
+        return
+
+    # ── Standard door behavior ──
     zone_config = config.get(zone, {})
 
-    if is_master and zone_config.get("unlocked"):
+    if is_master and zone_config.get("unlocked") and current_repeat_count >= master_scans_release_hold:
         # Single master scan while held-open -> release hold
         zone_config["unlocked"] = False
         report(f"{zone} hold released by {name}")
@@ -1424,7 +1814,7 @@ def open_door(user_id, name, is_master=False):
         log_door_event('lock', f"Hold released by {name}")
         with card_lock:
             repeat_read_count = 0
-    elif is_master and current_repeat_count >= 2:
+    elif is_master and current_repeat_count >= master_scans_hold_open:
         # Triple master scan -> enter held-open
         zone_config["unlocked"] = True
         report(f"{zone} HELD OPEN by {name}")
@@ -1450,12 +1840,18 @@ def reject_card(user_id, reason="Access denied"):
 
     report(f"Access denied at {zone} for user {user_id}: {reason}")
 
-    # Flash red LED to indicate rejection
-    for _ in range(3):
-        GPIO.output(22, 0)
-        time.sleep(0.1)
-        GPIO.output(22, 1)
-        time.sleep(0.1)
+    # Status LED flash for denied access
+    status_led_flash(times=3, interval=0.1)
+
+    # Legacy red LED on GPIO 22 (kept for backwards compat with builds that wired it up)
+    try:
+        for _ in range(3):
+            GPIO.output(22, 0)
+            time.sleep(0.1)
+            GPIO.output(22, 1)
+            time.sleep(0.1)
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -1623,9 +2019,11 @@ def send_heartbeat():
                 controller_version = %s,
                 listen_port = %s,
                 api_key = %s,
-                door_open = %s
+                door_open = %s,
+                gate_state = %s,
+                gate_held = %s
             WHERE name = %s
-        """, (myip, locked_status, held_open_val, VERSION, push_listener_port, controller_api_key, door_open_val, zone))
+        """, (myip, locked_status, held_open_val, VERSION, push_listener_port, controller_api_key, door_open_val, gate_state, 1 if gate_held else 0, zone))
 
         # Auto-register door if it doesn't exist yet
         if cursor.rowcount == 0:
@@ -1883,6 +2281,9 @@ def _get_status_dict():
         'db_connected': connected,
         'listen_port': push_listener_port,
         'door_open': door_open_val,
+        'is_gate': gate_enabled,
+        'gate_state': gate_state,
+        'gate_held': gate_held,
     }
 
 
@@ -1981,6 +2382,23 @@ def _run_push_listener(port, api_key, cert_file, key_file):
                 threading.Thread(target=sync_cache_from_server, daemon=True).start()
                 self._respond(200, {'ok': True})
 
+            elif path == '/cmd/reload-config':
+                report(f"Push: config reload requested from {client_ip}")
+                threading.Thread(target=sync_cache_from_server, daemon=True).start()
+                self._respond(200, {'ok': True, 'reloading': True})
+
+            elif path.startswith('/cmd/gate/'):
+                gate_action = path.replace('/cmd/gate/', '')
+                if gate_action not in ('open', 'close', 'stop', 'hold', 'release'):
+                    self._respond(400, {'ok': False, 'error': 'Unknown gate action'})
+                    return
+                if not gate_enabled:
+                    self._respond(400, {'ok': False, 'error': 'Door is not configured as a gate'})
+                    return
+                report(f"Push: gate/{gate_action} from {client_ip}")
+                ok = gate_command(gate_action, source=f'push:{client_ip}')
+                self._respond(200, {'ok': ok, 'gate_state': gate_state, 'gate_held': gate_held})
+
             elif path == '/ping':
                 self._respond(200, _get_status_dict())
 
@@ -2013,6 +2431,8 @@ def _run_push_listener(port, api_key, cert_file, key_file):
         def process_request_thread(self, request, client_address):
             try:
                 self.finish_request(request, client_address)
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                debug(f"Push listener: client {client_address[0]} disconnected ({type(e).__name__})")
             except Exception:
                 self.handle_error(request, client_address)
             finally:

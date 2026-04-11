@@ -177,6 +177,144 @@ function require_csrf() {
 }
 
 // ──────────────────────────────────────────────
+// GPIO pin reservation helpers (gate/LED config)
+// ──────────────────────────────────────────────
+
+/**
+ * Returns a list of GPIO pins reserved by hardware features on a door.
+ * Used by the pin conflict checker and config validators.
+ *
+ * @param array $door  The door row from the doors table
+ * @param array|null $override_input  Optional input data being validated (so we check pending values, not stored ones)
+ * @return array Map of pin number => purpose string
+ */
+function get_reserved_pins(array $door, ?array $override_input = null): array {
+    $reserved = [];
+
+    // Reader pins
+    $reader_type = $override_input['reader_type'] ?? $door['reader_type'] ?? 'wiegand';
+    if ($reader_type === 'wiegand') {
+        // Wiegand DATA0/DATA1 — read from gate_config or default 24/23
+        // For now, hardcode the typical defaults; the controller config.json holds the real values
+        $reserved[24] = 'Wiegand DATA0';
+        $reserved[23] = 'Wiegand DATA1';
+    } elseif ($reader_type === 'osdp') {
+        $reserved[14] = 'OSDP UART TX';
+        $reserved[15] = 'OSDP UART RX';
+    } elseif ($reader_type === 'nfc_pn532') {
+        $reserved[2] = 'I2C SDA (NFC PN532)';
+        $reserved[3] = 'I2C SCL (NFC PN532)';
+    } elseif ($reader_type === 'nfc_mfrc522') {
+        $reserved[8] = 'SPI CE0 (MFRC522)';
+        $reserved[9] = 'SPI MISO (MFRC522)';
+        $reserved[10] = 'SPI MOSI (MFRC522)';
+        $reserved[11] = 'SPI SCLK (MFRC522)';
+        $reserved[25] = 'MFRC522 Reset';
+    }
+
+    // Door sensor
+    $sensor = array_key_exists('door_sensor_gpio', $override_input ?? [])
+        ? $override_input['door_sensor_gpio']
+        : ($door['door_sensor_gpio'] ?? null);
+    if ($sensor !== null && $sensor !== '' && (int)$sensor > 0) {
+        $reserved[(int)$sensor] = 'Door sensor';
+    }
+
+    // Lock relay (only if NOT in gate mode)
+    $is_gate = array_key_exists('is_gate', $override_input ?? [])
+        ? !empty($override_input['is_gate'])
+        : !empty($door['is_gate']);
+    if (!$is_gate) {
+        // The latch_gpio lives in the controller config.json (default 18)
+        $reserved[18] = 'Lock relay';
+    }
+
+    return $reserved;
+}
+
+/**
+ * Validate gate config doesn't double-assign pins or conflict with reader/sensor pins.
+ * Returns null on success, error message on failure.
+ */
+function validate_gate_pins(PDO $pdo, string $door_name, array $cfg, array $input): ?string {
+    $stmt = $pdo->prepare("SELECT * FROM doors WHERE name = ?");
+    $stmt->execute([$door_name]);
+    $door = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$door) return 'Door not found';
+
+    $reserved = get_reserved_pins($door, $input);
+    $used = [];
+
+    $sections = ['inputs' => ['open', 'stop', 'close'], 'outputs' => ['open', 'stop', 'close']];
+    foreach ($sections as $section => $names) {
+        foreach ($names as $name) {
+            $entry = $cfg[$section][$name] ?? null;
+            if (!$entry || empty($entry['enabled'])) continue;
+            $pin = $entry['pin'] ?? null;
+            if ($pin === null || $pin === '') continue;
+            $pin = (int)$pin;
+            if ($pin <= 0 || $pin > 27) return "Invalid pin number for gate $section.$name: $pin";
+            if (isset($reserved[$pin])) return "GPIO $pin is already used by {$reserved[$pin]} (gate $section.$name)";
+            if (isset($used[$pin])) return "GPIO $pin assigned to multiple gate features ({$used[$pin]} and $section.$name)";
+            $used[$pin] = "$section.$name";
+        }
+    }
+
+    // Also check status_led_config doesn't conflict
+    $led_pin = null;
+    if (array_key_exists('status_led_config', $input) && is_array($input['status_led_config'])) {
+        if (!empty($input['status_led_config']['enabled'])) {
+            $led_pin = (int)($input['status_led_config']['pin'] ?? 0);
+        }
+    } elseif (!empty($door['status_led_config'])) {
+        $led = json_decode($door['status_led_config'], true);
+        if (!empty($led['enabled'])) $led_pin = (int)($led['pin'] ?? 0);
+    }
+    if ($led_pin && isset($used[$led_pin])) {
+        return "GPIO $led_pin assigned to status LED conflicts with gate {$used[$led_pin]}";
+    }
+
+    return null;
+}
+
+/**
+ * Validate status LED pin doesn't conflict.
+ */
+function validate_status_led_pin(PDO $pdo, string $door_name, array $cfg, array $input): ?string {
+    if (empty($cfg['enabled'])) return null;
+    $pin = (int)($cfg['pin'] ?? 0);
+    if ($pin <= 0 || $pin > 27) return "Invalid pin number for status LED: $pin";
+
+    $stmt = $pdo->prepare("SELECT * FROM doors WHERE name = ?");
+    $stmt->execute([$door_name]);
+    $door = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$door) return 'Door not found';
+
+    $reserved = get_reserved_pins($door, $input);
+    if (isset($reserved[$pin])) return "GPIO $pin is already used by {$reserved[$pin]}";
+
+    // Check gate config
+    $gate_cfg = null;
+    if (array_key_exists('gate_config', $input) && is_array($input['gate_config'])) {
+        $gate_cfg = $input['gate_config'];
+    } elseif (!empty($door['gate_config'])) {
+        $gate_cfg = json_decode($door['gate_config'], true);
+    }
+    if ($gate_cfg) {
+        foreach (['inputs', 'outputs'] as $section) {
+            foreach (['open', 'stop', 'close'] as $name) {
+                $entry = $gate_cfg[$section][$name] ?? null;
+                if ($entry && !empty($entry['enabled']) && (int)($entry['pin'] ?? 0) === $pin) {
+                    return "GPIO $pin is already used by gate $section.$name";
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
+// ──────────────────────────────────────────────
 // AUTH routes (public login, protected others)
 // ──────────────────────────────────────────────
 if ($resource === 'auth') {
@@ -395,6 +533,11 @@ if ($resource === 'doors') {
             $d['door_sensor_gpio'] = $d['door_sensor_gpio'] !== null ? (int)$d['door_sensor_gpio'] : null;
             $d['door_open'] = $d['door_open'] !== null ? (int)$d['door_open'] : null;
             $d['door_sensor_invert'] = (int)($d['door_sensor_invert'] ?? 0);
+            $d['is_gate'] = (int)($d['is_gate'] ?? 0);
+            $d['gate_state'] = $d['gate_state'] ?? 'idle';
+            $d['gate_held'] = (int)($d['gate_held'] ?? 0);
+            $d['gate_config'] = !empty($d['gate_config']) ? json_decode($d['gate_config'], true) : null;
+            $d['status_led_config'] = !empty($d['status_led_config']) ? json_decode($d['status_led_config'], true) : null;
             unset($d['api_key']); // Never expose API key to browser
         }
         unset($d);
@@ -435,8 +578,52 @@ if ($resource === 'doors') {
         $door['door_sensor_gpio'] = $door['door_sensor_gpio'] !== null ? (int)$door['door_sensor_gpio'] : null;
         $door['door_open'] = $door['door_open'] !== null ? (int)$door['door_open'] : null;
         $door['door_sensor_invert'] = (int)($door['door_sensor_invert'] ?? 0);
+        $door['is_gate'] = (int)($door['is_gate'] ?? 0);
+        $door['gate_state'] = $door['gate_state'] ?? 'idle';
+        $door['gate_held'] = (int)($door['gate_held'] ?? 0);
+        $door['gate_config'] = !empty($door['gate_config']) ? json_decode($door['gate_config'], true) : null;
+        $door['status_led_config'] = !empty($door['status_led_config']) ? json_decode($door['status_led_config'], true) : null;
         unset($door['api_key']);
         json_success(['door' => $door]);
+    }
+
+    // Available pins endpoint — returns GPIO pins free for assignment on this door
+    if ($method === 'GET' && $id !== null && $action === 'available-pins') {
+        require_admin_auth();
+        $door_name = urldecode($id);
+        $stmt = $pdo_access->prepare("SELECT * FROM doors WHERE name = ?");
+        $stmt->execute([$door_name]);
+        $door = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$door) json_error('Door not found', 404);
+
+        // BCM GPIO pins available on a Pi (excluding power/ground pins)
+        $all_pins = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27];
+        $reserved = get_reserved_pins($door, []);
+
+        // Add gate config pins to reserved
+        if (!empty($door['gate_config'])) {
+            $cfg = json_decode($door['gate_config'], true);
+            foreach (['inputs', 'outputs'] as $section) {
+                foreach (['open', 'stop', 'close'] as $name) {
+                    $entry = $cfg[$section][$name] ?? null;
+                    if ($entry && !empty($entry['enabled']) && !empty($entry['pin'])) {
+                        $reserved[(int)$entry['pin']] = "Gate $section.$name";
+                    }
+                }
+            }
+        }
+        if (!empty($door['status_led_config'])) {
+            $led = json_decode($door['status_led_config'], true);
+            if (!empty($led['enabled']) && !empty($led['pin'])) {
+                $reserved[(int)$led['pin']] = 'Status LED';
+            }
+        }
+
+        $available = [];
+        foreach ($all_pins as $p) {
+            if (!isset($reserved[$p])) $available[] = $p;
+        }
+        json_success(['available' => $available, 'reserved' => $reserved]);
     }
 
     if ($method === 'POST' && $id === null) {
@@ -560,11 +747,47 @@ if ($resource === 'doors') {
             $fields[] = "door_sensor_invert = ?";
             $params[] = !empty($input['door_sensor_invert']) ? 1 : 0;
         }
+        if (array_key_exists('is_gate', $input)) {
+            $fields[] = "is_gate = ?";
+            $params[] = !empty($input['is_gate']) ? 1 : 0;
+        }
+        if (array_key_exists('gate_config', $input)) {
+            $cfg = $input['gate_config'];
+            if (is_array($cfg)) {
+                // Validate pin assignments don't conflict
+                $err = validate_gate_pins($pdo_access, $door_name, $cfg, $input);
+                if ($err) json_error($err);
+                $fields[] = "gate_config = ?";
+                $params[] = json_encode($cfg);
+            } elseif ($cfg === null) {
+                $fields[] = "gate_config = ?";
+                $params[] = null;
+            }
+        }
+        if (array_key_exists('status_led_config', $input)) {
+            $cfg = $input['status_led_config'];
+            if (is_array($cfg)) {
+                $err = validate_status_led_pin($pdo_access, $door_name, $cfg, $input);
+                if ($err) json_error($err);
+                $fields[] = "status_led_config = ?";
+                $params[] = json_encode($cfg);
+            } elseif ($cfg === null) {
+                $fields[] = "status_led_config = ?";
+                $params[] = null;
+            }
+        }
 
         if (empty($fields)) json_error('No fields to update');
 
         $params[] = $door_name;
         $pdo_access->prepare("UPDATE doors SET " . implode(', ', $fields) . " WHERE name = ?")->execute($params);
+
+        // Push config change to controller if it's online (gate/LED config changes need a restart)
+        if (array_key_exists('gate_config', $input) || array_key_exists('status_led_config', $input) || array_key_exists('is_gate', $input)) {
+            require_once __DIR__ . '/includes/push.php';
+            @push_to_controller($pdo_access, $door_name, 'reload-config');
+        }
+
         log_security_event($pdo, 'door_updated', $_SESSION['user_id'], "Door updated: $door_name");
         json_success([], 'Door updated');
     }
@@ -640,6 +863,40 @@ if ($resource === 'doors') {
         $label = ($hold_action === 'hold') ? 'Hold open' : 'Release hold';
         log_security_event($pdo, 'remote_hold', $_SESSION['user_id'], "$label via API ($delivery): $door_name");
         json_success(['delivery' => $delivery], "$label command sent");
+    }
+
+    // ──────────────────────────────────────────────
+    // GATE control endpoints
+    // ──────────────────────────────────────────────
+    if ($method === 'POST' && $id !== null && in_array($action, ['gate-open','gate-close','gate-stop','gate-hold','gate-release'])) {
+        require_admin_auth();
+        require_csrf();
+        $door_name = urldecode($id);
+
+        $stmt = $pdo_access->prepare("SELECT status, is_gate FROM doors WHERE name = ?");
+        $stmt->execute([$door_name]);
+        $door = $stmt->fetch();
+        if (!$door) json_error('Door not found', 404);
+        if (empty($door['is_gate'])) json_error('This door is not configured as a gate');
+        if ($door['status'] !== 'online') json_error('Gate is not online');
+
+        // Map web action to push command
+        $cmd_map = [
+            'gate-open'    => 'gate/open',
+            'gate-close'   => 'gate/close',
+            'gate-stop'    => 'gate/stop',
+            'gate-hold'    => 'gate/hold',
+            'gate-release' => 'gate/release',
+        ];
+        $push_cmd = $cmd_map[$action];
+        $result = push_to_controller($pdo_access, $door_name, $push_cmd);
+        if (!$result['ok']) {
+            json_error('Could not reach the gate controller. Ensure it is online.');
+        }
+
+        $label = str_replace('-', ' ', $action);
+        log_security_event($pdo, 'gate_command', $_SESSION['user_id'], "$label via API: $door_name");
+        json_success([], ucfirst($label) . ' sent');
     }
 
     if ($method === 'POST' && $id !== null && $action === 'ping') {
@@ -1344,6 +1601,7 @@ if ($resource === 'settings') {
             'log_retention_days', 'timezone',
             'controller_update_url', 'default_poll_interval',
             'default_listen_port', 'push_timeout', 'push_fallback_poll_interval', 'status_check_timeout',
+            'master_scans_hold_open', 'master_scans_release_hold',
             'maintenance_mode', 'auto_backup', 'backup_retention_days',
             'auto_update_check',
         ];

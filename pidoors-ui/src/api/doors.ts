@@ -49,3 +49,18 @@ export async function pingDoor(name: string): Promise<ApiResponse & { ping?: Rec
     method: 'POST',
   });
 }
+
+export async function getAvailablePins(name: string): Promise<{ available: number[]; reserved: Record<number, string> }> {
+  return api<{ available: number[]; reserved: Record<number, string> }>(
+    `doors/${encodeURIComponent(name)}/available-pins`
+  );
+}
+
+export async function gateCommand(
+  name: string,
+  action: 'open' | 'close' | 'stop' | 'hold' | 'release'
+): Promise<ApiResponse> {
+  return api<ApiResponse>(`doors/${encodeURIComponent(name)}/gate-${action}`, {
+    method: 'POST',
+  });
+}

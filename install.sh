@@ -1169,3 +1169,25 @@ if [ "$INSTALL_SERVER" = true ]; then
     echo "    sudo nginx -t                   # Test nginx config"
 fi
 echo
+
+# Offer to start the door controller service immediately
+if [ "$INSTALL_DOOR" = true ]; then
+    if ! systemctl is-active --quiet pidoors; then
+        read -p "  Start the door controller now? (Y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            systemctl start pidoors
+            sleep 2
+            if systemctl is-active --quiet pidoors; then
+                ok "pidoors service started"
+                echo
+                info "Watching logs for 5 seconds (Ctrl+C to skip)..."
+                timeout 5 journalctl -u pidoors -n 20 --no-pager 2>/dev/null || true
+            else
+                fail "pidoors service failed to start"
+                echo "  Check logs: sudo journalctl -u pidoors -n 50"
+            fi
+            echo
+        fi
+    fi
+fi

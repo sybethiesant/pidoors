@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.2-green)
+![Version](https://img.shields.io/badge/version-0.3.3-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -650,7 +650,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.2** - Pre-release
+**Current Version: 0.3.3** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -664,6 +664,18 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.3.3 (April 2026)
+- **Gate mode** — toggle on the door edit page to convert a door into a gate with open/close/stop inputs and outputs
+- **Configurable gate I/O** — each input/output is optional with assignable GPIO pin, hi/lo polarity, and (for outputs) hold duration
+- **Triple-tap hold** — physical open/close/stop buttons enter hold-current-state when triple-tapped within the configured window
+- **Gate state reporting** — controller reports current gate state (idle/opening/closing/stopped/open/closed/held) to the web UI
+- **Gate web UI** — dedicated open/close/stop/hold/release buttons on the doors page when in gate mode, with status badge
+- **Status LED feature** — universal configurable LED that lights up on access events and during hold states (works on doors and gates)
+- **Pin conflict checker** — server-side endpoint validates GPIO pin assignments don't conflict with reader, sensor, or other features
+- **Master scan settings** — configurable master scans to hold open / release hold (defaults: 3 / 1)
+- **Push timeout fix** — increased default push timeout from 3s to 5s to accommodate Pi Zero TLS handshake delays
+- **Door rename push** — when renaming a door, server pushes the new name to the controller, which updates its config and restarts
 
 ### Version 0.3.2 (April 2026)
 - **Door rename protection** — doors must be online to rename; server pushes the name change to the controller, which updates its config and restarts
