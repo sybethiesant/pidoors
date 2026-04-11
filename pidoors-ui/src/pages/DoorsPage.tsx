@@ -78,9 +78,13 @@ function DoorFormModal({
     form.door_sensor_gpio !== null && form.door_sensor_gpio !== undefined
   );
 
-  const updateGateIO = (section: 'inputs' | 'outputs', name: 'open' | 'stop' | 'close', patch: Partial<GateIO>) => {
+  const updateGateIO = (
+    section: 'inputs' | 'outputs',
+    name: 'open' | 'stop' | 'close' | 'clearance',
+    patch: Partial<GateIO>
+  ) => {
     const current = (form.gate_config || {}) as GateConfig;
-    const sectionData = { ...(current[section] || {}) };
+    const sectionData = { ...(current[section] || {}) } as Record<string, GateIO>;
     const existing = (sectionData[name] || { enabled: false, pin: null }) as GateIO;
     sectionData[name] = { ...existing, ...patch };
     setForm({ ...form, gate_config: { ...current, [section]: sectionData } });
@@ -89,6 +93,12 @@ function DoorFormModal({
   const updateAdvanced = (patch: Partial<NonNullable<GateConfig['advanced']>>) => {
     const current = (form.gate_config || {}) as GateConfig;
     setForm({ ...form, gate_config: { ...current, advanced: { ...(current.advanced || {}), ...patch } } });
+  };
+
+  const updateAutoClose = (patch: Partial<NonNullable<GateConfig['auto_close']>>) => {
+    const current = (form.gate_config || {}) as GateConfig;
+    const existing = current.auto_close || { enabled: false, delay_seconds: 30 };
+    setForm({ ...form, gate_config: { ...current, auto_close: { ...existing, ...patch } } });
   };
 
   const updateStatusLed = (patch: Partial<StatusLedConfig>) => {
@@ -104,19 +114,21 @@ function DoorFormModal({
   // Compute pins currently in use by other features in this form.
   // Pass excludeSelf to exclude the field that's calling this (so its own pin doesn't filter itself out).
   type SelfRef =
-    | { kind: 'gate'; section: 'inputs' | 'outputs'; name: 'open' | 'stop' | 'close' }
+    | { kind: 'gate'; section: 'inputs' | 'outputs'; name: 'open' | 'stop' | 'close' | 'clearance' }
     | { kind: 'led' }
     | { kind: 'sensor' };
 
   const getUsedPins = (excludeSelf?: SelfRef): Set<number> => {
     const used = new Set<number>();
     // Gate I/O
-    const sections: ('inputs' | 'outputs')[] = ['inputs', 'outputs'];
-    const names: ('open' | 'stop' | 'close')[] = ['open', 'stop', 'close'];
-    for (const section of sections) {
-      for (const name of names) {
+    const sectionMap: Record<'inputs' | 'outputs', ('open' | 'stop' | 'close' | 'clearance')[]> = {
+      inputs: ['open', 'stop', 'close', 'clearance'],
+      outputs: ['open', 'stop', 'close'],
+    };
+    for (const section of ['inputs', 'outputs'] as const) {
+      for (const name of sectionMap[section]) {
         if (excludeSelf?.kind === 'gate' && excludeSelf.section === section && excludeSelf.name === name) continue;
-        const entry = form.gate_config?.[section]?.[name] as GateIO | undefined;
+        const entry = (form.gate_config?.[section] as Record<string, GateIO> | undefined)?.[name];
         if (entry?.enabled && entry.pin != null) used.add(entry.pin);
       }
     }
@@ -170,14 +182,20 @@ function DoorFormModal({
 
   const renderGateIORow = (
     section: 'inputs' | 'outputs',
-    name: 'open' | 'stop' | 'close',
-    label: string
+    name: 'open' | 'stop' | 'close' | 'clearance',
+    label: string,
+    description?: string
   ) => {
-    const cfg = (form.gate_config?.[section]?.[name] || { enabled: false, pin: null }) as GateIO;
+    const sectionData = form.gate_config?.[section] as Record<string, GateIO> | undefined;
+    const cfg = (sectionData?.[name] || { enabled: false, pin: null }) as GateIO;
+    const isClearance = name === 'clearance';
     return (
       <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
         <label className="flex items-center justify-between gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
-          <span>{label}</span>
+          <span>
+            {label}
+            {description && <span className="ml-2 text-xs font-normal text-slate-500">{description}</span>}
+          </span>
           <input
             type="checkbox"
             checked={!!cfg.enabled}
@@ -188,11 +206,11 @@ function DoorFormModal({
         {cfg.enabled && (
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div>
-              <label className="label text-xs">Pin</label>
+              <label className="label text-xs">GPIO Pin</label>
               {renderPinSelect(cfg.pin, (v) => updateGateIO(section, name, { pin: v }), { kind: 'gate', section, name })}
             </div>
             <div>
-              <label className="label text-xs">Active</label>
+              <label className="label text-xs">Active state</label>
               <select
                 className="input"
                 value={cfg.active_high === false ? 'low' : 'high'}
@@ -213,6 +231,19 @@ function DoorFormModal({
                   value={cfg.duration_seconds ?? 30}
                   onChange={(e) => updateGateIO(section, name, { duration_seconds: parseInt(e.target.value) || 30 })}
                 />
+              </div>
+            )}
+            {isClearance && (
+              <div>
+                <label className="label text-xs">Sensor logic</label>
+                <select
+                  className="input"
+                  value={cfg.active_means_clear === false ? 'blocked' : 'clear'}
+                  onChange={(e) => updateGateIO(section, name, { active_means_clear: e.target.value === 'clear' })}
+                >
+                  <option value="clear">Active = path clear</option>
+                  <option value="blocked">Active = path blocked</option>
+                </select>
               </div>
             )}
           </div>
@@ -410,6 +441,15 @@ function DoorFormModal({
                       </div>
                     </div>
                     <div>
+                      <h4 className="mb-2 text-xs font-semibold uppercase text-slate-500">Safety sensor</h4>
+                      <div className="space-y-2">
+                        {renderGateIORow('inputs', 'clearance', 'Clearance sensor', 'beam-break / IR / laser')}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Required for auto-close. Detects whether the gate path is clear.
+                      </p>
+                    </div>
+                    <div>
                       <h4 className="mb-2 text-xs font-semibold uppercase text-slate-500">Outputs (relays to gate motor)</h4>
                       <div className="space-y-2">
                         {renderGateIORow('outputs', 'open', 'Open relay')}
@@ -417,6 +457,60 @@ function DoorFormModal({
                         {renderGateIORow('outputs', 'close', 'Close relay')}
                       </div>
                     </div>
+                    {/* Auto-close */}
+                    {(() => {
+                      const clearance = (form.gate_config?.inputs as Record<string, GateIO> | undefined)?.clearance;
+                      const clearanceConfigured = !!(clearance?.enabled && clearance.pin);
+                      const ac = form.gate_config?.auto_close || { enabled: false, delay_seconds: 30 };
+                      return (
+                        <div>
+                          <h4 className="mb-2 text-xs font-semibold uppercase text-slate-500">Auto-close</h4>
+                          <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                            <label className="flex items-center justify-between gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                              <span>
+                                Enable auto-close
+                                {!clearanceConfigured && (
+                                  <span className="ml-2 text-xs font-normal text-amber-600 dark:text-amber-400">
+                                    requires clearance sensor
+                                  </span>
+                                )}
+                              </span>
+                              <input
+                                type="checkbox"
+                                checked={!!ac.enabled && clearanceConfigured}
+                                disabled={!clearanceConfigured}
+                                onChange={(e) => updateAutoClose({ enabled: e.target.checked })}
+                                className="rounded border-slate-300"
+                              />
+                            </label>
+                            {ac.enabled && clearanceConfigured && (
+                              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <div>
+                                  <label className="label text-xs">Delay before closing (sec)</label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={3600}
+                                    className="input"
+                                    value={ac.delay_seconds ?? 30}
+                                    onChange={(e) => updateAutoClose({ delay_seconds: parseInt(e.target.value) || 30 })}
+                                  />
+                                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                    1–3600 seconds. Timer restarts if the clearance sensor detects something blocking.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+                            {!clearanceConfigured && (
+                              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                                For safety, auto-close requires a clearance sensor (beam-break, IR, or laser) installed at the gate opening.
+                                Configure and enable the clearance sensor above to enable auto-close.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {/* Advanced options */}
                     <div>
                       <button

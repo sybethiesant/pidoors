@@ -61,6 +61,15 @@ export interface GateIO {
   pin: number | null;
   active_high?: boolean;
   duration_seconds?: number;
+  // Clearance sensor only:
+  active_means_clear?: boolean;
+  pull?: 'up' | 'down' | 'none';
+  debounce_ms?: number;
+}
+
+export interface GateAutoClose {
+  enabled: boolean;
+  delay_seconds: number;
 }
 
 export interface GateConfig {
@@ -68,12 +77,14 @@ export interface GateConfig {
     open?: GateIO;
     stop?: GateIO;
     close?: GateIO;
+    clearance?: GateIO;
   };
   outputs?: {
     open?: GateIO;
     stop?: GateIO;
     close?: GateIO;
   };
+  auto_close?: GateAutoClose;
   advanced?: {
     debounce_ms?: number;
     triple_tap_window_ms?: number;

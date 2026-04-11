@@ -108,9 +108,12 @@ gate_held = False              # True = ignore movement commands until released
 gate_config = {}               # Loaded from DB doors.gate_config
 gate_active_output = None      # Currently active output ('open'/'close'/'stop'/None)
 gate_stop_event = None         # threading.Event used to interrupt active output
-gate_input_pins = {}           # Map of pin number -> input name ('open'/'stop'/'close')
+gate_input_pins = {}           # Map of pin number -> input name ('open'/'stop'/'close'/'clearance')
 gate_output_pins = {}          # Map of output name -> pin number
 gate_tap_state = {}            # Per-input tap counter state: {name: {'count':n, 'expires':t}}
+gate_clearance_pin = None      # Optional clearance sensor GPIO pin (None = not configured)
+gate_clearance_clear = True    # True = path is clear, False = something is blocking
+gate_auto_close_timer = None   # threading.Timer for auto-close countdown
 
 # Status LED state
 status_led_pin = None          # Configured LED pin (None = disabled)
@@ -945,10 +948,13 @@ def status_led_flash(times=3, interval=0.1):
 def setup_gate_io(cfg):
     """Set up gate input/output GPIO pins from config."""
     global gate_enabled, gate_config, gate_input_pins, gate_output_pins, gate_stop_event
+    global gate_clearance_pin, gate_clearance_clear
     gate_config = cfg or {}
     gate_input_pins = {}
     gate_output_pins = {}
     gate_stop_event = threading.Event()
+    gate_clearance_pin = None
+    gate_clearance_clear = True
 
     if not gate_config:
         gate_enabled = False
@@ -994,6 +1000,120 @@ def setup_gate_io(cfg):
         edge = GPIO.FALLING if pull == 'up' else GPIO.RISING
         GPIO.add_event_detect(pin, edge, callback=gate_input_event, bouncetime=debounce_ms)
         debug(f"Gate input '{name}' on GPIO {pin} (pull {pull}, debounce {debounce_ms}ms)")
+
+    # Set up clearance sensor input (optional, used for auto-close safety)
+    clearance = inputs.get('clearance') or {}
+    if clearance.get('enabled'):
+        pin = clearance.get('pin')
+        if pin:
+            pin = int(pin)
+            gate_clearance_pin = pin
+            # Clearance sensor uses its own pull mode (it's a sensor, not a button)
+            c_pull = clearance.get('pull', 'up')
+            c_pull_mode = GPIO.PUD_UP if c_pull == 'up' else (GPIO.PUD_DOWN if c_pull == 'down' else GPIO.PUD_OFF)
+            GPIO.setup(pin, GPIO.IN, pull_up_down=c_pull_mode)
+            # "active means clear" semantics: if true, sensor active = path clear
+            # Most beam-break sensors output HIGH when clear, LOW when broken
+            active_clear = clearance.get('active_means_clear', True)
+            active_high = clearance.get('active_high', True)
+            current_raw = GPIO.input(pin) == GPIO.HIGH
+            # Map raw to active: active_high inverts if needed
+            is_active = current_raw if active_high else not current_raw
+            gate_clearance_clear = is_active if active_clear else not is_active
+            GPIO.add_event_detect(pin, GPIO.BOTH, callback=gate_clearance_event,
+                                 bouncetime=int(clearance.get('debounce_ms', 50)))
+            debug(f"Gate clearance sensor on GPIO {pin} (clear={gate_clearance_clear})")
+
+
+def gate_clearance_event(channel):
+    """Handle clearance sensor state change. Cancels or restarts auto-close timer."""
+    global gate_clearance_clear
+    if channel != gate_clearance_pin:
+        return
+    clearance = (gate_config.get('inputs', {}) or {}).get('clearance') or {}
+    active_clear = clearance.get('active_means_clear', True)
+    active_high = clearance.get('active_high', True)
+    raw = GPIO.input(channel) == GPIO.HIGH
+    is_active = raw if active_high else not raw
+    new_state = is_active if active_clear else not is_active
+    if new_state == gate_clearance_clear:
+        return
+    gate_clearance_clear = new_state
+    if new_state:
+        report("Gate clearance: path is clear")
+        # If gate is open and auto-close is configured, start the timer
+        _maybe_start_auto_close()
+    else:
+        report("Gate clearance: path is BLOCKED")
+        # Cancel any pending auto-close — something is in the way
+        _cancel_auto_close()
+
+
+def _cancel_auto_close():
+    """Cancel any pending auto-close timer."""
+    global gate_auto_close_timer
+    if gate_auto_close_timer is not None:
+        try:
+            gate_auto_close_timer.cancel()
+        except Exception:
+            pass
+        gate_auto_close_timer = None
+        debug("Auto-close timer cancelled")
+
+
+def _maybe_start_auto_close():
+    """Start the auto-close timer if conditions are met."""
+    global gate_auto_close_timer
+
+    # Only auto-close from the 'open' state
+    if gate_state != 'open':
+        return
+    # Held state suppresses auto-close
+    if gate_held:
+        return
+    # Auto-close must be enabled in config
+    auto_close = (gate_config.get('auto_close') or {})
+    if not auto_close.get('enabled'):
+        return
+    # Mandatory: clearance sensor must be configured
+    if gate_clearance_pin is None:
+        debug("Auto-close enabled but no clearance sensor — refusing to auto-close")
+        return
+    # Clearance must be currently clear
+    if not gate_clearance_clear:
+        debug("Auto-close pending: path is blocked")
+        return
+    # An open output must be configured
+    if 'close' not in gate_output_pins:
+        debug("Auto-close skipped: no close output configured")
+        return
+
+    # Cancel any existing timer first
+    _cancel_auto_close()
+
+    delay = float(auto_close.get('delay_seconds', 30))
+    delay = max(1.0, min(3600.0, delay))  # clamp 1s..1h
+    debug(f"Auto-close timer started: {delay}s")
+
+    def _fire():
+        global gate_auto_close_timer
+        gate_auto_close_timer = None
+        # Re-check all conditions at fire time
+        if gate_state != 'open':
+            debug("Auto-close fired but gate not in 'open' state — skipping")
+            return
+        if gate_held:
+            debug("Auto-close fired but gate is held — skipping")
+            return
+        if not gate_clearance_clear:
+            debug("Auto-close fired but path is blocked — skipping")
+            return
+        report("Auto-close: closing gate")
+        gate_command('close', source='auto-close')
+
+    gate_auto_close_timer = threading.Timer(delay, _fire)
+    gate_auto_close_timer.daemon = True
+    gate_auto_close_timer.start()
 
 
 def gate_input_event(channel):
@@ -1074,7 +1194,8 @@ def _gate_run_output(name, transient_state):
     debug(f"Gate output '{name}' active for {duration}s")
 
     # Wait for duration OR stop event
-    if gate_stop_event.wait(timeout=duration):
+    interrupted = gate_stop_event.wait(timeout=duration)
+    if interrupted:
         debug(f"Gate output '{name}' interrupted by stop")
     _gate_set_output(name, False)
     with gate_lock:
@@ -1082,9 +1203,12 @@ def _gate_run_output(name, transient_state):
             gate_active_output = None
     # Settle final state
     if name == 'open':
-        gate_set_state('open')
+        gate_set_state('stopped' if interrupted else 'open')
+        # Start auto-close timer if open completed normally and conditions are met
+        if not interrupted:
+            _maybe_start_auto_close()
     elif name == 'close':
-        gate_set_state('closed')
+        gate_set_state('stopped' if interrupted else 'closed')
     else:
         gate_set_state('stopped')
 
@@ -1098,6 +1222,12 @@ def gate_command(cmd, source='unknown', hold_after=False):
     if not gate_enabled:
         return False, 'not_a_gate'
 
+    # Any command other than 'release' (which un-holds and is otherwise a no-op)
+    # cancels a pending auto-close. The auto-close is meant to fire only when
+    # the user has stopped interacting with the gate.
+    if cmd != 'release':
+        _cancel_auto_close()
+
     # Hold check (stop and release are always allowed)
     if gate_held and cmd != 'stop' and cmd != 'release':
         debug(f"Gate command '{cmd}' from {source} ignored (held)")
@@ -1106,6 +1236,9 @@ def gate_command(cmd, source='unknown', hold_after=False):
     if cmd == 'release':
         gate_set_state(gate_state, held=False)
         report(f"Gate hold released ({source})")
+        # Releasing hold while gate is open should restart the auto-close timer
+        if gate_state == 'open':
+            _maybe_start_auto_close()
         return True, None
 
     if cmd == 'hold':

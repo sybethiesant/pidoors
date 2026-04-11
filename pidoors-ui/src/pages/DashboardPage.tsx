@@ -10,9 +10,12 @@ import {
   LockOpen,
   Wifi,
   WifiOff,
+  ArrowUp,
+  ArrowDown,
+  Square,
 } from 'lucide-react';
 import { getDashboard } from '../api/dashboard';
-import { unlockDoor, holdDoor } from '../api/doors';
+import { unlockDoor, holdDoor, gateCommand } from '../api/doors';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 import {
@@ -101,6 +104,16 @@ function DoorStatusItem({
     }
   };
 
+  const handleGate = async (action: 'open' | 'close' | 'stop' | 'hold' | 'release') => {
+    try {
+      await gateCommand(door.name, action);
+      toast.success(`${door.name}: ${action}`);
+      onAction();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Gate command failed');
+    }
+  };
+
   const statusIcon =
     door.status === 'online' ? (
       <Wifi className="h-3.5 w-3.5 text-emerald-500" />
@@ -108,16 +121,29 @@ function DoorStatusItem({
       <WifiOff className="h-3.5 w-3.5 text-red-500" />
     );
 
-  let lockBadge = null;
+  const isGate = !!door.is_gate;
+  let stateBadge = null;
   if (door.status === 'online') {
-    if (door.held_open) {
-      lockBadge = <span className="badge badge-warning">Held Open</span>;
+    if (isGate) {
+      const cls =
+        door.gate_state === 'open' ? 'badge-warning' :
+        door.gate_state === 'closed' ? 'badge-success' :
+        door.gate_state === 'opening' || door.gate_state === 'closing' ? 'badge-info' :
+        door.gate_state === 'stopped' ? 'badge-danger' : 'badge-secondary';
+      stateBadge = (
+        <>
+          <span className={`badge ${cls}`}>Gate: {door.gate_state}</span>
+          {door.gate_held ? <span className="badge badge-warning">Held</span> : null}
+        </>
+      );
+    } else if (door.held_open) {
+      stateBadge = <span className="badge badge-warning">Held Open</span>;
     } else if (door.unlock_requested) {
-      lockBadge = <span className="badge badge-info">Unlocking</span>;
+      stateBadge = <span className="badge badge-info">Unlocking</span>;
     } else if (door.locked) {
-      lockBadge = <span className="badge badge-success">Locked</span>;
+      stateBadge = <span className="badge badge-success">Locked</span>;
     } else {
-      lockBadge = <span className="badge badge-warning">Unlocked</span>;
+      stateBadge = <span className="badge badge-warning">Unlocked</span>;
     }
   }
 
@@ -135,12 +161,12 @@ function DoorStatusItem({
       </div>
 
       <div className="flex items-center gap-2 flex-wrap justify-end">
-        {lockBadge}
+        {stateBadge}
         {door.status === 'online' && door.door_sensor_gpio !== null && (
           door.door_open === 1 ? (
-            <span className="badge badge-warning">Open</span>
+            <span className="badge badge-warning">Sensor: Open</span>
           ) : door.door_open === 0 ? (
-            <span className="badge badge-success">Closed</span>
+            <span className="badge badge-success">Sensor: Closed</span>
           ) : (
             <span className="badge badge-secondary">Sensor N/A</span>
           )
@@ -151,7 +177,44 @@ function DoorStatusItem({
           <span className="mr-1">{statusIcon}</span>
           {door.status.charAt(0).toUpperCase() + door.status.slice(1)}
         </span>
-        {door.status === 'online' && isAdmin && !door.unlock_requested && (
+        {door.status === 'online' && isAdmin && isGate && (
+          <>
+            <button
+              onClick={() => handleGate('open')}
+              className="btn btn-sm btn-success"
+              disabled={!!door.gate_held}
+              title={door.gate_held ? 'Release hold first' : 'Open gate'}
+            >
+              <ArrowUp className="h-3 w-3" />
+              Open
+            </button>
+            <button onClick={() => handleGate('stop')} className="btn btn-sm btn-warning">
+              <Square className="h-3 w-3" />
+              Stop
+            </button>
+            <button
+              onClick={() => handleGate('close')}
+              className="btn btn-sm btn-secondary"
+              disabled={!!door.gate_held}
+              title={door.gate_held ? 'Release hold first' : 'Close gate'}
+            >
+              <ArrowDown className="h-3 w-3" />
+              Close
+            </button>
+            {door.gate_held ? (
+              <button onClick={() => handleGate('release')} className="btn btn-sm btn-danger">
+                <LockOpen className="h-3 w-3" />
+                Release
+              </button>
+            ) : (
+              <button onClick={() => handleGate('hold')} className="btn btn-sm btn-ghost">
+                <Lock className="h-3 w-3" />
+                Hold
+              </button>
+            )}
+          </>
+        )}
+        {door.status === 'online' && isAdmin && !isGate && !door.unlock_requested && (
           <>
             {door.held_open ? (
               <button

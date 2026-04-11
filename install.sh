@@ -509,6 +509,13 @@ EOF
     chown -R www-data:www-data "$WEB_ROOT"
     chmod -R 755 "$WEB_ROOT"
 
+    # Custom session save path so Debian's phpsessionclean cron doesn't sweep
+    # our session files prematurely (it ignores app-level session_timeout setting)
+    mkdir -p /var/lib/php/pidoors-sessions
+    chown www-data:www-data /var/lib/php/pidoors-sessions
+    chmod 700 /var/lib/php/pidoors-sessions
+    ok "Custom session save path created"
+
     # Configure Nginx
     info "Configuring Nginx..."
     if [ -f "$SCRIPT_DIR/nginx/pidoors.conf" ]; then

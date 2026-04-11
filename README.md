@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.7-green)
+![Version](https://img.shields.io/badge/version-0.3.8-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -692,7 +692,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.7** - Pre-release
+**Current Version: 0.3.8** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -706,6 +706,14 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.3.8 (April 2026)
+- **Gate auto-close** — gates can now auto-close after opening, with a configurable delay (1–3600 seconds). Mandatory clearance sensor input ensures the gate won't auto-close on a person, vehicle, or obstruction.
+- **Clearance sensor input** — new optional 4th gate input for beam-break, IR, or laser clearance sensors at the gate opening. Configurable polarity and "active means clear/blocked" logic.
+- **Auto-close safety** — UI greys out the auto-close toggle until a clearance sensor is configured. The API rejects auto-close enable requests without a sensor. The controller refuses to fire auto-close if the sensor is missing or the path is blocked.
+- **Auto-close interruption** — any manual command (open/close/stop/hold) cancels a pending auto-close timer. The clearance sensor breaking restarts the timer when clear again.
+- **Dashboard gate controls** — the dashboard's door status panel now mirrors the doors page for gates: gate state badge, held badge, and Open/Stop/Close/Hold/Release buttons.
+- **Session timeout fix** — `session_timeout = 0` (unlimited) now actually works. Sessions are stored in a custom save path to bypass Debian's `phpsessionclean` cron, which would otherwise delete idle sessions after 24 minutes regardless of the app-level setting.
 
 ### Version 0.3.7 (April 2026)
 - **Gate command errors are actionable** — instead of the generic "Could not reach the gate controller" message, the web UI now shows specific reasons: "Gate is held. Release the hold first.", "No output pin is configured for this direction.", "Gate is already opening.", etc.

@@ -245,7 +245,7 @@ function validate_gate_pins(PDO $pdo, string $door_name, array $cfg, array $inpu
     $reserved = get_reserved_pins($door, $input);
     $used = [];
 
-    $sections = ['inputs' => ['open', 'stop', 'close'], 'outputs' => ['open', 'stop', 'close']];
+    $sections = ['inputs' => ['open', 'stop', 'close', 'clearance'], 'outputs' => ['open', 'stop', 'close']];
     foreach ($sections as $section => $names) {
         foreach ($names as $name) {
             $entry = $cfg[$section][$name] ?? null;
@@ -257,6 +257,20 @@ function validate_gate_pins(PDO $pdo, string $door_name, array $cfg, array $inpu
             if (isset($reserved[$pin])) return "GPIO $pin is already used by {$reserved[$pin]} (gate $section.$name)";
             if (isset($used[$pin])) return "GPIO $pin assigned to multiple gate features ({$used[$pin]} and $section.$name)";
             $used[$pin] = "$section.$name";
+        }
+    }
+
+    // Auto-close validation: clearance sensor is mandatory if auto-close is enabled
+    $auto = $cfg['auto_close'] ?? null;
+    if ($auto && !empty($auto['enabled'])) {
+        $clearance = $cfg['inputs']['clearance'] ?? null;
+        if (!$clearance || empty($clearance['enabled']) || empty($clearance['pin'])) {
+            return 'Auto-close requires a clearance sensor input. Configure and enable the clearance sensor first.';
+        }
+        // Validate delay is reasonable
+        $delay = (int)($auto['delay_seconds'] ?? 0);
+        if ($delay < 1 || $delay > 3600) {
+            return 'Auto-close delay must be between 1 and 3600 seconds.';
         }
     }
 
@@ -301,8 +315,12 @@ function validate_status_led_pin(PDO $pdo, string $door_name, array $cfg, array 
         $gate_cfg = json_decode($door['gate_config'], true);
     }
     if ($gate_cfg) {
-        foreach (['inputs', 'outputs'] as $section) {
-            foreach (['open', 'stop', 'close'] as $name) {
+        $section_names = [
+            'inputs' => ['open', 'stop', 'close', 'clearance'],
+            'outputs' => ['open', 'stop', 'close'],
+        ];
+        foreach ($section_names as $section => $names) {
+            foreach ($names as $name) {
                 $entry = $gate_cfg[$section][$name] ?? null;
                 if ($entry && !empty($entry['enabled']) && (int)($entry['pin'] ?? 0) === $pin) {
                     return "GPIO $pin is already used by gate $section.$name";
@@ -460,7 +478,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
         $today_granted = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 1")->fetchColumn();
         $today_denied = (int)$pdo_access->query("SELECT COUNT(*) FROM logs WHERE DATE(Date) = CURDATE() AND Granted = 0")->fetchColumn();
 
-        $doors = $pdo_access->query("SELECT name, location, status, locked, held_open, hold_requested, unlock_requested, push_available, door_sensor_gpio, door_open, door_sensor_invert FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+        $doors = $pdo_access->query("SELECT name, location, status, locked, held_open, hold_requested, unlock_requested, push_available, door_sensor_gpio, door_open, door_sensor_invert, is_gate, gate_state, gate_held FROM doors ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
         // Cast numeric fields
         foreach ($doors as &$d) {
             $d['locked'] = (int)$d['locked'];
@@ -471,6 +489,9 @@ if ($resource === 'dashboard' && $method === 'GET') {
             $d['door_sensor_gpio'] = $d['door_sensor_gpio'] !== null ? (int)$d['door_sensor_gpio'] : null;
             $d['door_open'] = $d['door_open'] !== null ? (int)$d['door_open'] : null;
             $d['door_sensor_invert'] = (int)($d['door_sensor_invert'] ?? 0);
+            $d['is_gate'] = (int)($d['is_gate'] ?? 0);
+            $d['gate_state'] = $d['gate_state'] ?? 'idle';
+            $d['gate_held'] = (int)($d['gate_held'] ?? 0);
         }
         unset($d);
 
@@ -605,8 +626,12 @@ if ($resource === 'doors') {
         // Add gate config pins to reserved
         if (!empty($door['gate_config'])) {
             $cfg = json_decode($door['gate_config'], true);
-            foreach (['inputs', 'outputs'] as $section) {
-                foreach (['open', 'stop', 'close'] as $name) {
+            $section_names = [
+                'inputs' => ['open', 'stop', 'close', 'clearance'],
+                'outputs' => ['open', 'stop', 'close'],
+            ];
+            foreach ($section_names as $section => $names) {
+                foreach ($names as $name) {
                     $entry = $cfg[$section][$name] ?? null;
                     if ($entry && !empty($entry['enabled']) && !empty($entry['pin'])) {
                         $reserved[(int)$entry['pin']] = "Gate $section.$name";

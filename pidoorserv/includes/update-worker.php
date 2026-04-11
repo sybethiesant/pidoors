@@ -204,7 +204,10 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
     }
 
     // --- Ensure required directories ---
-    $required_dirs = ['/var/backups/pidoors' => ['owner' => 'www-data:www-data', 'mode' => '750']];
+    $required_dirs = [
+        '/var/backups/pidoors' => ['owner' => 'www-data:www-data', 'mode' => '750'],
+        '/var/lib/php/pidoors-sessions' => ['owner' => 'www-data:www-data', 'mode' => '700'],
+    ];
     foreach ($required_dirs as $dir => $opts) {
         if (!is_dir($dir)) {
             @mkdir($dir, octdec($opts['mode']), true);

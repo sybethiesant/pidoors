@@ -279,6 +279,14 @@ if [ -f /etc/nginx/sites-available/pidoors ] && [ -f "$EXTRACTED/nginx/pidoors.c
     fi
 fi
 
+# Ensure custom session save path exists (avoids Debian phpsessionclean cron)
+if [ ! -d /var/lib/php/pidoors-sessions ]; then
+    mkdir -p /var/lib/php/pidoors-sessions
+    chown www-data:www-data /var/lib/php/pidoors-sessions
+    chmod 700 /var/lib/php/pidoors-sessions
+    ok "Created custom session save path"
+fi
+
 # Install nginx upgrade helper if missing (lets web UI updates sync nginx config)
 if [ ! -f /usr/local/sbin/pidoors-nginx-upgrade ]; then
     info "Installing nginx upgrade helper..."

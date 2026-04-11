@@ -105,6 +105,41 @@ function verify_password($password, $hash) {
  */
 function secure_session_start($config) {
     if (session_status() === PHP_SESSION_NONE) {
+        // Resolve idle timeout BEFORE starting the session so we can configure
+        // PHP's session GC and cookie lifetime to match. Otherwise PHP/Debian's
+        // session cleanup cron deletes session files at 24 minutes regardless
+        // of our app-level setting, logging users out unexpectedly.
+        $idle_timeout = (int)($config['session_timeout'] ?? 3600);
+        try {
+            global $pdo_access;
+            if (isset($pdo_access)) {
+                $t_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'session_timeout'");
+                $t_stmt->execute();
+                $t_val = $t_stmt->fetchColumn();
+                if ($t_val !== false) $idle_timeout = (int)$t_val;
+            }
+        } catch (\Exception $e) { /* use config default */ }
+
+        // Configure PHP session GC. 0 = "unlimited" → use a very large value
+        // (1 year) so the GC cron never sweeps the session file.
+        $gc_lifetime = ($idle_timeout > 0) ? max($idle_timeout, 1440) : 31536000;
+        @ini_set('session.gc_maxlifetime', (string)$gc_lifetime);
+        @ini_set('session.cookie_lifetime', '0'); // session cookie until browser closes
+
+        // Use a custom save path so Debian's phpsessionclean cron (which reads
+        // session.gc_maxlifetime from the CLI config, not from our ini_set)
+        // doesn't sweep our session files prematurely. We manage GC ourselves
+        // via the app-level idle timeout check below.
+        $custom_save_path = '/var/lib/php/pidoors-sessions';
+        if (!is_dir($custom_save_path)) {
+            @mkdir($custom_save_path, 0700, true);
+            @chown($custom_save_path, 'www-data');
+            @chgrp($custom_save_path, 'www-data');
+        }
+        if (is_writable($custom_save_path)) {
+            session_save_path($custom_save_path);
+        }
+
         session_name($config['session_name']);
         $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
             || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
@@ -125,18 +160,7 @@ function secure_session_start($config) {
             $_SESSION['created'] = time();
         }
 
-        // Check session timeout (0 = unlimited / no idle timeout)
-        // Load from DB if available (overrides config.php default)
-        $idle_timeout = (int)($config['session_timeout'] ?? 3600);
-        try {
-            global $pdo_access;
-            if (isset($pdo_access)) {
-                $t_stmt = $pdo_access->prepare("SELECT setting_value FROM settings WHERE setting_key = 'session_timeout'");
-                $t_stmt->execute();
-                $t_val = $t_stmt->fetchColumn();
-                if ($t_val !== false) $idle_timeout = (int)$t_val;
-            }
-        } catch (\Exception $e) { /* use config default */ }
+        // App-level idle timeout check (0 = unlimited)
         if ($idle_timeout > 0 && isset($_SESSION['last_activity']) &&
             (time() - $_SESSION['last_activity'] > $idle_timeout)) {
             session_unset();
