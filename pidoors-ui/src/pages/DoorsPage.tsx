@@ -490,7 +490,7 @@ function DoorFormModal({
                   {renderPinSelect(
                     form.status_led_config?.pin,
                     (v) => updateStatusLed({ pin: v }),
-                    form.status_led_config?.pin || undefined
+                    { kind: 'led' }
                   )}
                 </div>
                 <div>
