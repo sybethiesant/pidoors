@@ -521,6 +521,33 @@ EOF
     systemctl reload nginx
     ok "Nginx configured"
 
+    # Sudoers: allow www-data to run the nginx config upgrade helper
+    # This lets the web UI update-worker reinstall the nginx config
+    # when a new version ships config changes.
+    cat > /usr/local/sbin/pidoors-nginx-upgrade <<'UPGRADESH'
+#!/bin/bash
+# Upgrade nginx config from the deployed web root.
+# Called by the web UI updater via sudoers. Idempotent.
+set -e
+SRC="/var/www/pidoors/nginx/pidoors.conf"
+DEST="/etc/nginx/sites-available/pidoors"
+if [ ! -f "$SRC" ]; then exit 0; fi
+PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null || echo "")
+if [ -n "$PHP_VERSION" ]; then
+    sed "s|unix:/var/run/php/php-fpm.sock|unix:/var/run/php/php${PHP_VERSION}-fpm.sock|g" "$SRC" > "$DEST"
+else
+    cp "$SRC" "$DEST"
+fi
+nginx -t > /dev/null 2>&1 && systemctl reload nginx
+UPGRADESH
+    chmod 755 /usr/local/sbin/pidoors-nginx-upgrade
+
+    cat > /etc/sudoers.d/pidoors-nginx <<SUDOEOF
+www-data ALL=(ALL) NOPASSWD: /usr/local/sbin/pidoors-nginx-upgrade
+SUDOEOF
+    chmod 440 /etc/sudoers.d/pidoors-nginx
+    ok "Nginx upgrade helper configured"
+
     # ── Admin user ──
 
     step "Server: Admin account"

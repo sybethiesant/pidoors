@@ -168,6 +168,41 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
     // Note: SSL directory permissions (/etc/mysql/ssl/) are fixed by server-update.sh
     // and install.sh which run as root. The web updater runs as www-data and cannot chown.
 
+    // --- Copy nginx config from extracted release into web root ---
+    // This gives the pidoors-nginx-upgrade helper a stable source path.
+    $nginx_release = $extracted . '/nginx/pidoors.conf';
+    $nginx_webroot_dir = $apppath . '/nginx';
+    $nginx_src = $nginx_webroot_dir . '/pidoors.conf';
+    if (file_exists($nginx_release)) {
+        if (!is_dir($nginx_webroot_dir)) @mkdir($nginx_webroot_dir, 0755, true);
+        @copy($nginx_release, $nginx_src);
+    }
+
+    // --- Upgrade nginx config if the release contains changes ---
+    // The pidoors-nginx-upgrade helper (installed by install.sh) runs as root via sudoers
+    // and reinstalls the nginx config from the deployed web root, then reloads nginx.
+    // This catches nginx config changes that ship with a release (e.g. cache headers).
+    $nginx_installed = '/etc/nginx/sites-available/pidoors';
+    if (file_exists($nginx_src) && file_exists($nginx_installed)) {
+        // Normalize the PHP-FPM socket path before comparing so we don't
+        // trigger a reload just because of the version substitution.
+        $src_content = preg_replace('|unix:/var/run/php/php[0-9.]*-fpm\.sock|', 'unix:/var/run/php/php-fpm.sock', file_get_contents($nginx_src));
+        $installed_content = preg_replace('|unix:/var/run/php/php[0-9.]*-fpm\.sock|', 'unix:/var/run/php/php-fpm.sock', file_get_contents($nginx_installed));
+        if ($src_content !== $installed_content) {
+            $helper = '/usr/local/sbin/pidoors-nginx-upgrade';
+            if (is_executable($helper)) {
+                @exec('sudo -n ' . escapeshellarg($helper) . ' 2>&1', $out, $rc);
+                if ($rc === 0) {
+                    $details[] = 'Nginx config upgraded';
+                } else {
+                    $details[] = 'Nginx config upgrade pending (run sudo /usr/local/sbin/pidoors-nginx-upgrade)';
+                }
+            } else {
+                $details[] = 'Nginx config changed but helper not installed — run the installer to add it';
+            }
+        }
+    }
+
     // --- Ensure required directories ---
     $required_dirs = ['/var/backups/pidoors' => ['owner' => 'www-data:www-data', 'mode' => '750']];
     foreach ($required_dirs as $dir => $opts) {

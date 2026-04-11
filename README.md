@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.5-green)
+![Version](https://img.shields.io/badge/version-0.3.6-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -692,7 +692,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.5** - Pre-release
+**Current Version: 0.3.6** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -706,6 +706,11 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.3.6 (April 2026)
+- **Fix**: `index.html` no longer cached by browsers — nginx now sends `Cache-Control: no-cache` for the SPA entry point so users don't see stale UI after an update. Hashed JS/CSS assets still cache for a year.
+- **Fix**: Web UI server updates now also upgrade the nginx config if it's changed (via a new root-owned helper script + sudoers entry for www-data). This deploys nginx changes like the cache-control fix without requiring shell access.
+- **Fix**: Python `SyntaxError` in the controller's rename handler (nested `global zone` declaration) that bricked the service after updating to 0.3.5.
 
 ### Version 0.3.5 (April 2026)
 - **Fix**: Door rename could corrupt `config.json` when the controller's in-memory `zone` variable fell out of sync with the on-disk config after a failed restart

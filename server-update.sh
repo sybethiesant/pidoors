@@ -257,21 +257,51 @@ if [ "$UI_DEPLOYED" = false ] && [ -d "$EXTRACTED/pidoors-ui" ] && [ -f "$EXTRAC
     fi
 fi
 
-# Upgrade nginx config if still using legacy PHP-only setup
-if [ -f /etc/nginx/sites-available/pidoors ]; then
+# Upgrade nginx config if: legacy PHP-only layout, or missing known fixes
+if [ -f /etc/nginx/sites-available/pidoors ] && [ -f "$EXTRACTED/nginx/pidoors.conf" ]; then
+    NEEDS_UPGRADE=false
     if ! grep -q "pidoors-ui" /etc/nginx/sites-available/pidoors 2>/dev/null; then
-        if [ -f "$EXTRACTED/nginx/pidoors.conf" ]; then
-            info "Upgrading Nginx config to React SPA layout..."
-            PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null || echo "")
-            if [ -n "$PHP_VERSION" ]; then
-                sed "s|unix:/var/run/php/php-fpm.sock|unix:/var/run/php/php${PHP_VERSION}-fpm.sock|g" \
-                    "$EXTRACTED/nginx/pidoors.conf" > /etc/nginx/sites-available/pidoors
-            else
-                cp "$EXTRACTED/nginx/pidoors.conf" /etc/nginx/sites-available/pidoors
-            fi
-            ok "Nginx config upgraded for React SPA"
-        fi
+        NEEDS_UPGRADE=true
+        info "Upgrading Nginx config: legacy PHP-only layout detected"
+    elif ! grep -q "location = /index.html" /etc/nginx/sites-available/pidoors 2>/dev/null; then
+        NEEDS_UPGRADE=true
+        info "Upgrading Nginx config: missing index.html no-cache block"
     fi
+    if [ "$NEEDS_UPGRADE" = true ]; then
+        PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null || echo "")
+        if [ -n "$PHP_VERSION" ]; then
+            sed "s|unix:/var/run/php/php-fpm.sock|unix:/var/run/php/php${PHP_VERSION}-fpm.sock|g" \
+                "$EXTRACTED/nginx/pidoors.conf" > /etc/nginx/sites-available/pidoors
+        else
+            cp "$EXTRACTED/nginx/pidoors.conf" /etc/nginx/sites-available/pidoors
+        fi
+        ok "Nginx config upgraded"
+    fi
+fi
+
+# Install nginx upgrade helper if missing (lets web UI updates sync nginx config)
+if [ ! -f /usr/local/sbin/pidoors-nginx-upgrade ]; then
+    info "Installing nginx upgrade helper..."
+    cat > /usr/local/sbin/pidoors-nginx-upgrade <<'UPGRADESH'
+#!/bin/bash
+set -e
+SRC="/var/www/pidoors/nginx/pidoors.conf"
+DEST="/etc/nginx/sites-available/pidoors"
+if [ ! -f "$SRC" ]; then exit 0; fi
+PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;" 2>/dev/null || echo "")
+if [ -n "$PHP_VERSION" ]; then
+    sed "s|unix:/var/run/php/php-fpm.sock|unix:/var/run/php/php${PHP_VERSION}-fpm.sock|g" "$SRC" > "$DEST"
+else
+    cp "$SRC" "$DEST"
+fi
+nginx -t > /dev/null 2>&1 && systemctl reload nginx
+UPGRADESH
+    chmod 755 /usr/local/sbin/pidoors-nginx-upgrade
+    cat > /etc/sudoers.d/pidoors-nginx <<'SUDOEOF'
+www-data ALL=(ALL) NOPASSWD: /usr/local/sbin/pidoors-nginx-upgrade
+SUDOEOF
+    chmod 440 /etc/sudoers.d/pidoors-nginx
+    ok "Nginx upgrade helper installed"
 fi
 
 # ──────────────────────────────────────────────
