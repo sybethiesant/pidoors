@@ -267,8 +267,10 @@ log "Pre-flight checks passed."
 
 # --- Self-update: replace this script with the new version FIRST ---
 # This ensures any future changes to the update process take effect
-# before the rest of the update runs.
-if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
+# before the rest of the update runs. Guarded by an env var so we
+# only self-update once per update run (prevents infinite loops if
+# sed patches cause subtle file differences).
+if [ -z "${PIDOORS_SELF_UPDATED:-}" ] && [ -f "$SRC_DIR/pidoors-update.sh" ]; then
     # Patch the incoming script for compatibility with older releases:
     # 1. Use venv Python (needed for pymysql)
     if ! grep -q '/opt/pidoors/venv/bin/python3' "$SRC_DIR/pidoors-update.sh" 2>/dev/null; then
@@ -278,15 +280,19 @@ if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
     if ! grep -q 'DETACHED=' "$SRC_DIR/pidoors-update.sh" 2>/dev/null; then
         sed -i '/^TMPDIR=.*self-update re-exec/a DETACHED="${3:-}"\n\nif [ "$DETACHED" != "detached" ] \&\& [ -z "$TMPDIR" ]; then\n    CGROUP=$(cat /proc/self/cgroup 2>/dev/null || true)\n    if echo "$CGROUP" | grep -qE "pidoors|run-p[0-9]" 2>/dev/null; then\n        exec systemd-run --unit=pidoors-update --quiet --description="PiDoors Controller Update" "$0" "$ZONE" "" "detached"\n    fi\nfi' "$SRC_DIR/pidoors-update.sh"
     fi
-    # 3. Fix /tmp usage (PrivateTmp makes it ephemeral inside pidoors.service)
-    sed -i 's|mktemp -d /tmp/pidoors-update|mktemp -d /var/cache/pidoors-update|g' "$SRC_DIR/pidoors-update.sh" 2>/dev/null || true
+    # 3. Fix /tmp usage (only if the file still references /tmp/pidoors-update)
+    if grep -q 'mktemp -d /tmp/pidoors-update' "$SRC_DIR/pidoors-update.sh" 2>/dev/null; then
+        sed -i 's|mktemp -d /tmp/pidoors-update|mktemp -d /var/cache/pidoors-update|g' "$SRC_DIR/pidoors-update.sh"
+    fi
     if ! cmp -s "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null; then
         log "Update script has changed — self-updating and re-executing..."
         cp "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh"
         chmod 755 "$INSTALL_DIR/pidoors-update.sh"
         chown root:root "$INSTALL_DIR/pidoors-update.sh"
         # Re-run the new script with the same arguments, passing the
-        # already-downloaded temp dir to skip re-downloading
+        # already-downloaded temp dir to skip re-downloading.
+        # Set PIDOORS_SELF_UPDATED so the new script doesn't loop.
+        export PIDOORS_SELF_UPDATED=1
         exec "$INSTALL_DIR/pidoors-update.sh" "$ZONE" "$TMPDIR" "$DETACHED"
     fi
 fi
@@ -473,11 +479,20 @@ fi
 # Add api_key and listen_port to config.json if missing
 if [ -f "$CONF_DIR/config.json" ]; then
     /opt/pidoors/venv/bin/python3 -c "
-import json, os, subprocess
+import json, os, subprocess, sys
 config_path = '$CONF_DIR/config.json'
-zone = '$ZONE'
+# Read zone from zone.json (source of truth) instead of relying on the DB name
+# passed via command-line — they can disagree after a partial rename
+zone_file = os.path.join('$CONF_DIR', 'zone.json')
+try:
+    zone = json.load(open(zone_file)).get('zone')
+except Exception:
+    zone = '$ZONE'
 cfg = json.load(open(config_path))
-zc = cfg.get(zone, {})
+if zone not in cfg:
+    print(f'ERROR: zone \\'{zone}\\' not found in config.json — refusing to create empty entry')
+    sys.exit(0)
+zc = cfg[zone]
 changed = False
 if 'api_key' not in zc:
     zc['api_key'] = subprocess.check_output(['openssl', 'rand', '-hex', '32']).decode().strip()

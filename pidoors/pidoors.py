@@ -2313,6 +2313,7 @@ def _run_push_listener(port, api_key, cert_file, key_file):
             self.wfile.write(payload)
 
         def do_POST(self):
+            global zone
             if not self._check_auth():
                 return
 
@@ -2353,21 +2354,36 @@ def _run_push_listener(port, api_key, cert_file, key_file):
                 if not new_name:
                     self._respond(400, {'ok': False, 'error': 'new_name required'})
                     return
-                report(f"Push: rename to '{new_name}' from {client_ip}")
+                # No-op if already using this name
+                if new_name == zone:
+                    self._respond(200, {'ok': True, 'old_name': zone, 'new_name': new_name, 'no_change': True})
+                    return
+                report(f"Push: rename from '{zone}' to '{new_name}' from {client_ip}")
                 try:
+                    old_zone = zone
+                    # Update config.json — move the zone key (must happen before zone.json
+                    # is written, so if we crash we can detect the mismatch)
+                    config_file = os.path.join(CONF_DIR, 'config.json')
+                    cfg = load_json(config_file)
+                    if old_zone in cfg:
+                        cfg[new_name] = cfg.pop(old_zone)
+                    elif new_name not in cfg:
+                        # Old zone missing — refuse to create an empty new entry
+                        raise RuntimeError(f"Zone '{old_zone}' not found in config.json")
+                    save_json(config_file, cfg)
                     # Update zone.json
                     zone_file = os.path.join(CONF_DIR, 'zone.json')
                     save_json(zone_file, {'zone': new_name})
-                    # Update config.json — move the zone key
-                    config_file = os.path.join(CONF_DIR, 'config.json')
-                    cfg = load_json(config_file)
-                    if zone in cfg:
-                        cfg[new_name] = cfg.pop(zone)
-                    save_json(config_file, cfg)
-                    self._respond(200, {'ok': True, 'old_name': zone, 'new_name': new_name, 'restarting': True})
-                    # Restart the service to pick up the new name
-                    report(f"Door renamed from '{zone}' to '{new_name}', restarting...")
-                    threading.Thread(target=lambda: os.system('sudo systemctl restart pidoors'), daemon=True).start()
+                    # Update in-memory zone so the running process uses the new name
+                    # even if the service restart below fails
+                    zone = new_name
+                    self._respond(200, {'ok': True, 'old_name': old_zone, 'new_name': new_name, 'restarted': True})
+                    report(f"Door renamed from '{old_zone}' to '{new_name}'")
+                    # Best-effort service restart to reinitialize GPIO/push listener with new name
+                    threading.Thread(
+                        target=lambda: os.system('sudo -n systemctl restart pidoors 2>/dev/null'),
+                        daemon=True
+                    ).start()
                 except Exception as e:
                     report(f"Rename failed: {e}")
                     self._respond(500, {'ok': False, 'error': str(e)})

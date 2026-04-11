@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.4-green)
+![Version](https://img.shields.io/badge/version-0.3.5-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -692,7 +692,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.4** - Pre-release
+**Current Version: 0.3.5** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -706,6 +706,21 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.3.5 (April 2026)
+- **Fix**: Door rename could corrupt `config.json` when the controller's in-memory `zone` variable fell out of sync with the on-disk config after a failed restart
+- **Fix**: Rename handler updates the in-memory `zone` immediately so subsequent pushes work even if the service restart fails
+- **Fix**: Sudoers now allows `systemctl restart pidoors` so rename can actually restart the service
+- **Fix**: Rename refuses to proceed if the old zone key is missing from config.json (prevents creating empty broken entries)
+- **Fix**: Same-name renames are a no-op
+- **Fix**: Update script guards against double self-update in the same chain
+- **Fix**: Update script reads zone from `zone.json` (source of truth) and refuses to create a phantom empty zone entry if the zone is missing
+
+### Version 0.3.4 (April 2026)
+- Pin selector dropdowns show all GPIO pins but disable ones already in use — both within the form (other gate I/O, status LED, sensor) and by reserved hardware features (reader, lock relay)
+- Disabled options labeled clearly as `GPIO X (in use)` or `GPIO X (Wiegand DATA0)`
+- Hide `Unlock Duration` field when gate mode is enabled
+- Documentation: gate mode and status LED sections added to README and INSTALLATION_GUIDE
 
 ### Version 0.3.3 (April 2026)
 - **Gate mode** — toggle on the door edit page to convert a door into a gate with open/close/stop inputs and outputs

@@ -868,6 +868,8 @@ EOF
     cat > "$SUDOERS_FILE" <<SUDOEOF
 pidoors ALL=(ALL) NOPASSWD: $INSTALL_DIR/pidoors-update.sh
 pidoors ALL=(ALL) NOPASSWD: /usr/bin/systemd-run
+pidoors ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart pidoors
+pidoors ALL=(ALL) NOPASSWD: /bin/systemctl restart pidoors
 SUDOEOF
     chmod 440 "$SUDOERS_FILE"
     ok "Sudoers entry for self-update configured"
