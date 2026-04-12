@@ -188,7 +188,12 @@ function DoorStatusItem({
               <ArrowUp className="h-3 w-3" />
               Open
             </button>
-            <button onClick={() => handleGate('stop')} className="btn btn-sm btn-warning">
+            <button
+              onClick={() => handleGate('stop')}
+              className="btn btn-sm btn-warning"
+              disabled={door.gate_state !== 'opening' && door.gate_state !== 'closing'}
+              title={door.gate_state !== 'opening' && door.gate_state !== 'closing' ? 'Gate is not moving' : 'Stop gate'}
+            >
               <Square className="h-3 w-3" />
               Stop
             </button>

@@ -1247,6 +1247,11 @@ def gate_command(cmd, source='unknown', hold_after=False):
         return True, None
 
     if cmd == 'stop':
+        # Only stop if the gate is actually moving — no point going to "stopped"
+        # from idle/open/closed because we'd lose track of the real position
+        if not gate_active_output and gate_state not in ('opening', 'closing'):
+            debug(f"Gate stop ignored — not currently moving (state: {gate_state})")
+            return False, 'not_moving'
         # Cut any active output
         if gate_active_output:
             debug(f"Gate stop interrupting active output '{gate_active_output}'")

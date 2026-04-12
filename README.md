@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.8-green)
+![Version](https://img.shields.io/badge/version-0.3.9-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -692,7 +692,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.8** - Pre-release
+**Current Version: 0.3.9** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -706,6 +706,14 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.3.9 (April 2026)
+- **React 18 → 19** — major framework migration, built and bundled (users get it automatically via the pre-built SPA tarball, no npm required)
+- **Vite 5 → 6** — build toolchain upgrade
+- **@vitejs/plugin-react 4 → 5** — React 19 compatibility
+- **@tanstack/react-query 5.60 → 5.99** — performance and bug fix patches
+- **Python requirements safety net** — new `requirements.txt` in the controller directory. `pidoors-update.sh` now runs `pip install -r requirements.txt` on every update so future new Python dependencies install automatically. `install.sh` also uses it.
+- **Zero vulnerabilities** — npm audit clean after the migration
 
 ### Version 0.3.8 (April 2026)
 - **Gate auto-close** — gates can now auto-close after opening, with a configurable delay (1–3600 seconds). Mandatory clearance sensor input ensures the gate won't auto-close on a person, vehicle, or obstruction.

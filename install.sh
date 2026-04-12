@@ -768,9 +768,23 @@ if [ "$INSTALL_DOOR" = true ]; then
     mkdir -p "$INSTALL_DIR"/{conf,cache,readers,formats}
     python3 -m venv "$INSTALL_DIR/venv" --system-site-packages
     "$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q
-    "$INSTALL_DIR/venv/bin/pip" install pymysql pyserial smbus2 spidev -q 2>/dev/null || true
-    # rpi-lgpio is the drop-in replacement for RPi.GPIO on Bookworm/Trixie
-    "$INSTALL_DIR/venv/bin/pip" install rpi-lgpio -q 2>/dev/null || warn "rpi-lgpio not available (non-Pi system?)"
+    # Install from requirements.txt if present (preferred), otherwise fall back
+    # to manual install. requirements.txt is the source of truth for new installs.
+    REQS_FILE=""
+    if [ -f "$DOOR_SRC/requirements.txt" ]; then
+        REQS_FILE="$DOOR_SRC/requirements.txt"
+    elif [ -f "$SCRIPT_DIR/pidoors/requirements.txt" ]; then
+        REQS_FILE="$SCRIPT_DIR/pidoors/requirements.txt"
+    fi
+    if [ -n "$REQS_FILE" ]; then
+        "$INSTALL_DIR/venv/bin/pip" install -r "$REQS_FILE" -q 2>/dev/null || \
+            warn "Some Python dependencies failed to install — check $REQS_FILE"
+        # Optional extras (only for non-Wiegand readers)
+        "$INSTALL_DIR/venv/bin/pip" install pyserial smbus2 spidev -q 2>/dev/null || true
+    else
+        "$INSTALL_DIR/venv/bin/pip" install pymysql pyserial smbus2 spidev -q 2>/dev/null || true
+        "$INSTALL_DIR/venv/bin/pip" install rpi-lgpio -q 2>/dev/null || warn "rpi-lgpio not available (non-Pi system?)"
+    fi
     ok "Python environment ready"
 
     # Create user

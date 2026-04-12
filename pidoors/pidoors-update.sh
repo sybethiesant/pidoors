@@ -327,6 +327,18 @@ if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
     chmod +x "$INSTALL_DIR/pidoors-update.sh" 2>/dev/null || true
 fi
 
+# Install/upgrade Python dependencies from requirements.txt if present.
+# This safety net ensures any new pip packages added in a future release
+# get installed automatically on update — no manual pip install needed.
+if [ -f "$SRC_DIR/requirements.txt" ]; then
+    copy_file "$SRC_DIR/requirements.txt" "$INSTALL_DIR/requirements.txt"
+    if [ -x "$INSTALL_DIR/venv/bin/pip" ]; then
+        log "Installing Python dependencies from requirements.txt..."
+        "$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt" -q 2>&1 | while read -r line; do log "$line"; done || \
+            log "Warning: pip install had errors (check requirements.txt)"
+    fi
+fi
+
 # Service file (picks up dependency fixes, security hardening changes)
 if [ -f "$SRC_DIR/pidoors.service" ]; then
     copy_file "$SRC_DIR/pidoors.service" "/etc/systemd/system/pidoors.service"

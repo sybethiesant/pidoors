@@ -932,6 +932,7 @@ if ($resource === 'doors') {
                 'no_output_configured' => 'No output pin is configured for this direction. Open the door settings and assign a pin to the ' . str_replace('gate-', '', $action) . ' relay.',
                 'already_running' => 'Gate is already ' . ($action === 'gate-open' ? 'opening' : 'closing') . '.',
                 'not_a_gate' => 'This door is not configured as a gate.',
+                'not_moving' => 'Gate is not currently moving.',
                 'unknown_command' => 'Unknown gate command.',
             ];
             $msg = $messages[$reason] ?? 'Gate command refused (state: ' . ($result['gate_state'] ?? 'unknown') . ')';

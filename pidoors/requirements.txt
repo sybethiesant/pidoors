@@ -1,0 +1,9 @@
+# PiDoors controller Python dependencies
+# Installed by install.sh and pidoors-update.sh into the venv at /opt/pidoors/venv/
+#
+# Add new dependencies here when introducing them in pidoors.py — the controller
+# updater runs `pip install -r requirements.txt` on every update so existing
+# installs pick up new dependencies automatically.
+
+PyMySQL>=1.1.0
+rpi-lgpio>=0.6
