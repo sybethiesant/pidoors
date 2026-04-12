@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   CreditCard,
@@ -104,13 +105,20 @@ function DoorStatusItem({
     }
   };
 
-  const handleGate = async (action: 'open' | 'close' | 'stop' | 'hold' | 'release') => {
+  const [showClearanceWarning, setShowClearanceWarning] = useState(false);
+
+  const handleGate = async (action: 'open' | 'close' | 'stop' | 'hold' | 'release', force?: boolean) => {
     try {
-      await gateCommand(door.name, action);
+      await gateCommand(door.name, action, force);
       toast.success(`${door.name}: ${action}`);
       onAction();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Gate command failed');
+      const msg = err instanceof Error ? err.message : 'Gate command failed';
+      if (msg.includes('Clearance sensor') || msg.includes('obstruction')) {
+        setShowClearanceWarning(true);
+        return;
+      }
+      toast.error(msg);
     }
   };
 
@@ -188,7 +196,12 @@ function DoorStatusItem({
               <ArrowUp className="h-3 w-3" />
               Open
             </button>
-            <button onClick={() => handleGate('stop')} className="btn btn-sm btn-warning">
+            <button
+              onClick={() => handleGate('stop')}
+              className="btn btn-sm btn-warning"
+              disabled={door.gate_state !== 'opening' && door.gate_state !== 'closing'}
+              title={door.gate_state !== 'opening' && door.gate_state !== 'closing' ? 'Gate is not moving' : 'Stop gate'}
+            >
               <Square className="h-3 w-3" />
               Stop
             </button>
@@ -242,6 +255,47 @@ function DoorStatusItem({
           </>
         )}
       </div>
+
+      {showClearanceWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card w-full max-w-md p-6">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+                <span className="text-xl">⚠️</span>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400">
+                  Safety Warning
+                </h3>
+                <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
+                  The clearance sensor detects an <strong>obstruction</strong> in the gate's path.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-md bg-red-50 p-3 dark:bg-red-900/20">
+              <p className="text-sm text-red-800 dark:text-red-300">
+                Closing the gate while something is in the way could cause <strong>serious injury,
+                death, or property damage</strong>. Only proceed if you have visually confirmed the
+                path is clear and the sensor may be malfunctioning.
+              </p>
+            </div>
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+              By clicking "Override & Close" you accept full responsibility for any consequences.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setShowClearanceWarning(false)} className="btn btn-secondary">
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowClearanceWarning(false); handleGate('close', true); }}
+                className="btn btn-danger"
+              >
+                Override & Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

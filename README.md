@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.8-green)
+![Version](https://img.shields.io/badge/version-0.3.9-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -473,6 +473,18 @@ For rolling/sliding gates with motor controllers, enable **Gate Mode** in the do
 
 In gate mode, the regular **Lock Relay** is unused — the gate's open/close outputs replace it. The "Unlock Duration" field in the door edit page is automatically hidden when gate mode is enabled. Each gate output has its own configurable hold duration.
 
+### LED Feedback
+
+PiDoors supports two LED output methods:
+
+**Legacy LEDs (hardcoded)** — GPIO 22 (red/idle) and GPIO 25 (green/granted) are always set up as outputs. These work automatically for both door and gate mode:
+- **Idle / locked / denied**: GPIO 22 HIGH, GPIO 25 LOW
+- **Access granted / unlocked / gate opening**: GPIO 22 LOW, GPIO 25 HIGH
+
+This is useful for Wiegand keypads with a built-in bicolor LED — wire the LED input to GPIO 22 and the keypad shows red at idle, green on valid access.
+
+**Configurable Status LED** — For more flexibility, enable the **Status LED** option in the door edit page. Assign any available GPIO pin and polarity. The LED pulses on access granted and flashes on access denied. Works on both doors and gates, independent of the legacy LEDs.
+
 ### GPIO Pin Reference
 ```
     3V3  (1)  (2)  5V
@@ -484,6 +496,8 @@ In gate mode, the regular **Lock Relay** is unused — the gate's open/close out
  GPIO27 (13) (14) GND
  GPIO22 (15) (16) GPIO23    <- DATA1 (GPIO23)
     3V3 (17) (18) GPIO24    <- DATA0 (GPIO24)
+ GPIO25 <- Green LED (legacy)
+ GPIO22 <- Red LED (legacy)
 ```
 
 Full wiring diagrams available in [Installation Guide](pidoors/INSTALLATION_GUIDE.md#wiring).
@@ -692,7 +706,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.8** - Pre-release
+**Current Version: 0.3.9** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -706,6 +720,14 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.3.9 (April 2026)
+- **React 18 → 19** — major framework migration, built and bundled (users get it automatically via the pre-built SPA tarball, no npm required)
+- **Vite 5 → 6** — build toolchain upgrade
+- **@vitejs/plugin-react 4 → 5** — React 19 compatibility
+- **@tanstack/react-query 5.60 → 5.99** — performance and bug fix patches
+- **Python requirements safety net** — new `requirements.txt` in the controller directory. `pidoors-update.sh` now runs `pip install -r requirements.txt` on every update so future new Python dependencies install automatically. `install.sh` also uses it.
+- **Zero vulnerabilities** — npm audit clean after the migration
 
 ### Version 0.3.8 (April 2026)
 - **Gate auto-close** — gates can now auto-close after opening, with a configurable delay (1–3600 seconds). Mandatory clearance sensor input ensures the gate won't auto-close on a person, vehicle, or obstruction.

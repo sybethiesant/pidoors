@@ -1147,7 +1147,35 @@ def gate_input_event(channel):
     else:
         # Single press = normal action
         report(f"Gate {name} button pressed")
-        gate_command(name, source='button')
+        ok, reason = gate_command(name, source='button')
+
+        # Close blocked by clearance sensor — start monitoring for hold-to-override.
+        # If the operator holds the close button down for >1 second, override the
+        # sensor and close anyway (operator is physically present as the safety).
+        if not ok and reason == 'clearance_blocked' and name == 'close':
+            _check_close_hold_override(channel)
+
+
+def _check_close_hold_override(channel):
+    """Monitor whether the close button is being held down. If held for >1s,
+    fire close with 'button-hold-override' source to bypass the clearance sensor.
+    This allows the physical operator to act as the safety when the sensor is blocked."""
+    advanced = gate_config.get('advanced', {})
+    hold_time = float(advanced.get('close_override_hold_seconds', 1.0))
+    pull = advanced.get('pull', 'up')
+    # Determine what "pressed" reads as
+    pressed_value = GPIO.LOW if pull == 'up' else GPIO.HIGH
+
+    # Check every 50ms if the button is still held
+    checks = int(hold_time / 0.05)
+    for _ in range(checks):
+        time.sleep(0.05)
+        if GPIO.input(channel) != pressed_value:
+            # Button released before the hold threshold — no override
+            return
+    # Button held for the full duration — override
+    report(f"Gate close: hold-to-override detected (held >{hold_time}s), bypassing clearance sensor")
+    gate_command('close', source='button-hold-override')
 
 
 def gate_set_state(new_state, held=None):
@@ -1201,7 +1229,8 @@ def _gate_run_output(name, transient_state):
     with gate_lock:
         if gate_active_output == name:
             gate_active_output = None
-    # Settle final state
+    # Settle final state + reset legacy LEDs back to idle (red)
+    _set_legacy_leds(False)
     if name == 'open':
         gate_set_state('stopped' if interrupted else 'open')
         # Start auto-close timer if open completed normally and conditions are met
@@ -1247,6 +1276,11 @@ def gate_command(cmd, source='unknown', hold_after=False):
         return True, None
 
     if cmd == 'stop':
+        # Only stop if the gate is actually moving — no point going to "stopped"
+        # from idle/open/closed because we'd lose track of the real position
+        if not gate_active_output and gate_state not in ('opening', 'closing'):
+            debug(f"Gate stop ignored — not currently moving (state: {gate_state})")
+            return False, 'not_moving'
         # Cut any active output
         if gate_active_output:
             debug(f"Gate stop interrupting active output '{gate_active_output}'")
@@ -1268,6 +1302,15 @@ def gate_command(cmd, source='unknown', hold_after=False):
         if cmd not in gate_output_pins:
             report(f"Gate '{cmd}' refused: no output pin configured")
             return False, 'no_output_configured'
+
+        # Clearance sensor safety: block close if sensor detects obstruction.
+        # Only applies when a clearance sensor IS configured. Without a sensor,
+        # close is always allowed. The 'override' source means the physical
+        # button is being held down — operator is acting as the safety.
+        if cmd == 'close' and gate_clearance_pin is not None and not gate_clearance_clear:
+            if source != 'button-hold-override':
+                report(f"Gate close blocked: clearance sensor reports obstruction ({source})")
+                return False, 'clearance_blocked'
 
         # Same-direction = ignore (let current cycle complete)
         if gate_active_output == cmd:
@@ -1304,7 +1347,11 @@ def gate_grant_access(name):
     if gate_held:
         report(f"Card access denied — gate is held. Master scan to release.")
         return False
+    # Toggle legacy LEDs for visual feedback (green while opening)
+    _set_legacy_leds(True)
     ok, _reason = gate_command('open', source=f'access:{name}')
+    if not ok:
+        _set_legacy_leds(False)
     return ok
 
 
@@ -1359,6 +1406,17 @@ def _apply_global_setting(key, value):
 # DOOR LOCK CONTROL
 # ============================================================
 
+def _set_legacy_leds(granted):
+    """Set the legacy hardcoded LEDs on GPIO 22 (red) and 25 (green).
+    Called for BOTH door and gate mode so the visual feedback works
+    regardless of which mode is active."""
+    try:
+        GPIO.output(25, 1 if granted else 0)  # Green LED
+        GPIO.output(22, 0 if granted else 1)  # Red LED
+    except Exception:
+        pass
+
+
 def lock_door():
     """Lock the door"""
     global door_unlocked
@@ -1368,10 +1426,9 @@ def lock_door():
 
     if latch_gpio:
         GPIO.output(latch_gpio, unlock_value ^ 1)
-        GPIO.output(25, 0)  # Green LED off
-        GPIO.output(22, 1)  # Red LED on
-        with state_lock:
-            door_unlocked = False
+    _set_legacy_leds(False)
+    with state_lock:
+        door_unlocked = False
 
 
 def unlock_door():
@@ -1383,10 +1440,9 @@ def unlock_door():
 
     if latch_gpio:
         GPIO.output(latch_gpio, unlock_value)
-        GPIO.output(25, 1)  # Green LED on
-        GPIO.output(22, 0)  # Red LED off
-        with state_lock:
-            door_unlocked = True
+    _set_legacy_leds(True)
+    with state_lock:
+        door_unlocked = True
 
 
 def unlock_briefly(gpio):
@@ -2547,8 +2603,14 @@ def _run_push_listener(port, api_key, cert_file, key_file):
                 if not gate_enabled:
                     self._respond(400, {'ok': False, 'error': 'Door is not configured as a gate'})
                     return
-                report(f"Push: gate/{gate_action} from {client_ip}")
-                ok, reason = gate_command(gate_action, source=f'push:{client_ip}')
+                # Read body for force flag (operator override for clearance sensor)
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = json.loads(self.rfile.read(content_length)) if content_length else {}
+                source = f'push:{client_ip}'
+                if body.get('force') and gate_action == 'close':
+                    source = 'button-hold-override'  # Same source as physical hold-override
+                report(f"Push: gate/{gate_action} from {client_ip}" + (' (force)' if body.get('force') else ''))
+                ok, reason = gate_command(gate_action, source=source)
                 response = {'ok': ok, 'gate_state': gate_state, 'gate_held': gate_held}
                 if reason:
                     response['reason'] = reason

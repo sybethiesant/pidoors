@@ -118,8 +118,14 @@ function DoorFormModal({
     | { kind: 'led' }
     | { kind: 'sensor' };
 
-  const getUsedPins = (excludeSelf?: SelfRef): Set<number> => {
-    const used = new Set<number>();
+  const labelMap: Record<string, string> = {
+    'inputs.open': 'Open button', 'inputs.stop': 'Stop button', 'inputs.close': 'Close button',
+    'inputs.clearance': 'Clearance sensor',
+    'outputs.open': 'Open relay', 'outputs.stop': 'Stop relay', 'outputs.close': 'Close relay',
+  };
+
+  const getUsedPins = (excludeSelf?: SelfRef): Map<number, string> => {
+    const used = new Map<number, string>();
     // Gate I/O
     const sectionMap: Record<'inputs' | 'outputs', ('open' | 'stop' | 'close' | 'clearance')[]> = {
       inputs: ['open', 'stop', 'close', 'clearance'],
@@ -129,16 +135,16 @@ function DoorFormModal({
       for (const name of sectionMap[section]) {
         if (excludeSelf?.kind === 'gate' && excludeSelf.section === section && excludeSelf.name === name) continue;
         const entry = (form.gate_config?.[section] as Record<string, GateIO> | undefined)?.[name];
-        if (entry?.enabled && entry.pin != null) used.add(entry.pin);
+        if (entry?.enabled && entry.pin != null) used.set(entry.pin, labelMap[`${section}.${name}`] || `${section} ${name}`);
       }
     }
     // Status LED
     if (excludeSelf?.kind !== 'led' && form.status_led_config?.enabled && form.status_led_config.pin != null) {
-      used.add(form.status_led_config.pin);
+      used.set(form.status_led_config.pin, 'Status LED');
     }
     // Door sensor
     if (excludeSelf?.kind !== 'sensor' && form.door_sensor_gpio != null) {
-      used.add(form.door_sensor_gpio);
+      used.set(form.door_sensor_gpio, 'Door sensor');
     }
     return used;
   };
@@ -162,11 +168,12 @@ function DoorFormModal({
       >
         <option value="">Select pin…</option>
         {sorted.map((p) => {
-          const inUseByOther = used.has(p) && p !== value;
+          const usedByLabel = used.get(p);
+          const inUseByOther = !!usedByLabel && p !== value;
           const reservedBy = reservedPins[p];
           const disabled = inUseByOther || (!!reservedBy && p !== value);
           const label = inUseByOther
-            ? `GPIO ${p} (in use)`
+            ? `GPIO ${p} (${usedByLabel})`
             : reservedBy
             ? `GPIO ${p} (${reservedBy})`
             : `GPIO ${p}`;
@@ -626,6 +633,7 @@ export function DoorsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editDoor, setEditDoor] = useState<Door | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [clearanceOverride, setClearanceOverride] = useState<string | null>(null);
 
   const { data: doors = [], isLoading } = useQuery({
     queryKey: ['doors'],
@@ -702,13 +710,19 @@ export function DoorsPage() {
     }
   };
 
-  const handleGateCmd = async (name: string, action: 'open' | 'close' | 'stop' | 'hold' | 'release') => {
+  const handleGateCmd = async (name: string, action: 'open' | 'close' | 'stop' | 'hold' | 'release', force?: boolean) => {
     try {
-      await gateCommand(name, action);
+      await gateCommand(name, action, force);
       toast.success(`${name}: ${action}`);
       queryClient.invalidateQueries({ queryKey: ['doors'] });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Gate command failed');
+      const msg = err instanceof Error ? err.message : 'Gate command failed';
+      // Clearance sensor blocked — show styled override modal
+      if (msg.includes('Clearance sensor') || msg.includes('obstruction')) {
+        setClearanceOverride(name);
+        return;
+      }
+      toast.error(msg);
     }
   };
 
@@ -833,6 +847,8 @@ export function DoorsPage() {
                     <button
                       onClick={() => handleGateCmd(door.name, 'stop')}
                       className="btn btn-sm btn-warning"
+                      disabled={door.gate_state !== 'opening' && door.gate_state !== 'closing'}
+                      title={door.gate_state !== 'opening' && door.gate_state !== 'closing' ? 'Gate is not moving' : 'Stop gate'}
                     >
                       <Square className="h-3 w-3" />
                       Stop
@@ -956,6 +972,55 @@ export function DoorsPage() {
               >
                 {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clearance sensor override confirmation */}
+      {clearanceOverride && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card w-full max-w-md p-6">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+                <span className="text-xl">⚠️</span>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400">
+                  Safety Warning
+                </h3>
+                <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
+                  The clearance sensor detects an <strong>obstruction</strong> in the gate's path.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-md bg-red-50 p-3 dark:bg-red-900/20">
+              <p className="text-sm text-red-800 dark:text-red-300">
+                Closing the gate while something is in the way could cause <strong>serious injury,
+                death, or property damage</strong>. Only proceed if you have visually confirmed the
+                path is clear and the sensor may be malfunctioning.
+              </p>
+            </div>
+            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+              By clicking "Override & Close" you accept full responsibility for any consequences.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setClearanceOverride(null)}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const name = clearanceOverride;
+                  setClearanceOverride(null);
+                  handleGateCmd(name, 'close', true);
+                }}
+                className="btn btn-danger"
+              >
+                Override & Close
               </button>
             </div>
           </div>

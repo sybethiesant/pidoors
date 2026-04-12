@@ -58,9 +58,11 @@ export async function getAvailablePins(name: string): Promise<{ available: numbe
 
 export async function gateCommand(
   name: string,
-  action: 'open' | 'close' | 'stop' | 'hold' | 'release'
+  action: 'open' | 'close' | 'stop' | 'hold' | 'release',
+  force?: boolean
 ): Promise<ApiResponse> {
   return api<ApiResponse>(`doors/${encodeURIComponent(name)}/gate-${action}`, {
     method: 'POST',
+    body: force ? JSON.stringify({ force: true }) : undefined,
   });
 }
