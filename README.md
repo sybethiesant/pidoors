@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.9-green)
+![Version](https://img.shields.io/badge/version-0.3.10-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -706,7 +706,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.9** - Pre-release
+**Current Version: 0.3.10** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
