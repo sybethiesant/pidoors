@@ -227,16 +227,46 @@ else
     TMPDIR=$(mktemp -d /var/cache/pidoors-update-XXXXXX)
     TARBALL="$TMPDIR/release.tar.gz"
     log "Downloading release tarball..."
-    curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
-    curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
-        fail "Failed to download release $LATEST_TAG. Tag may not exist on GitHub."
+    # SECURITY: only fetch the published release asset (built by build-release.sh),
+    # NOT the auto-generated GitHub source archive. The release asset is the artifact
+    # that has a matching, published sha256 checksum we can verify below. The
+    # /archive/refs/tags/ source tarball has no published checksum, so accepting it
+    # would defeat the integrity check — we therefore no longer fall back to it.
+    curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
+        fail "Failed to download release asset $LATEST_TAG.tar.gz. Release may be missing the signed asset."
     }
 
     if [ ! -s "$TARBALL" ]; then
         fail "Downloaded tarball is empty."
     fi
 
-    # Extract
+    # SECURITY (supply-chain): verify the tarball against the sha256 checksum published
+    # as a release asset by build-release.sh BEFORE extracting/deploying anything as root.
+    # The checksum file ("<tag>.tar.gz.sha256") is fetched over HTTPS from the same
+    # release. An attacker who can tamper with the tarball would have to also forge the
+    # checksum asset — which lives behind GitHub's authenticated release API. If the
+    # checksum is missing or does not match, we abort and never call 'tar xzf'.
+    CHECKSUM_FILE="$TMPDIR/release.sha256"
+    log "Verifying release checksum..."
+    curl -sfL --connect-timeout 15 --max-time 30 "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz.sha256" -o "$CHECKSUM_FILE" 2>/dev/null || {
+        fail "Could not download checksum for $LATEST_TAG. Refusing to install unverified release."
+    }
+
+    # The published checksum file may contain just the hash, or "<hash>  <filename>".
+    # Extract the first whitespace-delimited field (the hex digest) and compare against
+    # the locally computed digest of the downloaded tarball.
+    EXPECTED_SHA=$(awk '{print $1; exit}' "$CHECKSUM_FILE" 2>/dev/null | tr -d '[:space:]')
+    if ! echo "$EXPECTED_SHA" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+        fail "Published checksum for $LATEST_TAG is malformed. Refusing to install."
+    fi
+    ACTUAL_SHA=$(sha256sum "$TARBALL" | awk '{print $1}')
+    # Case-insensitive comparison of the two hex digests.
+    if [ "$(echo "$EXPECTED_SHA" | tr 'A-F' 'a-f')" != "$(echo "$ACTUAL_SHA" | tr 'A-F' 'a-f')" ]; then
+        fail "Checksum mismatch for $LATEST_TAG (expected $EXPECTED_SHA, got $ACTUAL_SHA). Aborting — tarball may have been tampered with."
+    fi
+    log "Checksum verified ($ACTUAL_SHA)"
+
+    # Extract (only reached after a successful integrity check)
     log "Extracting..."
     tar xzf "$TARBALL" -C "$TMPDIR" || {
         fail "Failed to extract tarball. Download may be corrupt."
@@ -417,8 +447,16 @@ CONF_DIR="$INSTALL_DIR/conf"
 if [ -f "$CONF_DIR/config.json" ]; then
     SERVER_ADDR=$(python3 -c "import json; cfg=json.load(open('$CONF_DIR/config.json')); print(cfg.get('$ZONE',{}).get('sqladdr',''))" 2>/dev/null)
     if [ -n "$SERVER_ADDR" ]; then
-        if curl -sf -k --connect-timeout 5 --max-time 10 "https://$SERVER_ADDR/ca.pem" -o "$CONF_DIR/ca.pem.new" 2>/dev/null || \
-           curl -sf --connect-timeout 5 --max-time 10 "http://$SERVER_ADDR/ca.pem" -o "$CONF_DIR/ca.pem.new" 2>/dev/null; then
+        # SECURITY: require HTTPS and verify the server against the already-provisioned
+        # CA bundle (no -k / --insecure, no http:// fallback). If we cannot yet pin to a
+        # CA (first provisioning, before any ca.pem exists), fall back to the system trust
+        # store — but never to plaintext http and never to an unauthenticated TLS session.
+        CA_REFRESH_OPTS=()
+        if [ -s "$CONF_DIR/ca.pem" ]; then
+            CA_REFRESH_OPTS=(--cacert "$CONF_DIR/ca.pem")
+        fi
+        # Use the ${arr[@]+...} guard so expanding an empty array does not trip set -u.
+        if curl -sf ${CA_REFRESH_OPTS[@]+"${CA_REFRESH_OPTS[@]}"} --connect-timeout 5 --max-time 10 "https://$SERVER_ADDR/ca.pem" -o "$CONF_DIR/ca.pem.new" 2>/dev/null; then
             if grep -q 'BEGIN CERTIFICATE' "$CONF_DIR/ca.pem.new" 2>/dev/null; then
                 mv "$CONF_DIR/ca.pem.new" "$CONF_DIR/ca.pem"
                 chown pidoors:pidoors "$CONF_DIR/ca.pem" 2>/dev/null || true
@@ -446,7 +484,7 @@ if [ -f "$CONF_DIR/config.json" ]; then
         -subj "/CN=$ZONE" 2>/dev/null
 
     SIGN_RESULT=$(python3 -c "
-import json, sys, subprocess
+import json, sys, subprocess, os
 cfg = json.load(open('$CONF_DIR/config.json'))
 zc = cfg.get('$ZONE', {})
 csr = open('/tmp/pidoors-controller.csr').read()
@@ -455,9 +493,20 @@ import urllib.request, urllib.error
 payload = json.dumps({'db_user': zc.get('sqluser',''), 'db_pass': zc.get('sqlpass',''), 'csr': csr, 'door_name': '$ZONE', 'door_ip': controller_ip}).encode()
 req = urllib.request.Request('https://' + zc.get('sqladdr','') + '/api/certs/sign', data=payload, headers={'Content-Type': 'application/json'}, method='POST')
 import ssl
-ctx = ssl.create_default_context()
-ctx.check_hostname = False
-ctx.verify_mode = ssl.CERT_NONE
+# SECURITY: this request carries the shared DB credentials (db_user/db_pass) to the
+# server, so the server MUST be authenticated before we transmit them. Build a context
+# that verifies the server certificate against the provisioned CA and checks the
+# hostname. We never disable verification (no CERT_NONE) — an unauthenticated TLS
+# session would let an on-path attacker harvest the DB credentials.
+ca_path = os.path.join('$CONF_DIR', 'ca.pem')
+if os.path.isfile(ca_path) and os.path.getsize(ca_path) > 0:
+    ctx = ssl.create_default_context(cafile=ca_path)
+else:
+    # No pinned CA available yet — fall back to the system trust store, still with
+    # full verification enabled. Refuse to proceed with verification disabled.
+    ctx = ssl.create_default_context()
+ctx.check_hostname = True
+ctx.verify_mode = ssl.CERT_REQUIRED
 resp = urllib.request.urlopen(req, timeout=10, context=ctx)
 data = json.loads(resp.read())
 if data.get('ok') and data.get('cert'):

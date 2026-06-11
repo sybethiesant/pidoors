@@ -5,16 +5,44 @@
 # door:   Mock door controller connecting to server's MariaDB
 #
 # Usage:
-#   docker compose up --build -d
-#   docker compose logs -f
+#   1. Copy .env.example to .env and set ALL required secrets (no defaults
+#      are baked in — the entrypoints exit if a required secret is missing).
+#   2. docker compose up --build -d
+#   3. docker compose logs -f
+#
+# Required secrets (read from the environment / .env file):
+#   DB_PASS         password for the 'pidoors' DB user
+#   DB_ROOT_PASS    MariaDB root password
+#   ADMIN_EMAIL     initial admin login email
+#   ADMIN_PASS      initial admin login password
+#
+# Base image is pinned to a dated, immutable Debian snapshot tag via the
+# BASE_IMAGE build arg (overridable here) instead of the floating
+# 'debian:bookworm' tag, so rebuilds are reproducible.
 
 services:
   server:
     build:
       context: ..
       dockerfile: docker/Dockerfile.server
+      args:
+        # Pinned dated tag — change deliberately, do not float to :bookworm.
+        BASE_IMAGE: debian:bookworm-20241223
     container_name: pidoors-server
     restart: unless-stopped
+    # NOTE/TODO(security): this all-in-one container currently runs its
+    # entrypoint as root (MariaDB + PHP-FPM + Nginx in one image, mirroring
+    # the bare-metal install). That is acceptable for this dev/compose test
+    # rig but should be split into least-privilege users/containers before
+    # any non-dev use. Left as root deliberately to avoid breaking the
+    # multi-service startup; do not "fix" by dropping privileges piecemeal.
+    environment:
+      # Secrets are sourced from the host environment / .env file. There are
+      # NO defaults — server-entrypoint.sh exits non-zero if any are unset.
+      DB_PASS: "${DB_PASS:?DB_PASS must be set (see .env.example)}"
+      DB_ROOT_PASS: "${DB_ROOT_PASS:?DB_ROOT_PASS must be set (see .env.example)}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:?ADMIN_EMAIL must be set (see .env.example)}"
+      ADMIN_PASS: "${ADMIN_PASS:?ADMIN_PASS must be set (see .env.example)}"
     ports:
       - "8088:443"
       - "8080:80"
@@ -30,21 +58,48 @@ services:
       - db_data:/var/lib/mysql
     networks:
       - pidoors-net
+    healthcheck:
+      # Healthy only once Nginx is serving HTTPS. The door service waits on
+      # this (condition: service_healthy) so it never races MariaDB/PHP/Nginx.
+      # -k: self-signed cert in this dev rig. --fail: non-2xx/3xx => unhealthy.
+      test: ["CMD-SHELL", "curl -fsk https://localhost:443/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
 
   door:
     build:
       context: ..
       dockerfile: docker/Dockerfile.door
+      args:
+        # Pinned dated tag — change deliberately, do not float to :bookworm.
+        BASE_IMAGE: debian:bookworm-20241223
     container_name: pidoors-door
     restart: unless-stopped
     depends_on:
-      - server
+      server:
+        # Wait until the server reports healthy (DB + API up), not merely
+        # started — otherwise the door races MariaDB and fails to connect.
+        condition: service_healthy
+    environment:
+      # Same no-default secret policy as the server (door-entrypoint.sh exits
+      # if DB_PASS is unset). The door only needs the DB user password.
+      DB_PASS: "${DB_PASS:?DB_PASS must be set (see .env.example)}"
     volumes:
       # Source bind-mounted read-only; copied into install paths at startup
       - ../pidoors:/src/pidoors:ro
       - ../VERSION:/src/VERSION:ro
     networks:
       - pidoors-net
+    healthcheck:
+      # The door listens for push notifications on :8443 (TLS). Consider it
+      # healthy once that port is accepting TCP connections.
+      test: ["CMD-SHELL", "curl -fsk https://localhost:8443/ >/dev/null 2>&1 || nc -z localhost 8443 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
 volumes:
   db_data:

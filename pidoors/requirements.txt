@@ -4,6 +4,19 @@
 # Add new dependencies here when introducing them in pidoors.py — the controller
 # updater runs `pip install -r requirements.txt` on every update so existing
 # installs pick up new dependencies automatically.
+#
+# All entries are pinned with == to keep controller environments reproducible.
 
-PyMySQL>=1.1.0
-rpi-lgpio>=0.6
+# Core controller deps.
+PyMySQL==1.1.1
+rpi-lgpio==0.6
+
+# Reader deps, required for OSDP and NFC reader types.
+# - pyserial (import: serial)  -> OSDP reader over RS-485 (readers/osdp.py)
+# - smbus2   (import: smbus2)  -> PN532 NFC reader over I2C (readers/nfc_pn532.py)
+# - spidev   (import: spidev)  -> PN532/MFRC522 NFC readers over SPI
+#                                 (readers/nfc_pn532.py, readers/nfc_mfrc522.py)
+# Note: the MFRC522 reader also needs RPi.GPIO, which rpi-lgpio (above) provides.
+pyserial==3.5
+smbus2==0.5.0
+spidev==3.6

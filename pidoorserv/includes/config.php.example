@@ -30,6 +30,14 @@ return [
     // Set this to your original salt if upgrading from a pre-bcrypt version
     'legacy_password_salt' => '',
 
+    // Controller enrollment secret for POST /api/certs/sign.
+    // This is REQUIRED to sign controller certificates and must NOT be the
+    // shared DB password. Leave empty to disable cert enrollment entirely
+    // (signing fails closed). Set to a long random value, e.g.
+    // bin2hex(random_bytes(32)), and provide the same value to each controller
+    // at enrollment time.
+    'enrollment_token' => '',
+
     // Access Control Settings
     'default_unlock_duration' => 5, // seconds
     'max_failed_attempts' => 5,

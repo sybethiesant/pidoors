@@ -4,7 +4,13 @@
 # Updates the web interface and runs database migrations.
 # Must run as root.
 #
-# Usage: sudo ./server-update.sh [--db-pass PASSWORD]
+# Usage: sudo ./server-update.sh
+#
+# The database password is normally read from the web config
+# ($WEB_ROOT/includes/config.php). If it cannot be read, set the
+# PIDOORS_DB_PASS environment variable, or you will be prompted
+# interactively. Passing the password on the command line is NOT
+# supported — argv is visible to other users via `ps` and shell history.
 #
 
 set -euo pipefail
@@ -26,6 +32,73 @@ fail() { echo -e "  ${RED}✗${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 info() { echo -e "  ${BLUE}→${NC} $1"; }
 
+# ──────────────────────────────────────────────
+# Supply-chain integrity: verify a downloaded release tarball against the
+# published <tarball>.sha256 asset BEFORE extracting/deploying it.
+#
+# This is the shared verification hook used by both updaters (the controller
+# updater, pidoors-update.sh, calls the equivalent). It FAILS SECURE: if the
+# checksum asset cannot be downloaded, or the tooling is missing, or the sum
+# does not match, we abort and deploy nothing.
+#
+# Args: $1 = path to downloaded tarball, $2 = URL of the .sha256 asset
+verify_tarball_checksum() {
+    local tarball="$1"
+    local sum_url="$2"
+    local sum_file="${tarball}.sha256"
+
+    info "Verifying release checksum..."
+
+    # Download the published checksum asset.
+    if ! curl -sfL --connect-timeout 15 --max-time 30 "$sum_url" -o "$sum_file" 2>/dev/null; then
+        fail "Could not download checksum ($sum_url)."
+        fail "Refusing to deploy an unverified release."
+        return 1
+    fi
+    if [ ! -s "$sum_file" ]; then
+        fail "Downloaded checksum file is empty. Refusing to deploy."
+        return 1
+    fi
+
+    # Pick an available checksum verifier.
+    local verifier=""
+    if command -v sha256sum > /dev/null 2>&1; then
+        verifier="sha256sum"
+    elif command -v shasum > /dev/null 2>&1; then
+        verifier="shasum -a 256"
+    else
+        fail "No sha256sum/shasum available to verify the release. Refusing to deploy."
+        return 1
+    fi
+
+    # The published sum references the tarball by basename. Verify in the
+    # tarball's own directory so the recorded name resolves.
+    local tdir tbase
+    tdir="$(dirname "$tarball")"
+    tbase="$(basename "$tarball")"
+
+    # Normalize the sum file to reference the exact basename we downloaded
+    # (build-release.sh writes the release tarball name, e.g. vX.Y.Z.tar.gz,
+    # which may differ from our local "release.tar.gz"). Extract just the
+    # hex digest and re-pair it with our local basename.
+    local expected
+    expected="$(awk '{print $1}' "$sum_file" | head -1)"
+    if ! echo "$expected" | grep -qE '^[0-9a-fA-F]{64}$'; then
+        fail "Checksum file is malformed. Refusing to deploy."
+        return 1
+    fi
+    printf '%s  %s\n' "$expected" "$tbase" > "$sum_file"
+
+    if ( cd "$tdir" && $verifier -c "$(basename "$sum_file")" ) > /dev/null 2>&1; then
+        ok "Checksum verified"
+        return 0
+    fi
+
+    fail "Checksum MISMATCH — release tarball failed integrity verification."
+    fail "The download may be corrupt or tampered with. Aborting."
+    return 1
+}
+
 cleanup() {
     if [ -n "$TMPDIR" ] && [ -d "$TMPDIR" ]; then
         rm -rf "$TMPDIR"
@@ -40,16 +113,22 @@ trap cleanup EXIT
 # Parse arguments
 # ──────────────────────────────────────────────
 
-DB_PASS_ARG=""
+# NOTE: --db-pass on argv was removed — a password on the command line is
+# visible to any local user via `ps` and is recorded in shell history.
+# The DB password now comes from (in order): the web config, the
+# PIDOORS_DB_PASS env var, or an interactive prompt.
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --db-pass)
-            DB_PASS_ARG="$2"
-            shift 2
+        --db-pass|--db-pass=*)
+            fail "--db-pass is no longer accepted (it leaks via ps/history)."
+            echo "  Set the PIDOORS_DB_PASS environment variable instead, e.g.:"
+            echo "    sudo PIDOORS_DB_PASS=secret ./server-update.sh"
+            echo "  or simply run the script and enter it when prompted."
+            exit 1
             ;;
         *)
             fail "Unknown argument: $1"
-            echo "  Usage: sudo ./server-update.sh [--db-pass PASSWORD]"
+            echo "  Usage: sudo ./server-update.sh"
             exit 1
             ;;
     esac
@@ -114,17 +193,29 @@ TMPDIR=$(mktemp -d /tmp/pidoors-server-update-XXXXXX)
 TARBALL="$TMPDIR/release.tar.gz"
 
 info "Downloading release $LATEST_TAG..."
-curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || \
-curl -sfL --connect-timeout 15 --max-time 120 "https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz" -o "$TARBALL" 2>/dev/null || {
-    fail "Failed to download release $LATEST_TAG"
+# Only the published release ASSET (releases/download/...) has a matching
+# .sha256 asset we can verify against. The GitHub auto-generated source
+# archive (archive/refs/tags/...) is NOT covered by our published checksum,
+# so we must NOT silently fall back to it and then skip verification —
+# that would defeat the supply-chain check. Track the source explicitly.
+ASSET_URL="https://github.com/$REPO/releases/download/$LATEST_TAG/$LATEST_TAG.tar.gz"
+SHA256_URL="${ASSET_URL}.sha256"
+
+if ! curl -sfL --connect-timeout 15 --max-time 120 "$ASSET_URL" -o "$TARBALL" 2>/dev/null; then
+    fail "Failed to download release asset $LATEST_TAG"
+    fail "A signed release asset with a published .sha256 is required."
     exit 1
-}
+fi
 
 if [ ! -s "$TARBALL" ]; then
     fail "Downloaded tarball is empty"
     exit 1
 fi
 ok "Downloaded"
+
+# Verify the tarball against its published checksum BEFORE extracting.
+# Fails secure: any download/tooling/mismatch error aborts the update.
+verify_tarball_checksum "$TARBALL" "$SHA256_URL" || exit 1
 
 info "Extracting..."
 tar xzf "$TARBALL" -C "$TMPDIR" || {
@@ -325,9 +416,11 @@ DB_PASS=""
 DB_USER="pidoors"
 DB_HOST="localhost"
 DB_NAME="access"
-# Try --db-pass argument first
-if [ -n "$DB_PASS_ARG" ]; then
-    DB_PASS="$DB_PASS_ARG"
+# Take the password from the environment first (PIDOORS_DB_PASS) — this keeps
+# it out of argv/ps/shell history. Falls back to config.php below, then to an
+# interactive prompt just before the migration runs.
+if [ -n "${PIDOORS_DB_PASS:-}" ]; then
+    DB_PASS="$PIDOORS_DB_PASS"
 fi
 # Read credentials from config.php
 if [ -f "$WEB_ROOT/includes/config.php" ]; then
@@ -349,6 +442,14 @@ if [ -f "$WEB_ROOT/includes/config.php" ]; then
         \$cfg = include '$WEB_ROOT/includes/config.php';
         if (is_array(\$cfg) && isset(\$cfg['sqldb2'])) echo \$cfg['sqldb2'];
     " 2>/dev/null) || DB_NAME="access"
+fi
+
+# If we still have no password but a migration needs to run, prompt for it
+# interactively (silently). This avoids ever taking it from argv. If stdin
+# is not a TTY (non-interactive run), we fall through to the warn branch.
+if [ -n "$MIGRATION_SQL" ] && [ -z "$DB_PASS" ] && [ -t 0 ]; then
+    read -rs -p "  Enter database password for $DB_USER@$DB_HOST: " DB_PASS
+    echo
 fi
 
 if [ -n "$MIGRATION_SQL" ] && [ -n "$DB_PASS" ]; then

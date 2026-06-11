@@ -371,14 +371,16 @@ if ($resource === 'auth') {
 
                 $password_valid = false;
                 $needs_upgrade = false;
+                $needs_reset = false;
 
                 if ($user) {
                     if (strlen($user['user_pass']) === 32 && ctype_xdigit($user['user_pass'])) {
-                        $legacy_hash = md5(($config['legacy_password_salt'] ?? '') . $password);
-                        if (hash_equals($user['user_pass'], $legacy_hash)) {
-                            $password_valid = true;
-                            $needs_upgrade = true;
-                        }
+                        // Legacy unsalted/weakly-salted MD5 hash. We no longer
+                        // verify against MD5 at all — it is cryptographically
+                        // broken. The account must reset its password (e.g. via
+                        // the password-reset flow) to migrate to bcrypt. Fail
+                        // closed: deny login regardless of the supplied password.
+                        $needs_reset = true;
                     } else {
                         $password_valid = password_verify($password, $user['user_pass']);
                         if ($password_valid && password_needs_rehash($user['user_pass'], PASSWORD_BCRYPT, ['cost' => 12])) {
@@ -415,6 +417,14 @@ if ($resource === 'auth') {
                         'isAdmin' => ($user['admin'] == 1),
                         'version' => $version,
                     ]]);
+                }
+
+                // Account is still on a legacy MD5 hash: deny login (fail closed)
+                // and direct the user to reset their password, rather than ever
+                // authenticating against the broken MD5 hash.
+                if ($needs_reset) {
+                    try { log_security_event($pdo, 'login_reset_required', $user['id'], "Login denied (legacy MD5, reset required) for: $login"); } catch (Exception $e) {}
+                    json_error('Your password must be reset before you can sign in. Please use the "Forgot password" / password reset flow.', 403);
                 }
 
                 // Failed login — single unified error message (no attempt count, no deactivation hint)
@@ -1010,6 +1020,9 @@ if ($resource === 'cards') {
             $c['group_id'] = $c['group_id'] !== null ? (int)$c['group_id'] : null;
             $c['schedule_id'] = $c['schedule_id'] !== null ? (int)$c['schedule_id'] : null;
             $c['daily_scan_limit'] = $c['daily_scan_limit'] !== null ? (int)$c['daily_scan_limit'] : null;
+            // Never surface cardholder PIN codes in API responses. PINs stay in
+            // the DB (the controller matches them) but must not leak to clients.
+            unset($c['pin_code']);
         }
         unset($c);
         json_success(['cards' => $cards]);
@@ -1081,9 +1094,20 @@ if ($resource === 'cards') {
                 $group_id = !empty(trim($data['group_id'] ?? '')) ? (int)$data['group_id'] : $default_group;
                 $schedule_id = !empty(trim($data['schedule_id'] ?? '')) ? (int)$data['schedule_id'] : $default_schedule;
 
+                // The Wiegand-derived card_id is only included when the CSV
+                // actually supplies it. We never invent one server-side — when
+                // absent it stays NULL and the controller enrolls it on first
+                // scan. Storing a fabricated value would break card matching.
+                $csv_card_id = trim($data['card_id'] ?? '');
+                $has_card_id = ($csv_card_id !== '');
+
                 try {
-                    $stmt = $pdo_access->prepare("INSERT INTO cards (user_id, facility, firstname, lastname, doors, active, email, phone, department, employee_id, company, title, notes, group_id, schedule_id, valid_from, valid_until, pin_code, daily_scan_limit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->execute([
+                    $stmt = $pdo_access->prepare("INSERT INTO cards (" . ($has_card_id ? "card_id, " : "") . "user_id, facility, firstname, lastname, doors, active, email, phone, department, employee_id, company, title, notes, group_id, schedule_id, valid_from, valid_until, pin_code, daily_scan_limit) VALUES (" . ($has_card_id ? "?, " : "") . "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $insert_params = [];
+                    if ($has_card_id) {
+                        $insert_params[] = $csv_card_id;
+                    }
+                    array_push($insert_params,
                         $user_id,
                         trim($data['facility'] ?? ''),
                         trim($data['firstname'] ?? ''),
@@ -1102,16 +1126,20 @@ if ($resource === 'cards') {
                         !empty(trim($data['valid_from'] ?? '')) ? trim($data['valid_from']) : null,
                         !empty(trim($data['valid_until'] ?? '')) ? trim($data['valid_until']) : null,
                         trim($data['pin_code'] ?? ''),
-                        !empty(trim($data['daily_scan_limit'] ?? '')) ? min(999, max(0, (int)$data['daily_scan_limit'])) : null,
-                    ]);
+                        !empty(trim($data['daily_scan_limit'] ?? '')) ? min(999, max(0, (int)$data['daily_scan_limit'])) : null
+                    );
+                    $stmt->execute($insert_params);
 
-                    // Handle master card
+                    // Handle master card. master_cards.card_id must hold the REAL
+                    // Wiegand card_id (not the cards-table auto-increment id), so
+                    // the controller can match a scanned master card. Only create
+                    // the entry when the CSV actually supplied a card_id — without
+                    // it there is nothing for the controller to match against.
                     $is_master = isset($data['master']) && in_array(strtolower(trim($data['master'])), ['1', 'yes', 'true']);
-                    if ($is_master) {
-                        $new_cid = (int)$pdo_access->lastInsertId();
+                    if ($is_master && $has_card_id) {
                         try {
                             $pdo_access->prepare("INSERT INTO master_cards (card_id, user_id, facility, description, active) VALUES (?, ?, ?, ?, 1)")
-                                ->execute([$new_cid, $user_id, trim($data['facility'] ?? ''), trim($data['firstname'] ?? '') . ' ' . trim($data['lastname'] ?? '')]);
+                                ->execute([$csv_card_id, $user_id, trim($data['facility'] ?? ''), trim($data['firstname'] ?? '') . ' ' . trim($data['lastname'] ?? '')]);
                         } catch (PDOException $e) { /* master_cards table may not exist */ }
                     }
 
@@ -1136,10 +1164,13 @@ if ($resource === 'cards') {
     if ($id === 'export' && $method === 'GET') {
         require_admin_auth();
         $cards = $pdo_access->query("
+            -- pin_code is deliberately excluded: cardholder PINs must never be
+            -- written into a downloadable export. They remain in the DB for the
+            -- controller to match, but are not surfaced to API/CSV consumers.
             SELECT c.card_id, c.user_id, c.facility, c.firstname, c.lastname, c.email, c.phone,
                    c.department, c.employee_id, c.company, c.title, c.notes,
                    c.group_id, c.schedule_id, c.valid_from, c.valid_until,
-                   c.pin_code, c.daily_scan_limit,
+                   c.daily_scan_limit,
                    CASE WHEN mc.id IS NOT NULL THEN 1 ELSE 0 END AS master
             FROM cards c LEFT JOIN master_cards mc ON c.card_id = mc.card_id
             ORDER BY c.lastname, c.firstname
@@ -1165,6 +1196,8 @@ if ($resource === 'cards') {
         $card = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$card) json_error('Card not found', 404);
         $card['active'] = (int)$card['active'];
+        // Never surface the cardholder PIN code in API responses.
+        unset($card['pin_code']);
         json_success(['card' => $card]);
     }
 
@@ -1179,10 +1212,14 @@ if ($resource === 'cards') {
         $check->execute([$user_id]);
         if ($check->fetch()) json_error('A card with this number already exists');
 
-        // Generate card_id if not provided (hex identifier for Wiegand matching)
+        // card_id is the hex of the full Wiegand bitstring computed by the
+        // controller. The server must NEVER invent one: a random value would
+        // never match what the reader produces, permanently breaking the card.
+        // Leave it NULL when not supplied so the controller can enroll the real
+        // card_id on first scan.
         $card_id = trim($input['card_id'] ?? '');
-        if (empty($card_id)) {
-            $card_id = bin2hex(random_bytes(4));
+        if ($card_id === '') {
+            $card_id = null;
         }
 
         $stmt = $pdo_access->prepare("INSERT INTO cards (card_id, user_id, facility, firstname, lastname, doors, active, group_id, schedule_id, valid_from, valid_until, daily_scan_limit, email, phone, department, employee_id, company, title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -1830,14 +1867,13 @@ if ($resource === 'profile') {
         $user = $stmt->fetch();
         if (!$user) json_error('User not found', 404);
 
-        // Support legacy MD5 password verification
-        $password_valid = false;
+        // We never verify against legacy MD5 hashes (they are cryptographically
+        // broken). An account still on an MD5 hash cannot change its password
+        // here — it must go through the password-reset flow instead. Fail closed.
         if (strlen($user['user_pass']) === 32 && ctype_xdigit($user['user_pass'])) {
-            $legacy_hash = md5(($config['legacy_password_salt'] ?? '') . $current);
-            $password_valid = hash_equals($user['user_pass'], $legacy_hash);
-        } else {
-            $password_valid = password_verify($current, $user['user_pass']);
+            json_error('Your password must be reset before it can be changed. Please use the password reset flow.', 403);
         }
+        $password_valid = password_verify($current, $user['user_pass']);
         if (!$password_valid) {
             json_error('Current password is incorrect');
         }
@@ -2315,9 +2351,45 @@ if ($resource === 'certs' && $id === 'sign' && $method === 'POST') {
     $csr_pem = $input['csr'] ?? '';
     $door_name = preg_replace('/[^a-z0-9_]/', '', $input['door_name'] ?? '');
     $door_ip = filter_var($input['door_ip'] ?? '', FILTER_VALIDATE_IP) ?: '';
+    $enroll_token_input = $input['enrollment_token'] ?? '';
 
     if (empty($db_user_input) || empty($db_pass_input) || empty($csr_pem) || empty($door_name)) {
         json_error('Missing required fields: db_user, db_pass, csr, door_name');
+    }
+
+    // ── Enrollment-secret gate ──────────────────────────────────────────────
+    // The DB credentials alone are NOT sufficient to sign a controller cert:
+    // they are a shared secret every controller already holds, so anyone who
+    // captured them could mint trusted certs. Require an ADDITIONAL, non-shared
+    // enrollment secret configured server-side. Fail CLOSED if it is unset.
+    $enroll_token_cfg = (string)($config['enrollment_token'] ?? '');
+    if ($enroll_token_cfg === '') {
+        try { log_security_event($pdo, 'cert_sign_denied', null, "Cert signing requested for '$door_name' but enrollment_token is not configured"); } catch (Exception $e) {}
+        json_error('Certificate enrollment is disabled on this server (enrollment_token not configured).', 403);
+    }
+    // Constant-time comparison; deny if the caller's token does not match.
+    if (!is_string($enroll_token_input) || !hash_equals($enroll_token_cfg, $enroll_token_input)) {
+        try { log_security_event($pdo, 'cert_sign_denied', null, "Cert signing rejected (bad enrollment token) for '$door_name'"); } catch (Exception $e) {}
+        json_error('Invalid or missing enrollment token.', 403);
+    }
+
+    // ── Rate limiting ───────────────────────────────────────────────────────
+    // Throttle signing attempts per source IP to blunt brute-forcing of the
+    // enrollment token and abuse of the signing capability.
+    $cert_ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $cert_window = 3600;   // seconds
+    $cert_max = 10;        // max signing attempts per IP per window
+    try {
+        $cert_rate = $pdo->prepare("SELECT COUNT(*) FROM audit_logs WHERE event_type IN ('cert_signed', 'cert_sign_denied', 'cert_sign_failed') AND ip_address = ? AND created_at > DATE_SUB(NOW(), INTERVAL ? SECOND)");
+        $cert_rate->execute([$cert_ip, $cert_window]);
+        if ((int)$cert_rate->fetchColumn() >= $cert_max) {
+            try { log_security_event($pdo, 'cert_sign_denied', null, "Cert signing rate-limited for '$door_name' from $cert_ip"); } catch (Exception $e) {}
+            json_error('Too many certificate signing attempts. Try again later.', 429);
+        }
+    } catch (PDOException $e) {
+        // If we cannot evaluate the rate limit, fail closed rather than allow
+        // unbounded signing attempts.
+        json_error('Unable to process enrollment request. Try again later.', 503);
     }
 
     // Verify DB credentials by attempting a connection
@@ -2329,6 +2401,7 @@ if ($resource === 'certs' && $id === 'sign' && $method === 'POST') {
             [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]
         );
     } catch (PDOException $e) {
+        try { log_security_event($pdo, 'cert_sign_denied', null, "Cert signing rejected (bad DB credentials) for '$door_name'"); } catch (Exception $e2) {}
         json_error('Invalid database credentials', 403);
     }
 
@@ -2359,8 +2432,10 @@ if ($resource === 'certs' && $id === 'sign' && $method === 'POST') {
     // Sign with CA — use temp serial file to avoid needing write access to /etc/mysql/ssl/
     $serial_tmp = tempnam(sys_get_temp_dir(), 'pidoors_serial_');
     file_put_contents($serial_tmp, dechex(time()) . "\n");
+    // Lifetime shortened from 10y to 2y (730 days) to limit blast radius if a
+    // controller key is compromised and force periodic re-enrollment.
     $cmd = sprintf(
-        'openssl x509 -req -days 3650 -in %s -CA %s -CAkey %s -CAserial %s -out %s -extfile %s 2>&1',
+        'openssl x509 -req -days 730 -in %s -CA %s -CAkey %s -CAserial %s -out %s -extfile %s 2>&1',
         escapeshellarg($csr_tmp),
         escapeshellarg($ca_cert),
         escapeshellarg($ca_key),
@@ -2382,8 +2457,12 @@ if ($resource === 'certs' && $id === 'sign' && $method === 'POST') {
     @unlink($serial_tmp);
 
     if (empty($signed_cert) || strpos($signed_cert, '-----BEGIN CERTIFICATE-----') === false) {
+        try { log_security_event($pdo, 'cert_sign_failed', null, "Cert signing failed for '$door_name' from " . ($_SERVER['REMOTE_ADDR'] ?? 'unknown')); } catch (Exception $e) {}
         json_error('Certificate signing failed: ' . implode(' ', $output), 500);
     }
+
+    // Audit-log each successful signing for traceability.
+    try { log_security_event($pdo, 'cert_signed', null, "Signed 730-day cert for door '$door_name'" . ($door_ip !== '' ? " (IP $door_ip)" : '') . " from " . ($_SERVER['REMOTE_ADDR'] ?? 'unknown')); } catch (Exception $e) {}
 
     json_success(['cert' => $signed_cert], 'Certificate signed');
 }

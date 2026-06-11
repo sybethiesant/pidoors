@@ -139,6 +139,23 @@ rm -rf "$STAGING"
 TARBALL_SIZE=$(du -h "$TARBALL" | cut -f1)
 ok "Created $TARBALL ($TARBALL_SIZE)"
 
+# Generate a SHA-256 checksum asset alongside the tarball.
+# Updaters (server-update.sh, pidoors-update.sh) download this and verify
+# the tarball with `sha256sum -c` BEFORE extracting — supply-chain integrity.
+# The sum file references the tarball by basename only so it verifies
+# regardless of the directory it is downloaded into.
+SHA256_FILE="${TARBALL}.sha256"
+if command -v sha256sum > /dev/null 2>&1; then
+    ( cd "$OUTDIR" && sha256sum "$(basename "$TARBALL")" > "$(basename "$SHA256_FILE")" )
+elif command -v shasum > /dev/null 2>&1; then
+    # macOS / systems without coreutils sha256sum
+    ( cd "$OUTDIR" && shasum -a 256 "$(basename "$TARBALL")" > "$(basename "$SHA256_FILE")" )
+else
+    fail "Neither sha256sum nor shasum found — cannot generate release checksum."
+    exit 1
+fi
+ok "Created checksum $SHA256_FILE"
+
 if [ "$PUBLISH" = true ]; then
     echo
     info "Publishing release..."
@@ -160,14 +177,17 @@ if [ "$PUBLISH" = true ]; then
     git push origin main --tags
     ok "Pushed to origin"
 
-    # Create GitHub release with the tarball as an asset
-    gh release create "$TAG" "$TARBALL" --title "$TAG" --notes "Release $VERSION" --latest
-    ok "GitHub release created with asset: $TARBALL"
+    # Create GitHub release with the tarball AND its checksum as assets.
+    # Publishing the .sha256 is what lets updaters verify integrity before
+    # extracting/deploying.
+    gh release create "$TAG" "$TARBALL" "$SHA256_FILE" --title "$TAG" --notes "Release $VERSION" --latest
+    ok "GitHub release created with assets: $TARBALL, $SHA256_FILE"
 else
     echo
     info "Tarball ready: $TARBALL"
+    info "Checksum ready: $SHA256_FILE"
     info "To publish: ./build-release.sh --publish"
-    info "Or manually: gh release create $TAG $TARBALL --title \"$TAG\" --notes \"Release $VERSION\""
+    info "Or manually: gh release create $TAG $TARBALL $SHA256_FILE --title \"$TAG\" --notes \"Release $VERSION\""
 fi
 
 echo

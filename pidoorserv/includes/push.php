@@ -8,7 +8,13 @@
 define('PIDOORS_CA_PATH', '/var/www/pidoors/ca.pem');
 
 /**
- * Build SSL curl options: verify against CA if available, else disable verification.
+ * Build SSL curl options. FAILS CLOSED: TLS verification is always enforced and
+ * pinned to our CA. If the CA file is missing or empty we CANNOT verify the
+ * controller's certificate, so we return null and callers MUST refuse to send.
+ * We never disable VERIFYPEER/VERIFYHOST, because doing so would leak the
+ * per-door unlock api_key (sent as a Bearer token) to any host answering the IP.
+ *
+ * @return array|null curl SSL options on success, or null if the CA is unavailable.
  */
 function _push_ssl_opts() {
     if (file_exists(PIDOORS_CA_PATH) && filesize(PIDOORS_CA_PATH) > 0) {
@@ -18,10 +24,8 @@ function _push_ssl_opts() {
             CURLOPT_CAINFO         => PIDOORS_CA_PATH,
         ];
     }
-    return [
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => 0,
-    ];
+    // No usable CA pin available — cannot establish a trusted channel. Fail closed.
+    return null;
 }
 
 /**
@@ -50,6 +54,14 @@ function push_to_controller($pdo_access, $door_name, $command, $body = []) {
     $key  = $door['api_key'];
     $url  = "https://{$ip}:{$port}/cmd/{$command}";
 
+    // Fail closed: refuse to push if we cannot verify the controller's TLS cert.
+    // Sending the Bearer api_key over an unverified channel would leak the
+    // door-unlock key to any host answering the IP. Fall back to DB flags instead.
+    $ssl_opts = _push_ssl_opts();
+    if ($ssl_opts === null) {
+        return ['ok' => false, 'fallback' => true, 'reason' => 'ca_missing'];
+    }
+
     // Load push timeout from settings, default 5s
     // TLS handshake on Pi Zero hardware can take 1-2s, so 3s was too tight
     $timeout = 5;
@@ -69,7 +81,7 @@ function push_to_controller($pdo_access, $door_name, $command, $body = []) {
             "Authorization: Bearer {$key}",
         ],
         CURLOPT_POSTFIELDS     => json_encode($body ?: new \stdClass()),
-    ] + _push_ssl_opts());
+    ] + $ssl_opts);
 
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -117,6 +129,13 @@ function ping_controller($pdo_access, $door_name) {
     $key  = $door['api_key'];
     $url  = "https://{$ip}:{$port}/ping";
 
+    // Fail closed: refuse to send the Bearer api_key if we cannot verify the
+    // controller's TLS cert (CA missing/empty). See _push_ssl_opts().
+    $ssl_opts = _push_ssl_opts();
+    if ($ssl_opts === null) {
+        return ['ok' => false, 'reason' => 'ca_missing'];
+    }
+
     $timeout = 5;
     $ts = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'push_timeout'")->fetch(PDO::FETCH_ASSOC);
     if ($ts && $ts['setting_value']) {
@@ -134,7 +153,7 @@ function ping_controller($pdo_access, $door_name) {
             "Authorization: Bearer {$key}",
         ],
         CURLOPT_POSTFIELDS     => '{}',
-    ] + _push_ssl_opts());
+    ] + $ssl_opts);
 
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -183,11 +202,23 @@ function poll_all_door_status($pdo_access) {
 
     if (empty($doors)) return;
 
+    // Fail closed: if we cannot verify controller TLS certs (CA missing/empty),
+    // do not send any pings — that would leak each door's Bearer api_key over an
+    // unverified channel. Mark all push-enabled doors unavailable and bail.
+    $ssl_opts = _push_ssl_opts();
+    if ($ssl_opts === null) {
+        $unavail_stmt = $pdo_access->prepare(
+            "UPDATE doors SET push_available = 0 WHERE name = ?"
+        );
+        foreach ($doors as $door) {
+            $unavail_stmt->execute([$door['name']]);
+        }
+        return;
+    }
+
     // Build curl_multi handles
     $mh = curl_multi_init();
     $handles = [];
-
-    $ssl_opts = _push_ssl_opts();
 
     foreach ($doors as $door) {
         $url = "https://{$door['ip_address']}:{$door['listen_port']}/ping";

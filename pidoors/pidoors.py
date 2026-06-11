@@ -8,9 +8,9 @@ Features:
 - OSDP encrypted reader support
 - NFC/RFID reader support (PN532, MFRC522)
 - Local 24-hour cache for offline operation
-- Persistent master cards (never expire for emergency access)
+- Persistent master cards for emergency access (bounded fail-open during outages)
 - Time-based access schedules
-- Anti-passback support
+- Lockdown mode (deny all non-master cards when a door is locked down)
 - Door sensor monitoring
 - REX (Request to Exit) button support
 - Health check/heartbeat to server
@@ -37,6 +37,7 @@ import socket
 import fcntl
 import subprocess
 import hmac
+import tempfile
 
 # Try to import optional dependencies
 try:
@@ -77,8 +78,19 @@ CUSTOM_FORMATS_FILE = os.path.join(CONF_DIR, 'formats.json')
 SSL_CA_PATH = os.path.join(CONF_DIR, 'ca.pem')
 SSL_CA_STALE_PATH = os.path.join(CONF_DIR, 'ca.pem.stale')
 CACHE_DURATION = 86400  # 24 hours in seconds
-HEARTBEAT_INTERVAL = 300  # seconds (server-initiated pings handle status; heartbeat is safety net)
+# Default heartbeat fallback. The EFFECTIVE interval is read at runtime from the
+# server-provided door/global settings (see get_heartbeat_interval) so it stays
+# in sync with the server's offline threshold (3x heartbeat_interval) and
+# healthy doors don't flap offline. This value is only used until settings load.
+HEARTBEAT_INTERVAL = 300  # seconds (fallback only)
 DB_RETRY_INTERVAL = 30  # seconds
+# Master cards are persistent emergency credentials. If the DB is unreachable we
+# fail OPEN on them (emergency access must work during an outage) — but only for
+# a BOUNDED window. A master card that has not been re-verified against the DB
+# within this many days is treated as expired locally, so an attacker who
+# induces a prolonged outage cannot keep using a card that was meant to be
+# revoked. Explicit revocations (seen while online) take effect immediately.
+MASTER_CARD_MAX_STALE_DAYS = 7
 
 # Global variables
 zone = None
@@ -89,7 +101,7 @@ repeat_read_count = 0
 repeat_read_timeout = time.time()
 db_connected = False
 last_db_attempt = 0
-ssl_mode = None  # None = not determined, 'tls' = using ca.pem, 'plain' = ssl_disabled
+ssl_mode = None  # None = not yet connected, 'tls' = verified TLS (the only allowed mode)
 local_cache = {}
 cache_last_sync = 0
 heartbeat_thread = None
@@ -132,57 +144,38 @@ wiegand_lock = threading.Lock() # For legacy Wiegand stream access
 gate_lock = threading.Lock()   # For gate state mutations
 
 
-def _try_db_connect(kwargs, use_tls):
-    """Attempt a database connection with or without TLS."""
+def _try_db_connect(kwargs):
+    """Attempt a verified-TLS database connection.
+
+    SECURITY: This is access-control software. The DB carries card/credential
+    data and the access decisions derived from it, so the channel MUST be
+    encrypted AND the server certificate MUST be verified against a CA that was
+    provisioned out-of-band (conf/ca.pem). We therefore NEVER pass ssl_disabled
+    and NEVER fall back to cleartext — an un-verifiable DB connection is a hard
+    failure (treated as offline) so we fail SECURE rather than leaking
+    credentials over the wire.
+    """
     kw = dict(kwargs)
-    if use_tls and os.path.isfile(SSL_CA_PATH) and os.path.getsize(SSL_CA_PATH) > 0:
-        kw['ssl'] = {'ca': SSL_CA_PATH}
-    else:
-        kw['ssl_disabled'] = True
+    # ssl_verify_cert / ssl_verify_identity require pymysql >= 1.0; harmless on
+    # older versions where the 'ssl' dict alone enables verification.
+    kw['ssl'] = {'ca': SSL_CA_PATH}
+    kw['ssl_verify_cert'] = True
+    kw['ssl_verify_identity'] = True
     return pymysql.connect(**kw)
-
-
-def _fetch_server_ca(sqladdr):
-    """Download ca.pem from the server's web root. Returns True if saved."""
-    import urllib.request
-    url = f"http://{sqladdr}/ca.pem"
-    try:
-        req = urllib.request.Request(url, method='GET')
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = resp.read()
-            # Sanity check: must look like a PEM certificate
-            if b'-----BEGIN CERTIFICATE-----' not in data:
-                debug(f"TLS: {url} returned non-certificate data, ignoring")
-                return False
-            with open(SSL_CA_PATH, 'wb') as f:
-                f.write(data)
-            # Fix ownership if running as root (install/update context)
-            try:
-                import pwd
-                pw = pwd.getpwnam('pidoors')
-                os.chown(SSL_CA_PATH, pw.pw_uid, pw.pw_gid)
-            except Exception:
-                pass
-            os.chmod(SSL_CA_PATH, 0o600)
-            report(f"TLS: downloaded fresh ca.pem from server")
-            return True
-    except Exception as e:
-        debug(f"TLS: could not fetch {url}: {e}")
-        return False
 
 
 def get_db_connection(timeout=5):
     """
-    Create a database connection with self-healing TLS.
+    Create a verified-TLS database connection, or fail closed.
 
-    Flow:
-    1. If ssl_mode is already determined, use it directly.
-    2. If ca.pem exists, try TLS. On SSL error:
-       a. Fetch fresh ca.pem from http://<server>/ca.pem
-       b. If new cert works, use TLS going forward.
-       c. If fetch fails or still errors, fall back to plain.
-    3. If no ca.pem, try to fetch one from server.
-       If fetched, use TLS. Otherwise, use plain.
+    A CA certificate (conf/ca.pem) MUST have been provisioned out-of-band
+    (during install/provisioning over a trusted channel). It is NEVER fetched
+    over plaintext HTTP at runtime — doing so would let anyone on the path
+    inject their own CA and MITM the credential/access-decision traffic.
+
+    If conf/ca.pem is missing/empty, or the verified-TLS connection fails for
+    any reason, this returns None (caller treats the DB as offline and uses the
+    local cache). There is NO cleartext / ssl_disabled fallback.
     """
     global ssl_mode
 
@@ -198,6 +191,14 @@ def get_db_connection(timeout=5):
     if not all([sqladdr, sqluser, sqlpass, sqldb]):
         return None
 
+    # Hard requirement: a provisioned CA must exist. Without it we cannot verify
+    # the server, so we refuse to connect (offline) rather than fall back to an
+    # unencrypted or unverified channel.
+    if not (os.path.isfile(SSL_CA_PATH) and os.path.getsize(SSL_CA_PATH) > 0):
+        report(f"TLS: no provisioned CA at {SSL_CA_PATH} — refusing DB connection "
+               f"(provision ca.pem out-of-band). Treating DB as offline.")
+        return None
+
     kwargs = {
         'host': sqladdr,
         'user': sqluser,
@@ -206,74 +207,17 @@ def get_db_connection(timeout=5):
         'connect_timeout': timeout,
     }
 
-    # Fast path: mode already determined from a previous connection
-    if ssl_mode == 'tls':
-        try:
-            return _try_db_connect(kwargs, use_tls=True)
-        except Exception as e:
-            err = str(e).upper()
-            if 'SSL' in err or 'CERTIFICATE' in err or 'TLS' in err:
-                report(f"TLS: connection failed with cached cert, re-negotiating: {e}")
-                ssl_mode = None  # Reset and fall through to negotiation
-            else:
-                raise  # Non-TLS error, propagate normally
-
-    if ssl_mode == 'plain':
-        return _try_db_connect(kwargs, use_tls=False)
-
-    # ── First connection or re-negotiation ──
-
-    has_cert = os.path.isfile(SSL_CA_PATH) and os.path.getsize(SSL_CA_PATH) > 0
-
-    # Step 1: If we have a cert, try TLS
-    if has_cert:
-        try:
-            conn = _try_db_connect(kwargs, use_tls=True)
-            ssl_mode = 'tls'
-            report("TLS: connected with existing ca.pem")
-            return conn
-        except Exception as e:
-            err = str(e).upper()
-            if 'SSL' not in err and 'CERTIFICATE' not in err and 'TLS' not in err:
-                raise  # Non-TLS error, don't try to heal
-
-            report(f"TLS: existing ca.pem failed: {e}")
-
-            # Move stale cert out of the way
-            try:
-                os.rename(SSL_CA_PATH, SSL_CA_STALE_PATH)
-                debug("TLS: moved stale ca.pem to ca.pem.stale")
-            except OSError:
-                pass
-
-    # Step 2: Try to fetch a (fresh) cert from the server
-    if _fetch_server_ca(sqladdr):
-        try:
-            conn = _try_db_connect(kwargs, use_tls=True)
-            ssl_mode = 'tls'
-            report("TLS: connected with fresh ca.pem from server")
-            # Clean up stale cert
-            try:
-                os.remove(SSL_CA_STALE_PATH)
-            except OSError:
-                pass
-            return conn
-        except Exception as e:
-            report(f"TLS: fresh ca.pem also failed: {e}")
-            # Remove the bad cert
-            try:
-                os.remove(SSL_CA_PATH)
-            except OSError:
-                pass
-
-    # Step 3: Fall back to plain (no TLS)
     try:
-        conn = _try_db_connect(kwargs, use_tls=False)
-        ssl_mode = 'plain'
-        report("TLS: server has no TLS, using plain connection")
+        conn = _try_db_connect(kwargs)
+        if ssl_mode != 'tls':
+            ssl_mode = 'tls'
+            report("TLS: connected to DB with verified certificate")
         return conn
-    except Exception:
-        raise  # Genuine connection failure, propagate
+    except Exception as e:
+        # Any failure (including TLS/cert errors) is a HARD failure. We do not
+        # downgrade to cleartext. Propagate so callers handle it as DB-down.
+        debug(f"TLS: verified DB connection failed: {e}")
+        raise
 
 
 def get_local_ip():
@@ -368,10 +312,34 @@ def debug(message):
         print(f"[{timestamp}] {message}")
 
 
+def _reseed_reader_runtime_keys():
+    """Re-add the per-reader runtime keys that setup_readers injects.
+
+    read_configs() reloads config.json from disk, which REPLACES the global
+    `config` dict with fresh reader dicts that lack the runtime keys
+    setup_readers added ("stream", "timer", "name", "unlocked"). Without these,
+    the next Wiegand pulse KeyErrors inside the GPIO callback (data_pulse /
+    wiegand_stream_done) and kills the shared event thread. Re-seed them so the
+    readers keep working after a SIGHUP rehash. Pins are unchanged, so we do NOT
+    re-register GPIO edge detection here."""
+    for name in config:
+        if name == "<zone>" or not isinstance(config[name], dict):
+            continue
+        reader = config[name]
+        if reader.get("d0") and reader.get("d1"):
+            reader.setdefault("stream", "")
+            reader.setdefault("timer", None)
+            reader["name"] = name
+            reader.setdefault("unlocked", False)
+
+
 def rehash(sig=None, frame=None):
     """Reload configurations and sync cache"""
     report("Rehashing configuration")
     read_configs()
+    # read_configs replaced the global config; restore reader runtime keys so the
+    # Wiegand GPIO callbacks don't KeyError on the next scan.
+    _reseed_reader_runtime_keys()
     sync_cache_from_server()
 
 
@@ -402,9 +370,30 @@ def load_json(filename):
 
 
 def save_json(filename, data):
-    """Save data to a JSON file"""
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=2, default=str)
+    """Save data to a JSON file ATOMICALLY.
+
+    Write to a temp file in the SAME directory, flush + fsync it to durable
+    storage, then os.replace() it over the target. os.replace is atomic on the
+    same filesystem, so a power loss mid-write leaves either the old complete
+    file or the new complete file — never a truncated one that load_* would
+    reset to {} (which, for the master-card / cache files, means silently
+    losing offline access data)."""
+    dir_name = os.path.dirname(filename) or '.'
+    # Temp file in the same dir guarantees os.replace stays on one filesystem.
+    fd, tmp_path = tempfile.mkstemp(prefix='.tmp-', dir=dir_name)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, filename)
+    except Exception:
+        # Clean up the temp file on any failure so we don't leave litter behind.
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 # ============================================================
@@ -526,6 +515,10 @@ def sync_master_cards_from_db(cursor):
         cursor.execute("SELECT card_id, user_id, facility, description, active FROM master_cards WHERE active = 1")
         db_master_cards = cursor.fetchall()
 
+        # This sync IS a fresh DB verification of every active master card, so
+        # stamp each with the current time. last_verified bounds how long a card
+        # keeps working during an induced outage (see MASTER_CARD_MAX_STALE_DAYS).
+        now_ts = time.time()
         new_master_cards = {}
         for mc in db_master_cards:
             key = f"{mc['facility']},{mc['user_id']}"
@@ -533,7 +526,8 @@ def sync_master_cards_from_db(cursor):
                 'card_id': mc['card_id'],
                 'user_id': mc['user_id'],
                 'facility': mc['facility'],
-                'description': mc.get('description', 'Master Card')
+                'description': mc.get('description', 'Master Card'),
+                'last_verified': now_ts
             }
 
         with master_lock:
@@ -572,9 +566,17 @@ def verify_master_card_in_db(cursor, facility, user_id, card_id):
         result = cursor.fetchone()
 
         if result and result.get('active', 0) == 1:
+            # Successful online verification — refresh the local freshness stamp
+            # so the bounded fail-open window restarts from now.
+            key = f"{facility},{user_id}"
+            with master_lock:
+                if key in master_cards:
+                    master_cards[key]['last_verified'] = time.time()
+                    save_master_cards()
             return True
 
-        # Card not found or inactive - remove from local storage
+        # Card not found or inactive - remove from local storage (fail SECURE:
+        # an explicit revocation seen while online takes effect immediately).
         key = f"{facility},{user_id}"
         with master_lock:
             if key in master_cards:
@@ -586,7 +588,8 @@ def verify_master_card_in_db(cursor, facility, user_id, card_id):
 
     except Exception as e:
         debug(f"Error verifying master card: {e}")
-        # On error, allow access (fail-open for master cards only)
+        # On error, allow access (fail-open for master cards only). Caller logs
+        # this distinctly and the local-staleness check still bounds it.
         return True
 
 
@@ -595,6 +598,24 @@ def is_master_card(facility, user_id):
     key = f"{facility},{user_id}"
     with master_lock:
         return master_cards.get(key)
+
+
+def master_card_locally_expired(master_info):
+    """Return True if a locally-cached master card is too stale to honor offline.
+
+    A master card that has not been re-verified against the DB within
+    MASTER_CARD_MAX_STALE_DAYS is treated as expired so a revoked card cannot be
+    used forever during an induced outage. Missing/invalid timestamps are
+    treated as stale (fail secure). Returns False (still valid) only when a
+    fresh-enough timestamp is present."""
+    last_verified = master_info.get('last_verified')
+    try:
+        if last_verified is None:
+            return True  # No proof of freshness -> treat as stale
+        age = time.time() - float(last_verified)
+        return age > (MASTER_CARD_MAX_STALE_DAYS * 86400)
+    except (TypeError, ValueError):
+        return True  # Unparseable timestamp -> fail secure
 
 
 def get_master_card_info(facility, user_id):
@@ -653,15 +674,20 @@ def sync_cache_from_server():
 
         cursor = db.cursor(pymysql.cursors.DictCursor)
 
-        # Fetch all cards that have access to this zone
-        # Use FIND_IN_SET for proper comma-delimited matching (prevents "main" matching "maintenance")
+        # Fetch all cards that have access to this zone.
+        # Use FIND_IN_SET for proper comma-delimited matching (prevents "main"
+        # matching "maintenance"). FIND_IN_SET is whitespace-sensitive, so a
+        # doors value like "front, back" would NOT match zone "back" because of
+        # the leading space — yet both lookup paths strip spaces. Normalize by
+        # removing spaces from the column (REPLACE) before matching so the cache
+        # contents agree with the lookup logic and cards aren't silently missing.
         sql = """
             SELECT card_id, user_id, facility, bstr, firstname, lastname,
                    doors, active, group_id, schedule_id, valid_from, valid_until,
                    daily_scan_limit
             FROM cards
             WHERE active = 1
-              AND (FIND_IN_SET(%s, doors) > 0 OR doors = '*')
+              AND (FIND_IN_SET(%s, REPLACE(doors, ' ', '')) > 0 OR doors = '*')
         """
         cursor.execute(sql, (zone,))
         cards = cursor.fetchall()
@@ -717,9 +743,16 @@ def sync_cache_from_server():
 
         # Load global settings
         try:
-            cursor.execute("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('master_scans_hold_open', 'master_scans_release_hold')")
+            cursor.execute("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('master_scans_hold_open', 'master_scans_release_hold', 'heartbeat_interval')")
+            cached_settings = {}
             for row in cursor.fetchall():
                 _apply_global_setting(row['setting_key'], row['setting_value'])
+                cached_settings[row['setting_key']] = row['setting_value']
+            # Persist the global heartbeat_interval into the cache so
+            # get_heartbeat_interval can fall back to it when the door row
+            # doesn't carry its own value.
+            with cache_lock:
+                local_cache['settings'] = cached_settings
         except Exception:
             pass
 
@@ -945,10 +978,38 @@ def status_led_flash(times=3, interval=0.1):
 # GATE MODE
 # ============================================================
 
+def teardown_gate_io():
+    """Remove edge detection from any previously-registered gate input pins.
+
+    setup_gate_io runs on every cache sync. GPIO.add_event_detect raises
+    RuntimeError ("conflicting edge detection") if a callback is already
+    registered on a pin, so we must remove the OLD registrations before
+    re-adding (mirrors reconfigure_door_sensor). Output pins don't use edge
+    detection, so they don't need removal."""
+    global gate_input_pins, gate_clearance_pin
+    for pin in list(gate_input_pins.keys()):
+        try:
+            GPIO.remove_event_detect(pin)
+        except Exception:
+            pass
+    if gate_clearance_pin is not None:
+        try:
+            GPIO.remove_event_detect(gate_clearance_pin)
+        except Exception:
+            pass
+    gate_input_pins = {}
+    gate_clearance_pin = None
+
+
 def setup_gate_io(cfg):
     """Set up gate input/output GPIO pins from config."""
     global gate_enabled, gate_config, gate_input_pins, gate_output_pins, gate_stop_event
     global gate_clearance_pin, gate_clearance_clear
+
+    # Remove edge detection registered by a previous setup_gate_io call before
+    # we re-register below, otherwise the 2nd+ cache sync raises RuntimeError.
+    teardown_gate_io()
+
     gate_config = cfg or {}
     gate_input_pins = {}
     gate_output_pins = {}
@@ -1357,7 +1418,7 @@ def gate_grant_access(name):
 
 def apply_door_settings(door_info):
     """Apply gate config, LED config, and persisted hold state from DB door row."""
-    global gate_state, gate_held
+    global gate_state, gate_held, gate_enabled
     if not door_info:
         return
 
@@ -1377,6 +1438,18 @@ def apply_door_settings(door_info):
             gate_state = door_info.get('gate_state') or 'idle'
             gate_held = bool(door_info.get('gate_held'))
         debug(f"Gate restored: state={gate_state} held={gate_held}")
+    else:
+        # Gate mode turned OFF — tear down any gate IO and clear gate_enabled so
+        # scans/commands route back to standard door behavior. Without this,
+        # gate_enabled stays True from a previous sync and the door keeps
+        # behaving as a gate.
+        if gate_enabled:
+            report("Gate mode disabled — tearing down gate IO")
+            teardown_gate_io()
+        gate_enabled = False
+        with gate_lock:
+            gate_state = 'idle'
+            gate_held = False
 
     # Status LED config
     led_str = door_info.get('status_led_config')
@@ -1463,6 +1536,14 @@ def unlock_briefly(gpio):
     unlock_door()
     def _do_relock():
         time.sleep(unlock_time)
+        # Don't relock if the door was put into a held-open/unlocked state while
+        # this brief-unlock timer was pending (master hold gesture or admin Hold).
+        # Otherwise we physically lock a door the system believes is held open,
+        # and subsequent valid scans won't re-energize the latch — a lockout that
+        # persists until a manual release or service restart.
+        if config.get(zone, {}).get("unlocked"):
+            debug(f"{zone}: skipping scheduled relock — door is held open")
+            return
         lock_door()
     threading.Thread(target=_do_relock, daemon=True).start()
 
@@ -1555,7 +1636,11 @@ def validate_26bit_legacy(bstr):
         debug("Parity error in 26-bit Wiegand stream")
         return False
 
-    card_id = "%08x" % int(bstr, 2)
+    # Use full BYTE width (2 hex digits per byte) so this legacy path produces
+    # the SAME card_id as the format-registry path in wiegand_formats.py for the
+    # same physical card. 26 bits -> ceil(26/8)=4 bytes -> 8 hex digits.
+    hex_width = ((len(bstr) + 7) // 8) * 2
+    card_id = f"{int(bstr, 2):0{hex_width}x}"
     debug(f"26-bit card: facility={facility} user={user_id} card_id={card_id}")
 
     lookup_card(card_id, str(facility), str(user_id), bstr)
@@ -1580,7 +1665,11 @@ def validate_34bit_legacy(bstr):
         debug("Parity error in 34-bit Wiegand stream")
         return False
 
-    card_id = "%09x" % int(bstr, 2)
+    # Use full BYTE width (2 hex digits per byte) to match the format-registry
+    # path. 34 bits -> ceil(34/8)=5 bytes -> 10 hex digits (the old "%09x" was
+    # inconsistent and yielded a different card_id for the same card).
+    hex_width = ((len(bstr) + 7) // 8) * 2
+    card_id = f"{int(bstr, 2):0{hex_width}x}"
     debug(f"34-bit card: facility={facility} user={user_id} card_id={card_id}")
 
     lookup_card(card_id, str(facility), str(user_id), bstr)
@@ -1616,6 +1705,22 @@ def count_todays_granted_scans(user_id):
     return count
 
 
+def door_is_locked_down():
+    """Return True if this door's lockdown_mode is currently enabled.
+
+    lockdown_mode is an updatable doors field that the cache mirrors into
+    door_settings. When set, non-master cards are denied. Treated as a simple
+    truthy flag; absent/unset means not locked down."""
+    with cache_lock:
+        door_settings = local_cache.get('door_settings') or {}
+        val = door_settings.get('lockdown_mode')
+    try:
+        return bool(int(val)) if val is not None else False
+    except (TypeError, ValueError):
+        # Non-numeric truthy values (e.g. "on") still count as locked down.
+        return bool(val)
+
+
 def lookup_card(card_id, facility, user_id, bstr):
     """Look up card and determine if access should be granted"""
     global db_connected
@@ -1625,23 +1730,57 @@ def lookup_card(card_id, facility, user_id, bstr):
 
     debug(f"Looking up card: {card_key}")
 
-    # First check: Master cards (from persistent storage - never expires)
+    # First check: Master cards (persistent emergency credentials)
     master_info = get_master_card_info(facility, user_id)
     if master_info:
-        # Master card found in local storage
-        # If database is available, verify it's still active
+        # Master card found in local storage.
+        # If the database is reachable, verify it's still active. A successful
+        # verification refreshes the local freshness stamp; an explicit
+        # revocation denies immediately (fail secure).
+        verified_online = False
         if MYSQL_AVAILABLE and db_connected:
             if not verify_master_card_online(card_id, facility, user_id):
-                # Master card was revoked - deny access
+                # Master card was revoked or DB returned inactive - deny access
                 reject_card(user_id, "Master card revoked")
                 log_access(user_id, card_id, facility, False, "Master card revoked")
                 return
+            # NOTE: verify_master_card_online fails OPEN (returns True) on a DB
+            # error, so "True" does not guarantee a real online check happened.
+            # Re-read the freshness stamp to know whether we actually verified.
+            refreshed = get_master_card_info(facility, user_id)
+            if refreshed and not master_card_locally_expired(refreshed):
+                verified_online = True
+            master_info = refreshed or master_info
 
-        # Grant master card access
+        # If we could not freshly verify online, only honor the card while it is
+        # within the bounded offline window. Beyond that, a revoked master must
+        # stop working even during an induced outage.
+        if not verified_online and master_card_locally_expired(master_info):
+            reject_card(user_id, "Master card stale (not re-verified)")
+            log_access(user_id, card_id, facility, False,
+                       f"Master card expired locally (>{MASTER_CARD_MAX_STALE_DAYS}d unverified)")
+            return
+
         description = master_info.get('description', 'Master')
-        report(f"Master card access granted: {description}")
+        if verified_online:
+            report(f"Master card access granted (online-verified): {description}")
+            log_reason = "Master card"
+        else:
+            # Distinctly flag emergency fail-open grants so they stand out in the
+            # audit log and can be reviewed after an outage.
+            report(f"Master card access granted (FAIL-OPEN, DB unverified): {description}")
+            log_reason = "Master card (FAIL-OPEN: DB unverified)"
         open_door(user_id, "Master", is_master=True)
-        log_access(user_id, card_id, facility, True, "Master card")
+        log_access(user_id, card_id, facility, True, log_reason)
+        return
+
+    # Lockdown mode: when this door is locked down, deny ALL non-master cards.
+    # Master cards are handled above and intentionally bypass lockdown so
+    # responders can still get in. This is enforced BEFORE any DB/cache lookup so
+    # it holds even when the controller is offline (fail secure).
+    if door_is_locked_down():
+        reject_card(user_id, "Door is in lockdown")
+        log_access(user_id, card_id, facility, False, "Lockdown mode active")
         return
 
     # Try database lookup first (if available)
@@ -1752,6 +1891,10 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
                 VALUES (%s, %s, 1, %s, %s)
             """, (user_id, now, zone, myip))
             db.commit()
+            # Also record in the local JSON log so it is the single source of
+            # truth for the offline daily-scan-limit counter (see finding: online
+            # grants must not be invisible to count_todays_granted_scans).
+            log_access(user_id, card_id, facility, True, "Master card (DB)")
             return True
 
         # Look up regular card
@@ -1812,6 +1955,12 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
                 VALUES (%s, %s, %s, %s, %s)
             """, (user_id, now, 1 if granted else 0, zone, myip))
             db.commit()
+            # Mirror the grant/deny into the local JSON log so the offline
+            # daily-scan-limit counter (count_todays_granted_scans) sees ONLINE
+            # grants too. Without this the counter resets ~0 when the DB later
+            # drops, letting a user exceed their limit (up to 2x).
+            log_access(user_id, card_id, facility, granted,
+                       reason or ("Access granted (DB)" if granted else "Access denied (DB)"))
             return True
 
         else:
@@ -1830,6 +1979,9 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
             except pymysql.IntegrityError:
                 pass  # Card already exists
             reject_card(user_id, "Unknown card")
+            # Mirror the denial into the local JSON log for a consistent audit
+            # trail across the DB and offline paths.
+            log_access(user_id, card_id, facility, False, "Unknown card")
             return True
 
     except pymysql.Error as e:
@@ -1882,16 +2034,38 @@ def check_schedule(schedule_id, now):
     if not start_time or not end_time:
         return False  # No access on this day
 
-    # Parse time strings with error handling
+    # Normalize bounds to datetime.time before comparing. PyMySQL returns TIME
+    # columns as datetime.timedelta; comparing a timedelta to a datetime.time
+    # raises TypeError, which previously denied every scheduled card and — on
+    # this cache path, where only ValueError was caught — escaped and killed the
+    # scan thread.
     try:
-        if isinstance(start_time, str):
-            start_time = datetime.strptime(start_time, '%H:%M:%S').time()
-        if isinstance(end_time, str):
-            end_time = datetime.strptime(end_time, '%H:%M:%S').time()
+        start_time = _coerce_schedule_time(start_time)
+        end_time = _coerce_schedule_time(end_time)
+        if end_time < start_time:
+            # Overnight window (e.g. 22:00 -> 06:00): the allowed range wraps
+            # past midnight, so match if we're at/after start OR at/before end.
+            return current_time >= start_time or current_time <= end_time
         return start_time <= current_time <= end_time
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         debug(f"Schedule time parsing error: {e}")
         return False  # Fail secure on parsing errors
+
+
+def _coerce_schedule_time(value):
+    """Coerce a schedule bound to a datetime.time for comparison.
+
+    Schedule columns are MySQL TIME, which PyMySQL returns as datetime.timedelta
+    (NOT datetime.time). Comparing a timedelta against a datetime.time raises
+    TypeError. Cached schedules may instead hold 'HH:MM:SS' strings. Normalize
+    all of these to datetime.time so the <= comparisons are valid.
+    """
+    if isinstance(value, timedelta):
+        secs = int(value.total_seconds()) % 86400
+        return (datetime.min + timedelta(seconds=secs)).time()
+    if isinstance(value, str):
+        return datetime.strptime(value, '%H:%M:%S').time()
+    return value  # already a datetime.time
 
 
 def check_schedule_from_db(cursor, schedule_id, now):
@@ -1912,10 +2086,21 @@ def check_schedule_from_db(cursor, schedule_id, now):
     start_time = schedule.get(f"{current_day}_start")
     end_time = schedule.get(f"{current_day}_end")
 
-    if not start_time or not end_time:
+    # `is None` rather than falsiness: a midnight bound (timedelta(0)) is falsy
+    # but valid, and must not be mistaken for "no schedule set".
+    if start_time is None or end_time is None:
         return False
 
-    return start_time <= current_time <= end_time
+    try:
+        start_time = _coerce_schedule_time(start_time)
+        end_time = _coerce_schedule_time(end_time)
+        if end_time < start_time:
+            # Overnight window (e.g. 22:00 -> 06:00) wraps past midnight.
+            return current_time >= start_time or current_time <= end_time
+        return start_time <= current_time <= end_time
+    except (ValueError, TypeError) as e:
+        debug(f"Schedule time error: {e}")
+        return False  # Fail secure
 
 
 def is_holiday_denied(now):
@@ -2149,6 +2334,35 @@ def start_heartbeat_thread():
     heartbeat_thread.start()
 
 
+def get_heartbeat_interval():
+    """Return the effective heartbeat interval (seconds).
+
+    The server marks a door offline at 3x its configured heartbeat_interval
+    (default 180s). If the controller heartbeats slower than that, a healthy
+    door flaps offline and remote unlock is blocked. So read the value the
+    server actually uses — from the cached door settings (doors.heartbeat_interval)
+    or the cached global settings — and only fall back to the hardcoded default
+    when nothing is configured."""
+    val = None
+    with cache_lock:
+        door_settings = local_cache.get('door_settings') or {}
+        if door_settings.get('heartbeat_interval') is not None:
+            val = door_settings.get('heartbeat_interval')
+        else:
+            settings = local_cache.get('settings') or {}
+            if settings.get('heartbeat_interval') is not None:
+                val = settings.get('heartbeat_interval')
+    try:
+        if val is not None:
+            iv = int(val)
+            # Clamp to a sane range to avoid a busy-loop or absurdly slow beat.
+            if 5 <= iv <= 3600:
+                return iv
+    except (TypeError, ValueError):
+        pass
+    return HEARTBEAT_INTERVAL
+
+
 def heartbeat_loop():
     """Send periodic heartbeat to server and sync cache"""
     global running, myip
@@ -2170,7 +2384,9 @@ def heartbeat_loop():
         except Exception as e:
             report(f"Heartbeat error: {e}")
 
-        time.sleep(HEARTBEAT_INTERVAL)
+        # Read interval each loop so a server-side change takes effect after the
+        # next cache sync without restarting the controller.
+        time.sleep(get_heartbeat_interval())
 
 
 def send_heartbeat():
@@ -2304,12 +2520,16 @@ def command_poll_loop():
     if not MYSQL_AVAILABLE:
         return
 
-    zone_config = config.get(zone, {})
     db = None
     # When push listener is active, use longer fallback interval (safety net only)
     poll_interval = 15 if push_listener_port else 3
 
     while running:
+        # Fetch the zone config fresh each iteration. A SIGHUP rehash or a
+        # /cmd/rename replaces the global config (and possibly the zone name), so
+        # a value captured once at thread start would go stale and act on the
+        # wrong door.
+        zone_config = config.get(zone, {})
         try:
             # Reconnect if needed
             if db is None:

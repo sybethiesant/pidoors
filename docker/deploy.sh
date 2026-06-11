@@ -55,6 +55,35 @@ scp -rq "$PROJECT_ROOT"/pidoors-ui/* "$REMOTE:$REMOTE_DIR/pidoors-ui/"
 
 log "Files synced."
 
+# ── Secrets preflight (NO hardcoded defaults) ──
+# These must be provided by the operator's environment (e.g. exported in the
+# shell or sourced from a local, git-ignored .env before running deploy).
+# We FAIL CLOSED if any is missing rather than shipping a default credential.
+require_local_secret() {
+    local name="$1"
+    if [ -z "${!name:-}" ]; then
+        log "FATAL: required secret '$name' is not set in your local environment."
+        log "       Export DB_PASS, DB_ROOT_PASS, ADMIN_EMAIL and ADMIN_PASS"
+        log "       (or 'set -a; . ./your.env; set +a') before running deploy."
+        exit 1
+    fi
+}
+require_local_secret DB_PASS
+require_local_secret DB_ROOT_PASS
+require_local_secret ADMIN_EMAIL
+require_local_secret ADMIN_PASS
+
+# Write the secrets to a root-only .env in the remote compose working dir so
+# `docker-compose` can interpolate them. Sent over the existing SSH channel
+# (not echoed locally) and written with a strict umask so the file is 0600.
+log "Writing remote .env (mode 0600) ..."
+run "umask 077 && cat > $REMOTE_DIR/.env" <<ENVEOF
+DB_PASS=${DB_PASS}
+DB_ROOT_PASS=${DB_ROOT_PASS}
+ADMIN_EMAIL=${ADMIN_EMAIL}
+ADMIN_PASS=${ADMIN_PASS}
+ENVEOF
+
 # ── Build and start ──
 log "Building and starting containers ..."
 run "cd $REMOTE_DIR && docker-compose -f docker/docker-compose.yml down 2>/dev/null || true"
@@ -66,7 +95,10 @@ run "docker ps --filter name=pidoors --format 'table {{.Names}}\t{{.Status}}\t{{
 log ""
 log "Done."
 log "  Web UI: https://$(echo "$REMOTE" | cut -d@ -f2):8088"
-log "  Login:  admin@pidoors.local / PiDoors2024!"
+# Do NOT print the admin login here — credentials are set by the operator via
+# the ADMIN_EMAIL / ADMIN_PASS env vars (see .env.example) and must not be
+# echoed to the terminal or any deploy logs.
+log "  Login:  use the ADMIN_EMAIL / ADMIN_PASS you configured (see .env.example)"
 log ""
 log "Logs:"
 log "  docker-compose -f $REMOTE_DIR/docker/docker-compose.yml logs -f server"

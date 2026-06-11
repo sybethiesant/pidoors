@@ -1,4 +1,9 @@
-FROM debian:bookworm
+# Base image is pinned to a dated, immutable Debian snapshot tag (passed by
+# docker-compose.yml via the BASE_IMAGE build arg) instead of the floating
+# 'debian:bookworm' tag, so rebuilds are reproducible. The default here is a
+# safety net for direct `docker build` without the compose arg.
+ARG BASE_IMAGE=debian:bookworm-20241223
+FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 

@@ -206,8 +206,12 @@ class FormatRegistry:
             facility = int(bitstring[fmt.facility_start:fmt.facility_end + 1], 2)
             user_id = int(bitstring[fmt.user_id_start:fmt.user_id_end + 1], 2)
 
-            # Generate hex card ID from full bitstring
-            hex_width = (bit_length + 3) // 4  # Round up to full hex digits
+            # Generate hex card ID from full bitstring.
+            # Use full BYTE width (2 hex digits per byte) so this matches the
+            # legacy decoder in pidoors.py exactly — the same physical card must
+            # yield the same card_id regardless of which decode path runs.
+            # e.g. 26-bit -> ceil(26/8)=4 bytes -> 8 hex digits.
+            hex_width = ((bit_length + 7) // 8) * 2  # Round up to full bytes, 2 hex/byte
             card_id = f"{int(bitstring, 2):0{hex_width}x}"
 
             return (card_id, str(facility), str(user_id))

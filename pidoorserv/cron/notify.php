@@ -52,14 +52,21 @@ if (empty($ns['notification_email'])) {
     exit(0);
 }
 
-// Get heartbeat interval for offline detection
-$heartbeat = (int)($ns['heartbeat_interval'] ?? 60);
-if ($heartbeat < 30) $heartbeat = 60;
+// Get heartbeat interval for offline detection.
+// The controller's real heartbeat interval is 300s (see pidoors.py HEARTBEAT_INTERVAL),
+// so the default MUST match that — a 60s default caused healthy doors heartbeating
+// every 300s to be falsely flagged offline.
+$heartbeat = (int)($ns['heartbeat_interval'] ?? 300);
+if ($heartbeat < 30) $heartbeat = 300;
 
 // ── Check 1: Door went offline ──
-// Door is marked 'online' but hasn't been seen in 3x heartbeat intervals
+// Door is marked 'online' but hasn't been seen in several heartbeat intervals.
+// The threshold is floored at 900s so that a healthy door heartbeating every 300s
+// (with normal jitter / a missed beat or two) is never falsely flagged offline,
+// while a genuinely dead door is still detected within ~15 minutes. The cron runs
+// every 5 minutes, so detection lands within one or two cron passes of the floor.
 try {
-    $offline_threshold = $heartbeat * 3;
+    $offline_threshold = max($heartbeat * 3, 900);
     $stmt = $pdo_access->prepare(
         "SELECT id, name FROM doors
          WHERE status = 'online'

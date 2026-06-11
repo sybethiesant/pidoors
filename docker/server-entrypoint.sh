@@ -11,18 +11,44 @@
 
 set -e
 
+# Treat unset variables as an error from here on (belt-and-suspenders with the
+# explicit require_secret checks below) so a typo can never silently fall back.
+set -u
+
 DB_USER="pidoors"
-DB_PASS="pidoors_pass"
-DB_ROOT_PASS="pidoors_root_pass"
-ADMIN_EMAIL="admin@pidoors.local"
-ADMIN_PASS="PiDoors2024!"
+
+log() { echo "[server] $1"; }
+
+# ──────────────────────────────────────────────
+# Secrets — REQUIRED from the environment, NO defaults.
+# This is access-control software: if a secret is missing we FAIL CLOSED
+# (exit non-zero) rather than booting with a guessable default credential.
+# Secrets are injected by docker-compose.yml from the host env / .env file.
+# ──────────────────────────────────────────────
+require_secret() {
+    # $1 = variable name. Fail if unset or empty.
+    local name="$1"
+    local value="${!name:-}"
+    if [ -z "$value" ]; then
+        log "FATAL: required secret '$name' is not set."
+        log "       Set it in your environment / .env file (see .env.example)."
+        log "       Refusing to start with a default credential."
+        exit 1
+    fi
+}
+
+require_secret DB_PASS
+require_secret DB_ROOT_PASS
+require_secret ADMIN_EMAIL
+require_secret ADMIN_PASS
+
 WEB_ROOT="/var/www/pidoors"
 WEB_UI_ROOT="/var/www/pidoors-ui"
 # TLS certs stored inside the DB volume so they persist across rebuilds
 CERT_DIR="/var/lib/mysql/ssl"
 MARKER="/var/lib/mysql/.pidoors-initialized"
 
-log() { echo "[server] $1"; }
+# (log() and the required-secret checks are defined above, before WEB_ROOT.)
 
 # ──────────────────────────────────────────────
 # Detect PHP version (mirrors install.sh line 168)
@@ -406,7 +432,9 @@ log "================================================"
 log "PiDoors server is running"
 log "  HTTPS: https://localhost:443"
 log "  HTTP:  http://localhost:80 (redirects to HTTPS)"
-log "  Admin: $ADMIN_EMAIL / $ADMIN_PASS"
+# Do NOT log the admin password (or email) — it would leak the credential
+# into container logs. Operators set it themselves via the environment.
+log "  Admin: (credentials taken from ADMIN_EMAIL / ADMIN_PASS env vars)"
 log "================================================"
 
 # ──────────────────────────────────────────────

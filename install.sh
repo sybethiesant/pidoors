@@ -6,7 +6,7 @@
 # Usage: sudo ./install.sh
 #
 
-set -e
+set -euo pipefail
 
 # ──────────────────────────────────────────────
 # Colors and helpers
@@ -160,8 +160,13 @@ if [ "$INSTALL_SERVER" = true ]; then
     step "Server: Web server + Database"
 
     # Install packages
+    # NOTE: 'php-json' is intentionally NOT listed. On Bookworm / PHP 8.2 the
+    # JSON extension is bundled into php-cli and 'php-json' is a nonexistent
+    # virtual package — installing it makes apt exit non-zero and (with set -e)
+    # silently kills the installer. apt output is logged (not sent to /dev/null)
+    # so any real package failure is visible.
     info "Installing Nginx, PHP-FPM, and MariaDB..."
-    apt-get install -y -qq nginx php-fpm php-mysql php-cli php-mbstring php-curl php-json mariadb-server > /dev/null 2>&1
+    apt-get install -y nginx php-fpm php-mysql php-cli php-mbstring php-curl mariadb-server
     ok "Server packages installed"
 
     # Detect PHP version
@@ -362,18 +367,44 @@ SANEOF
     prompt_secret DB_PASS "New PiDoors database password"
 
     info "Creating databases and user..."
+
+    # Derive the LAN subnet (e.g. 192.168.4.0/255.255.255.0) so door
+    # controllers can connect, instead of granting access from any host ('%').
+    # MariaDB host patterns don't support CIDR, so use the netmask form.
+    DB_SERVER_IP=$(hostname -I | awk '{print $1}')
+    DB_HOST_PATTERN="${DB_SERVER_IP%.*}.0/255.255.255.0"
+
+    # Escape the password for safe inclusion in a single-quoted SQL string
+    # literal: double every backslash, then every single quote. (MariaDB treats
+    # backslash as an escape char in string literals by default, so it must be
+    # doubled first.) This avoids breaking the heredoc on passwords that contain
+    # quotes and prevents SQL injection via the password value.
+    DB_PASS_SQL=${DB_PASS//\\/\\\\}
+    DB_PASS_SQL=${DB_PASS_SQL//\'/\'\'}
+
+    # Grant only the privileges the app needs (DML) on the two app databases,
+    # not ALL PRIVILEGES, and scope hosts to:
+    #   - 'localhost'  : socket connections (PHP admin tooling)
+    #   - '127.0.0.1'  : loopback TCP (the same-machine door controller uses
+    #                    DB_HOST=127.0.0.1, which MariaDB does NOT treat as
+    #                    'localhost')
+    #   - the LAN subnet (netmask form; MariaDB host patterns don't support CIDR)
+    #                    so remote door controllers can connect.
     MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root <<EOF
 CREATE DATABASE IF NOT EXISTS users;
 CREATE DATABASE IF NOT EXISTS access;
-CREATE USER IF NOT EXISTS 'pidoors'@'localhost' IDENTIFIED BY '$DB_PASS';
-CREATE USER IF NOT EXISTS 'pidoors'@'%' IDENTIFIED BY '$DB_PASS';
-GRANT ALL PRIVILEGES ON users.* TO 'pidoors'@'localhost';
-GRANT ALL PRIVILEGES ON access.* TO 'pidoors'@'localhost';
-GRANT ALL PRIVILEGES ON users.* TO 'pidoors'@'%';
-GRANT ALL PRIVILEGES ON access.* TO 'pidoors'@'%';
+CREATE USER IF NOT EXISTS 'pidoors'@'localhost' IDENTIFIED BY '$DB_PASS_SQL';
+CREATE USER IF NOT EXISTS 'pidoors'@'127.0.0.1' IDENTIFIED BY '$DB_PASS_SQL';
+CREATE USER IF NOT EXISTS 'pidoors'@'$DB_HOST_PATTERN' IDENTIFIED BY '$DB_PASS_SQL';
+GRANT SELECT, INSERT, UPDATE, DELETE ON users.* TO 'pidoors'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON access.* TO 'pidoors'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON users.* TO 'pidoors'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE ON access.* TO 'pidoors'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE ON users.* TO 'pidoors'@'$DB_HOST_PATTERN';
+GRANT SELECT, INSERT, UPDATE, DELETE ON access.* TO 'pidoors'@'$DB_HOST_PATTERN';
 FLUSH PRIVILEGES;
 EOF
-    ok "Databases and user created"
+    ok "Databases and user created (DML grants; hosts: localhost, 127.0.0.1, ${DB_HOST_PATTERN})"
 
     # Create table schemas
     info "Creating table schemas..."
@@ -406,16 +437,14 @@ CREATE TABLE IF NOT EXISTS \`audit_logs\` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 EOF
 
-    # Find and run the access database migration
-    MIGRATION_SQL=""
-    if [ -f "$SCRIPT_DIR/database_migration.sql" ]; then
-        MIGRATION_SQL="$SCRIPT_DIR/database_migration.sql"
-    elif [ -f "$SCRIPT_DIR/pidoors/database_migration.sql" ]; then
-        MIGRATION_SQL="$SCRIPT_DIR/pidoors/database_migration.sql"
-    fi
+    # Find and run the access database migration.
+    # Only the canonical root database_migration.sql is used. The old
+    # pidoors/database_migration.sql duplicate has been removed from the repo;
+    # never fall back to it as it can be stale.
+    MIGRATION_SQL="$SCRIPT_DIR/database_migration.sql"
 
-    if [ -z "$MIGRATION_SQL" ]; then
-        fail "database_migration.sql not found in $SCRIPT_DIR or $SCRIPT_DIR/pidoors/"
+    if [ ! -f "$MIGRATION_SQL" ]; then
+        fail "database_migration.sql not found in $SCRIPT_DIR"
         fail "This file is required to create the access control tables."
         fail "Re-clone the repository: git clone https://github.com/sybethiesant/pidoors.git"
         exit 1
@@ -424,9 +453,11 @@ EOF
     info "Running access database migration from $MIGRATION_SQL..."
     MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root access < "$MIGRATION_SQL"
 
-    # Verify critical tables were created
-    TABLES_OK=$(MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='access' AND table_name IN ('cards','doors','logs','settings')" 2>/dev/null)
-    if [ "$TABLES_OK" -lt 4 ] 2>/dev/null; then
+    # Verify critical tables were created. Default to 0 and tolerate a failed
+    # query so the explicit check below (not 'set -e') decides the outcome.
+    TABLES_OK=0
+    TABLES_OK=$(MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='access' AND table_name IN ('cards','doors','logs','settings')" 2>/dev/null) || TABLES_OK=0
+    if [ "${TABLES_OK:-0}" -lt 4 ] 2>/dev/null; then
         fail "Migration ran but critical tables are missing (expected 4, found ${TABLES_OK:-0})"
         fail "Check $MIGRATION_SQL for errors"
         exit 1
@@ -587,13 +618,16 @@ SUDOEOF
     if [[ "$INSTALL_EXAMPLES" =~ ^[Yy]$ ]]; then
         step "Server: Installing example data"
 
-        # Hash the example user password
-        EXAMPLE_PASS=$(php -r 'echo password_hash("password123", PASSWORD_BCRYPT, ["cost" => 12]);')
+        # Hash a random throwaway password for the example user. We never seed a
+        # known credential. The account is also created INACTIVE (active=0) so it
+        # cannot be used to log in until an admin explicitly enables it and sets a
+        # new password. This avoids shipping a usable jsmith/password123 backdoor.
+        EXAMPLE_PASS=$(php -r 'echo password_hash(bin2hex(random_bytes(32)), PASSWORD_BCRYPT, ["cost" => 12]);')
 
-        # Example user
+        # Example user (inactive — login disabled until an admin resets it)
         MYSQL_PWD="$DB_PASS" mysql -u pidoors users <<EOF
 INSERT IGNORE INTO users (user_name, user_email, user_pass, first_name, last_name, department, company, job_title, admin, active)
-VALUES ('jsmith', 'jsmith@example.com', '$EXAMPLE_PASS', 'John', 'Smith', 'Engineering', 'Acme Corp', 'Engineer', 0, 1);
+VALUES ('jsmith', 'jsmith@example.com', '$EXAMPLE_PASS', 'John', 'Smith', 'Engineering', 'Acme Corp', 'Engineer', 0, 0);
 EOF
 
         # Example door, cards, master card, holiday
@@ -763,6 +797,17 @@ if [ "$INSTALL_DOOR" = true ]; then
 
     step "Door Controller: Installing"
 
+    # Find source files. This must run BEFORE the Python venv setup below, which
+    # references $DOOR_SRC/requirements.txt.
+    if [ -d "$SCRIPT_DIR/pidoors/pidoors" ]; then
+        DOOR_SRC="$SCRIPT_DIR/pidoors/pidoors"
+    elif [ -d "$SCRIPT_DIR/pidoors" ]; then
+        DOOR_SRC="$SCRIPT_DIR/pidoors"
+    else
+        fail "Cannot find pidoors source directory"
+        exit 1
+    fi
+
     # Python venv
     info "Setting up Python environment..."
     mkdir -p "$INSTALL_DIR"/{conf,cache,readers,formats}
@@ -795,16 +840,6 @@ if [ "$INSTALL_DOOR" = true ]; then
         ok "pidoors user exists"
     fi
 
-    # Find source files
-    if [ -d "$SCRIPT_DIR/pidoors/pidoors" ]; then
-        DOOR_SRC="$SCRIPT_DIR/pidoors/pidoors"
-    elif [ -d "$SCRIPT_DIR/pidoors" ]; then
-        DOOR_SRC="$SCRIPT_DIR/pidoors"
-    else
-        fail "Cannot find pidoors source directory"
-        exit 1
-    fi
-
     cp "$DOOR_SRC/pidoors.py" "$INSTALL_DIR/"
     [ -d "$DOOR_SRC/readers" ] && cp -r "$DOOR_SRC/readers/"* "$INSTALL_DIR/readers/" 2>/dev/null || true
     [ -d "$DOOR_SRC/formats" ] && cp -r "$DOOR_SRC/formats/"* "$INSTALL_DIR/formats/" 2>/dev/null || true
@@ -831,11 +866,16 @@ if [ "$INSTALL_DOOR" = true ]; then
         -subj "/CN=$DOOR_NAME" 2>/dev/null
 
     CSR_PEM=$(cat /tmp/pidoors-controller.csr)
+    # Capture curl's exit code explicitly. Under 'set -e' a failed command
+    # substitution in an assignment would abort the script, but this block is
+    # designed to fall back to a self-signed cert when the server is
+    # unreachable. Use 'CURL_EXIT=0; ... || CURL_EXIT=$?' so the real exit code
+    # is preserved without tripping 'set -e'.
+    CURL_EXIT=0
     SIGN_RESPONSE=$(curl -s -k --max-time 10 "https://$DB_HOST/api/certs/sign" \
         -H 'Content-Type: application/json' \
         -d "{\"db_user\":\"$DB_USER\",\"db_pass\":\"$(echo "$DB_PASS_DOOR" | sed 's/"/\\"/g')\",\"csr\":$(echo "$CSR_PEM" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),\"door_name\":\"$DOOR_NAME\",\"door_ip\":\"$CONTROLLER_IP\"}" \
-        2>&1)
-    CURL_EXIT=$?
+        2>&1) || CURL_EXIT=$?
 
     if [ $CURL_EXIT -ne 0 ]; then
         warn "Could not reach server API for cert signing (curl exit $CURL_EXIT)"
@@ -1030,7 +1070,7 @@ try:
     db.close()
 except Exception as e:
     print(f'ERROR:{e}')
-" 2>&1)
+" 2>&1) || VERIFY_RESULT="ERROR:verification script failed to run"
 
     if [[ "$VERIFY_RESULT" == EXISTS:* ]]; then
         PARTS="${VERIFY_RESULT#EXISTS:}"
@@ -1118,8 +1158,12 @@ if [ "$INSTALL_SERVER" = true ]; then
 BACKUP_DIR="/var/backups/pidoors"
 DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR"
-mysqldump -u pidoors -p"$1" users > "$BACKUP_DIR/users_$DATE.sql"
-mysqldump -u pidoors -p"$1" access > "$BACKUP_DIR/access_$DATE.sql"
+# The pidoors DB user only holds DML privileges (SELECT/INSERT/UPDATE/DELETE),
+# not LOCK TABLES. Use --single-transaction (InnoDB-consistent snapshot) and
+# --skip-lock-tables so the dump works without table-lock privileges.
+DUMP_OPTS="--single-transaction --skip-lock-tables"
+mysqldump $DUMP_OPTS -u pidoors -p"$1" users > "$BACKUP_DIR/users_$DATE.sql"
+mysqldump $DUMP_OPTS -u pidoors -p"$1" access > "$BACKUP_DIR/access_$DATE.sql"
 tar --exclude='config.php' -czf "$BACKUP_DIR/web_$DATE.tar.gz" /var/www/pidoors
 find "$BACKUP_DIR" -name "*.sql" -mtime +30 -delete
 find "$BACKUP_DIR" -name "*.tar.gz" -mtime +30 -delete

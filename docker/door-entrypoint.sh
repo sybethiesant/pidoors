@@ -9,16 +9,31 @@
 #
 
 set -e
+# Fail on unset variables too, so a missing secret can never silently default.
+set -u
 
 INSTALL_DIR="/opt/pidoors"
 DOOR_NAME="docker_door"
 DB_HOST="server"
 DB_USER="pidoors"
-DB_PASS="pidoors_pass"
 DB_NAME="access"
 LISTEN_PORT=8443
 
 log() { echo "[door] $1"; }
+
+# ──────────────────────────────────────────────
+# Secret — REQUIRED from the environment, NO default.
+# Door access-control: fail CLOSED (exit non-zero) rather than connecting to
+# the DB with a guessable default password. Injected by docker-compose.yml.
+# Must match the server's DB_PASS for the 'pidoors' DB user.
+# ──────────────────────────────────────────────
+DB_PASS="${DB_PASS:-}"
+if [ -z "$DB_PASS" ]; then
+    log "FATAL: required secret 'DB_PASS' is not set."
+    log "       Set it in your environment / .env file (see .env.example)."
+    log "       Refusing to start with a default credential."
+    exit 1
+fi
 
 # Ensure directories exist (defensive — Dockerfile creates them,
 # but brace expansion may fail in some Docker build shells)
