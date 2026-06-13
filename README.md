@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.3.10-green)
+![Version](https://img.shields.io/badge/version-0.4.0-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -706,7 +706,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.3.10** - Pre-release
+**Current Version: 0.4.0** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -720,6 +720,35 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.0 (June 2026)
+**Security and reliability hardening.**
+
+Controller:
+- **Fail closed on the DB link** — a provisioned TLS CA is now required; removed the plaintext-HTTP CA bootstrap and the silent fallback to unencrypted MySQL.
+- **Consistent `card_id` width** across the registry and legacy Wiegand decoders.
+- **Gate IO teardown** before re-registering (no more `RuntimeError` on re-sync) and when gate mode is disabled.
+- **Heartbeat-aware** — reads `heartbeat_interval` from settings so healthy doors aren't flagged offline; re-seeds reader runtime state on `SIGHUP`; poll loop reads zone config fresh.
+- **Master-card / lockdown safety** — bounds master-card fail-open with a local staleness window, enforces `lockdown_mode` (deny non-master cards, offline-safe), and handles overnight schedule wrap.
+- **Atomic cache/master-card writes**; online grants logged to the offline counter; offline cache sync now matches door lists containing spaces.
+
+Server:
+- **`push` fails closed when the CA is missing** (previously leaked the per-door unlock key).
+- **Certificate signing requires a separate enrollment token**; legacy MD5 logins rejected.
+- **`card_id` is never invented server-side**; CSV import preserves it; PINs redacted from list/export responses.
+- Offline-detection threshold matched to the controller heartbeat.
+
+Installer / updaters / docker:
+- **Release tarball checksums verified before deploy**; server cert verified during controller enrollment (no `CERT_NONE`, no HTTP CA fallback).
+- **No hardcoded default admin/DB passwords** — env required, fails if unset; scoped DB grants; safe SQL quoting; example user seeded inactive.
+- Fixed the `php-json` install abort; `set -euo pipefail`; corrected `DOOR_SRC` ordering.
+- Pinned docker base images, added healthchecks and ordered startup.
+- Completed controller reader requirements; tightened CSP (dropped `script-src 'unsafe-inline'`); removed the duplicate database migration.
+
+### Version 0.3.10 (April 2026)
+- **Legacy LED fix for gate mode** — GPIO 22/25 legacy LEDs now toggle correctly in gate mode. Previously gate access routed through `gate_command()`, which never touched the hardcoded LED pins, so the keypad LED stayed red on valid access. `_set_legacy_leds()` now fires for both door and gate paths (green during the gate open cycle, back to red when done).
+- **LEDs decoupled from the lock relay check** — legacy LEDs work even when `latch_gpio` isn't set (e.g. gate mode, where the lock relay is replaced by gate outputs).
+- **Docs** — added an LED Feedback section to the README wiring guide covering both the legacy hardcoded LEDs and the configurable Status LED.
 
 ### Version 0.3.9 (April 2026)
 - **React 18 → 19** — major framework migration, built and bundled (users get it automatically via the pre-built SPA tarball, no npm required)
