@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.0-green)
+![Version](https://img.shields.io/badge/version-0.4.1-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -706,7 +706,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.0** - Pre-release
+**Current Version: 0.4.1** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -720,6 +720,13 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.1 (June 2026)
+**Dependency security updates** — patched every known npm advisory in the React SPA toolchain (`npm audit`: 0 vulnerabilities). No application code changed; the pre-built SPA bundle was rebuilt against the patched dependencies.
+- `react-router` / `react-router-dom` 6.30.3 → 6.30.4 — fixes an open redirect via protocol-relative URL reinterpretation ([GHSA-2j2x-hqr9-3h42](https://github.com/advisories/GHSA-2j2x-hqr9-3h42)).
+- `postcss` 8.5.9 → 8.5.15 — fixes XSS via an unescaped `</style>` in stringify output ([GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93)).
+- `vite` → 6.4.3 — fixes a `server.fs.deny` bypass and an NTLMv2 hash-disclosure issue in the dev server on Windows ([GHSA-fx2h-pf6j-xcff](https://github.com/advisories/GHSA-fx2h-pf6j-xcff)).
+- `@babel/core` → 7.29.7 — fixes arbitrary file read via a `sourceMappingURL` comment ([GHSA-4x5r-pxfx-6jf8](https://github.com/advisories/GHSA-4x5r-pxfx-6jf8)).
 
 ### Version 0.4.0 (June 2026)
 **Security and reliability hardening.**
