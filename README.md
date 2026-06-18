@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.1-green)
+![Version](https://img.shields.io/badge/version-0.4.2-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -706,7 +706,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.1** - Pre-release
+**Current Version: 0.4.2** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -720,6 +720,9 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.2 (June 2026)
+**Installer fix.** A fresh `sudo ./install.sh` failed on every run under the `set -euo pipefail` hardening added in v0.4.0: the `prompt` / `prompt_secret` helpers referenced uninitialized variables — `local value` (tested by `while [ -z "$value" ]`) and an optional positional `default="$3"` — which `set -u` (nounset) treats as a fatal "unbound variable" error, aborting the install at the first password/email prompt. Initialized both (`local value=""`, `default="${3:-}"`) so the installer completes. No application code or dependency changes; the secured v0.4.1 SPA bundle is unchanged.
 
 ### Version 0.4.1 (June 2026)
 **Dependency security updates** — patched every known npm advisory in the React SPA toolchain (`npm audit`: 0 vulnerabilities). No application code changed; the pre-built SPA bundle was rebuilt against the patched dependencies.

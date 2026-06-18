@@ -43,8 +43,8 @@ step() {
 }
 
 prompt() {
-    local var_name="$1" prompt_text="$2" default="$3"
-    local value
+    local var_name="$1" prompt_text="$2" default="${3:-}"
+    local value=""
     if [ -n "$default" ]; then
         read -p "  $prompt_text [$default]: " value
         value="${value:-$default}"
@@ -59,7 +59,7 @@ prompt() {
 
 prompt_secret() {
     local var_name="$1" prompt_text="$2"
-    local value
+    local value=""
     while [ -z "$value" ]; do
         read -s -p "  $prompt_text: " value
         echo
