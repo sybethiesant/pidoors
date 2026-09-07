@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.3-green)
+![Version](https://img.shields.io/badge/version-0.4.4-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -59,6 +59,7 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - **OSDP Readers**: RS-485 encrypted readers (planned — reader module included, not yet integrated)
 - **NFC/RFID**: PN532 and MFRC522 support (planned — reader modules included, not yet integrated)
 - Time-based access schedules
+- Scheduled unlock — hold a door or gate open during a schedule's hours (e.g. a community gate open 6am–7pm)
 - Access groups and permissions
 - Holiday calendar support
 - Card validity date ranges
@@ -528,7 +529,18 @@ Upload at **Cards** > **Import CSV**. Optional columns: `email`, `phone`, `depar
 1. Go to **Schedules** > **Add Schedule**
 2. Name the schedule (e.g., "Business Hours")
 3. Set time windows for each day
-4. Assign to cards or doors
+4. Assign to cards (restricts when the card works) or to doors (see below)
+
+### Scheduled Unlock (Hold Open by Schedule)
+
+To keep a door or gate open during set hours — a community gate open 6am–7pm, a lobby door unlocked during business hours — assign a schedule to the **door** in **Doors** > edit > **Unlock Schedule**.
+
+- When the schedule window opens, the controller enters the held-open state (latch energized, or gate opened and held). When it closes, the door relocks (or the gate is released and closed).
+- The controller evaluates the schedule every 15 seconds and acts on the transitions, so a master card or an admin can still release a hold mid-window; the schedule will not fight that release and re-applies on the next window start.
+- A controller that reboots mid-window re-applies the hold. Clearing the door's schedule releases a hold the schedule applied.
+- **Lockdown mode** and **access-denied holidays** override the schedule — a door that is locked down or closed for a holiday is never propped open.
+- Overnight windows (e.g. 22:00 → 06:00) are supported. Master-card and admin holds placed *before* the window opens are left alone at window end.
+- Card access is unaffected: outside the window the door works normally for authorized cards. Leave the door schedule at **None** for a door that should only ever open on a valid card.
 
 ### Monitoring Access
 
@@ -706,7 +718,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.3** - Pre-release
+**Current Version: 0.4.4** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -720,6 +732,13 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.4 (September 2026)
+**Scheduled unlock (hold open by schedule) — fixes #5.** The **Schedule** dropdown on the door edit page has existed since the schedules feature landed, but the controller never read `doors.schedule_id` — the field was saved and then ignored, so "hold the gate open 6am–7pm" silently did nothing. The controller now runs an unlock-schedule thread that holds the door (or opens and holds the gate) when the assigned schedule's window opens and releases it when the window closes. It is edge-triggered, so master-card / admin releases mid-window are respected; it re-applies after a reboot mid-window; and lockdown mode or an access-denied holiday overrides it. The field is now labeled **Unlock Schedule** in both UIs with the behavior spelled out. See *Scheduled Unlock* under Usage.
+
+**Dependency security updates** — React SPA toolchain, `npm audit`: 0 vulnerabilities. Both are build-time (dev) dependencies; neither ships in the deployed bundle or is reachable from the web UI.
+- `browserslist` 4.28.2 → 4.28.9 — uncaught crash / prototype write via untrusted `browserslist-stats.json` custom stats in `normalizeStats` ([GHSA-73wf-gq98-2v4g](https://github.com/advisories/GHSA-73wf-gq98-2v4g), CVE-2026-73088).
+- `postcss-selector-parser` 6.1.2 → 6.1.4 — denial of service through uncontrolled AST recursion ([GHSA-w9m9-85wc-3x92](https://github.com/advisories/GHSA-w9m9-85wc-3x92), CVE-2026-9358).
 
 ### Version 0.4.3 (August 2026)
 **Dependency security updates** — clears every open advisory in the React SPA toolchain (`npm audit`: 0 vulnerabilities). No application code changed; the pre-built SPA bundle was rebuilt against the patched dependencies.

@@ -448,9 +448,9 @@ try {
 
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label for="schedule_id" class="form-label">Access Schedule</label>
+                            <label for="schedule_id" class="form-label">Unlock Schedule</label>
                             <select class="form-select" id="schedule_id" name="schedule_id">
-                                <option value="">Always accessible</option>
+                                <option value="">None (card access only)</option>
                                 <?php foreach ($schedules as $schedule): ?>
                                     <option value="<?php echo $schedule['id']; ?>">
                                         <?php echo htmlspecialchars($schedule['name']); ?>

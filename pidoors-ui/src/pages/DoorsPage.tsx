@@ -334,7 +334,7 @@ function DoorFormModal({
               </select>
             </div>
             <div>
-              <label className="label">Schedule</label>
+              <label className="label">Unlock Schedule</label>
               <select
                 className="input"
                 value={form.schedule_id ?? ''}
@@ -345,6 +345,9 @@ function DoorFormModal({
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Holds the door open during these hours and relocks when the window ends. None = normal card access only.
+              </p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">

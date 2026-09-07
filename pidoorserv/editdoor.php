@@ -132,9 +132,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
 
                     <div class="mb-3">
-                        <label for="schedule_id" class="form-label">Access Schedule</label>
+                        <label for="schedule_id" class="form-label">Unlock Schedule</label>
                         <select class="form-select" id="schedule_id" name="schedule_id">
-                            <option value="">Always accessible</option>
+                            <option value="">None (card access only)</option>
                             <?php foreach ($schedules as $schedule): ?>
                                 <option value="<?php echo $schedule['id']; ?>"
                                     <?php echo ($door['schedule_id'] == $schedule['id']) ? 'selected' : ''; ?>>

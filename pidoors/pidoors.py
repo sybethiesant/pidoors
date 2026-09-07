@@ -10,6 +10,7 @@ Features:
 - Local 24-hour cache for offline operation
 - Persistent master cards for emergency access (bounded fail-open during outages)
 - Time-based access schedules
+- Scheduled unlock (hold a door/gate open during a schedule's hours)
 - Lockdown mode (deny all non-master cards when a door is locked down)
 - Door sensor monitoring
 - REX (Request to Exit) button support
@@ -134,6 +135,14 @@ status_led_active = 1          # Polarity: 1 = active high, 0 = active low
 # Master card hold settings (loaded from DB settings)
 master_scans_hold_open = 3
 master_scans_release_hold = 1
+
+# Unlock schedule (doors.schedule_id) — hold the door/gate open during the
+# schedule's hours and relock when the window ends. Evaluated by schedule_loop().
+SCHEDULE_CHECK_INTERVAL = 15   # seconds between schedule evaluations
+schedule_state = {
+    'in_window': None,     # last evaluated in-window result (None = not evaluated yet)
+    'hold_active': False,  # True while the current hold was applied by the schedule
+}
 
 # Thread locks for shared state
 state_lock = threading.Lock()  # For db_connected, last_db_attempt, cache_last_sync
@@ -289,6 +298,9 @@ def initialize():
 
     # Start command poll thread (lightweight fast-poll for remote unlock)
     start_command_poll_thread()
+
+    # Start unlock schedule thread (holds the door open during doors.schedule_id hours)
+    start_schedule_thread()
 
     # Start push listener (HTTPS server for instant commands from server)
     start_push_listener()
@@ -1325,6 +1337,7 @@ def gate_command(cmd, source='unknown', hold_after=False):
 
     if cmd == 'release':
         gate_set_state(gate_state, held=False)
+        schedule_state['hold_active'] = False  # any release ends schedule ownership
         report(f"Gate hold released ({source})")
         # Releasing hold while gate is open should restart the auto-close timer
         if gate_state == 'open':
@@ -1546,6 +1559,113 @@ def unlock_briefly(gpio):
             return
         lock_door()
     threading.Thread(target=_do_relock, daemon=True).start()
+
+
+# ============================================================
+# UNLOCK SCHEDULE (doors.schedule_id)
+# ============================================================
+
+def get_unlock_schedule_id():
+    """Return the door's unlock schedule id from cached door settings (or None)."""
+    with cache_lock:
+        door_settings = local_cache.get('door_settings') or {}
+        return door_settings.get('schedule_id')
+
+
+def unlock_schedule_in_window(now):
+    """True when the door's unlock schedule says it should be held open right now.
+
+    Lockdown and access-denied holidays override the schedule: a door that is
+    locked down or closed for a holiday must not be propped open."""
+    schedule_id = get_unlock_schedule_id()
+    if not schedule_id:
+        return False
+    if door_is_locked_down():
+        return False
+    if is_holiday_denied(now):
+        return False
+    return check_schedule(schedule_id, now)
+
+
+def apply_schedule_hold():
+    """Enter the held-open state because the unlock schedule window started."""
+    zone_config = config.get(zone, {})
+    if gate_enabled:
+        if gate_held:
+            debug("Unlock schedule: gate already held — leaving existing hold in place")
+            return
+        if gate_state == 'open':
+            ok, reason = gate_command('hold', source='schedule')
+        else:
+            ok, reason = gate_command('open', source='schedule', hold_after=True)
+        if not ok:
+            report(f"Unlock schedule: gate hold refused ({reason})")
+            return
+    else:
+        if zone_config.get("unlocked"):
+            debug("Unlock schedule: door already held open — leaving existing hold in place")
+            return
+        zone_config["unlocked"] = True
+        unlock_door()
+    schedule_state['hold_active'] = True
+    report(f"{zone} held open by schedule")
+    log_door_event('door_held_open', 'Held open by schedule')
+
+
+def release_schedule_hold():
+    """Leave the held-open state because the unlock schedule window ended.
+
+    Only releases a hold the schedule itself applied. A hold placed by a master
+    card or an admin is left alone, and a manual release during the window is
+    respected — the schedule does not re-apply until the next window starts."""
+    if not schedule_state['hold_active']:
+        return
+    schedule_state['hold_active'] = False
+    zone_config = config.get(zone, {})
+    if gate_enabled:
+        if not gate_held:
+            return
+        gate_command('release', source='schedule')
+        ok, reason = gate_command('close', source='schedule')
+        if not ok:
+            report(f"Unlock schedule: gate close refused ({reason})")
+        log_door_event('lock', 'Schedule ended — gate hold released')
+    else:
+        if not zone_config.get("unlocked"):
+            return
+        zone_config["unlocked"] = False
+        lock_door()
+        log_door_event('lock', 'Schedule ended — hold released')
+    report(f"{zone} schedule window ended — hold released")
+
+
+def schedule_loop():
+    """Evaluate the unlock schedule periodically and act on window transitions.
+
+    Edge-triggered: a hold is applied when the window opens and released when
+    it closes. Between edges the door is left to master cards and admins, so a
+    manual release mid-window sticks until the next window. On startup the
+    first evaluation counts as a transition, so a controller that reboots
+    mid-window re-applies the hold. Clearing the door's schedule, enabling
+    lockdown, or an access-denied holiday all count as the window closing."""
+    while running:
+        try:
+            now = datetime.now()
+            in_window = unlock_schedule_in_window(now)
+            if in_window != schedule_state['in_window']:
+                if in_window:
+                    apply_schedule_hold()
+                elif schedule_state['in_window'] is not None or schedule_state['hold_active']:
+                    release_schedule_hold()
+                schedule_state['in_window'] = in_window
+        except Exception as e:
+            report(f"Unlock schedule error: {e}")
+        time.sleep(SCHEDULE_CHECK_INTERVAL)
+
+
+def start_schedule_thread():
+    """Start the unlock schedule evaluation thread."""
+    threading.Thread(target=schedule_loop, daemon=True).start()
 
 
 # ============================================================
@@ -2186,6 +2306,7 @@ def open_door(user_id, name, is_master=False):
     if is_master and zone_config.get("unlocked") and current_repeat_count >= master_scans_release_hold:
         # Single master scan while held-open -> release hold
         zone_config["unlocked"] = False
+        schedule_state['hold_active'] = False  # manual release ends schedule ownership
         report(f"{zone} hold released by {name}")
         lock_door()
         log_door_event('lock', f"Hold released by {name}")
@@ -2581,6 +2702,7 @@ def command_poll_loop():
                     )
                 elif hold_req == 2 and zone_config.get("unlocked", False):
                     zone_config["unlocked"] = False
+                    schedule_state['hold_active'] = False  # manual release ends schedule ownership
                     lock_door()
                     log_door_event('lock', 'Hold released by admin')
                     report("Door hold released by admin request")
@@ -2754,6 +2876,7 @@ def _run_push_listener(port, api_key, cert_file, key_file):
             elif path == '/cmd/release':
                 if zone_config.get('unlocked', False):
                     zone_config['unlocked'] = False
+                    schedule_state['hold_active'] = False  # manual release ends schedule ownership
                     lock_door()
                     log_door_event('lock', 'Hold released by push command')
                     report(f"Push: hold released from {client_ip}")
