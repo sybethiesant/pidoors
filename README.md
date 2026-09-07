@@ -353,8 +353,9 @@ The server pings controllers on each page load for instant status. Heartbeat run
 | Type | Interface | Notes |
 |------|-----------|-------|
 | Wiegand (26/32/34/35/36/37/48-bit) | GPIO | Most common, auto-detection |
-| OSDP v2 | RS-485 (UART) | Encrypted, requires USB-RS485 adapter |
-| PN532 NFC | I2C or SPI | Mifare Classic, Ultralight, NTAG |
+| Wiegand keypad (PIN codes) | GPIO | Keypad must be in buffered/burst mode — see *Wiegand Keypads (PIN Codes)* below |
+| OSDP v2 | RS-485 (UART) | Encrypted, requires USB-RS485 adapter — **planned, reader module not yet wired into the controller** |
+| PN532 NFC | I2C or SPI | Mifare Classic, Ultralight, NTAG — **planned, reader module not yet wired into the controller** |
 | MFRC522 NFC | SPI | Low-cost Mifare reader |
 
 **Total cost per door: ~$100-150**
@@ -486,6 +487,39 @@ This is useful for Wiegand keypads with a built-in bicolor LED — wire the LED 
 
 **Configurable Status LED** — For more flexibility, enable the **Status LED** option in the door edit page. Assign any available GPIO pin and polarity. The LED pulses on access granted and flashes on access denied. Works on both doors and gates, independent of the legacy LEDs.
 
+### Wiegand Keypads (PIN Codes)
+
+A Wiegand keypad works with PiDoors today with no extra configuration. The controller does not distinguish a code typed on a keypad from a card presented to a reader: both arrive as a Wiegand frame, and a PIN is enrolled and managed exactly like a card. This also makes PiDoors usable for machine or equipment access (see the end of this section).
+
+**What you need**
+
+- A keypad, or combined reader/keypad, with a Wiegand output that can be set to **buffered / burst / "card format" mode**: the user types the digits and presses `#` (or waits for the keypad's timeout), and the keypad sends the whole code as **one** 26-bit (or 34/37-bit) frame. This is the default on most standalone Wiegand keypads and is usually a DIP switch or a programming-code option in the keypad's manual.
+- Wire DATA0 / DATA1 exactly like a card reader (see *Wiegand Reader to Raspberry Pi* above), including the 5V → 3.3V level shifter. The keypad's LED control line can go to GPIO 22 (see *LED Feedback*) so it turns green on a valid code.
+- Nothing to change on the controller or in `config.json`. The frame is decoded by the same format registry (26/32/34/35/36/37/48-bit, parity checked).
+
+**What does not work**
+
+- **Per-key mode** (4-bit or 8-bit "one frame per keypress"). The controller expects one complete frame per credential. 4- and 8-bit frames are logged as `Unsupported Wiegand format` and ignored. If your keypad only does per-key output, switch it to buffered mode or choose a different keypad.
+- **Card + PIN (two-factor).** The `pin_code` column on cards is stored, imported and exported, but the controller does not enforce it. A PIN is a standalone credential.
+- **Non-Wiegand keypads**: matrix keypads on GPIO, I²C expanders such as the PCF8574, USB keypads. These would need a new reader module under `pidoors/readers/`. The `BaseReader` interface is there, but only the Wiegand reader is wired into the controller today; the OSDP and NFC modules are also not yet integrated.
+
+**How a PIN becomes a credential**
+
+- The keypad packs the digits into the frame's data bits. The controller validates parity, then splits the frame into *facility* + *user ID* by frame length (26-bit: 8 + 16 bits; 34-bit: 16 + 16; 37-bit: 16 + 19). A 6-digit code on a 26-bit keypad therefore usually shows up as a non-zero facility with a 5-digit user ID. That is expected: what matters is that the same code always produces the same pair.
+- Code length is limited by the frame's data bits, not by a digit count: a 26-bit frame carries 24 data bits (codes up to 16,777,215, i.e. 8 digits), 34-bit carries 32. Some keypads impose their own maximum; check the manual.
+- Leading zeros are not preserved: `000123` and `123` are the same credential.
+
+**Enrolling a code**
+
+1. Type the code on the keypad and press `#`.
+2. The controller denies it as unknown, inserts it into the database as an **inactive** card, and logs the attempt (the controller must be able to reach the database for this; offline it just denies).
+3. In the web UI open **Logs**, find the denied entry, and click **Set Up Card**. Give it a name, doors, group/schedule, and set it active.
+4. Type the code again. Access is granted.
+
+The same flow works for new cards, so a keypad or reader at any door doubles as an enrollment station. There is no need for a reader at the server.
+
+**Machine / equipment access.** To gate a machine rather than a door, drive a latching relay or contactor that powers the machine from the lock relay output. Set the door's **Unlock Duration** to how long the machine should stay enabled after a valid code (up to the `max_unlock_duration` setting), use a master-card hold (3 scans) to keep it enabled indefinitely, or assign an **Unlock Schedule** to keep it powered during set hours.
+
 ### GPIO Pin Reference
 ```
     3V3  (1)  (2)  5V
@@ -515,6 +549,10 @@ Full wiring diagrams available in [Installation Guide](pidoors/INSTALLATION_GUID
 3. Assign access groups and schedules
 4. Click **Add Card**
 
+**Via a reader or keypad (auto-enrollment):**
+1. Present the card (or type the PIN and press `#`) at any door. The attempt is denied and the credential is saved as an inactive card.
+2. Open **Logs**, find the denied entry, click **Set Up Card**, fill in the details and set it active.
+
 **Via CSV Import:**
 ```csv
 card_id,user_id,firstname,lastname,email,department
@@ -522,7 +560,7 @@ card_id,user_id,firstname,lastname,email,department
 87654321,EMP002,Jane,Doe,jane@example.com,Marketing
 ```
 
-Upload at **Cards** > **Import CSV**. Optional columns: `email`, `phone`, `department`, `employee_id`, `company`, `title`, `notes`, `group_id`, `schedule_id`, `valid_from`, `valid_until`, `pin_code`.
+Upload at **Cards** > **Import CSV**. Optional columns: `email`, `phone`, `department`, `employee_id`, `company`, `title`, `notes`, `group_id`, `schedule_id`, `valid_from`, `valid_until`, `pin_code` (stored only; card + PIN is not enforced by the controller, see *Wiegand Keypads (PIN Codes)*).
 
 ### Creating Access Schedules
 
