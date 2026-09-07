@@ -12,6 +12,19 @@ $config = include(__DIR__ . '/includes/config.php');
 require_once __DIR__ . '/includes/security.php';
 require_once $config['apppath'] . 'database/db_connection.php';
 require_once __DIR__ . '/includes/push.php';
+
+// Overlay the admin-editable security settings from the DB onto the file
+// config. Without this the Settings page values (login lockout, password
+// rules) were saved but never used — login and password checks read config.php.
+try {
+    $sec_rows = $pdo_access->query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('max_login_attempts','lockout_duration','password_min_length','password_require_mixed_case','password_require_numbers')")->fetchAll(PDO::FETCH_KEY_PAIR);
+    if (isset($sec_rows['max_login_attempts']) && (int)$sec_rows['max_login_attempts'] > 0) $config['max_failed_attempts'] = (int)$sec_rows['max_login_attempts'];
+    if (isset($sec_rows['lockout_duration']) && (int)$sec_rows['lockout_duration'] > 0) $config['lockout_duration'] = (int)$sec_rows['lockout_duration'];
+    if (isset($sec_rows['password_min_length']) && (int)$sec_rows['password_min_length'] > 0) $config['password_min_length'] = (int)$sec_rows['password_min_length'];
+    if (isset($sec_rows['password_require_mixed_case'])) $config['password_require_mixed_case'] = (bool)(int)$sec_rows['password_require_mixed_case'];
+    if (isset($sec_rows['password_require_numbers'])) $config['password_require_numbers'] = (bool)(int)$sec_rows['password_require_numbers'];
+} catch (Throwable $e) { /* settings table unavailable — keep config.php values */ }
+
 secure_session_start($config);
 
 // CORS not needed — same-origin via gateway nginx
@@ -674,6 +687,8 @@ if ($resource === 'doors') {
         $name = strtolower(str_replace(' ', '_', $name));
         $name = preg_replace('/[^a-z0-9_]/', '', $name);
         if (empty($name)) json_error('Door name contains no valid characters');
+        // 'all' is the update-every-controller route (/api/controllers/all/update)
+        if ($name === 'all') json_error("'all' is a reserved name");
 
         $stmt = $pdo_access->prepare("SELECT COUNT(*) FROM doors WHERE name = ?");
         $stmt->execute([$name]);
@@ -685,6 +700,7 @@ if ($resource === 'doors') {
             $reader_type = 'wiegand';
         }
 
+        $pdo_access->beginTransaction();
         $stmt = $pdo_access->prepare("INSERT INTO doors (name, location, doornum, description, ip_address, schedule_id, unlock_duration, reader_type, poll_interval, listen_port, door_sensor_gpio, door_sensor_invert, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown')");
         $stmt->execute([
             $name,
@@ -700,6 +716,40 @@ if ($resource === 'doors') {
             isset($input['door_sensor_gpio']) && $input['door_sensor_gpio'] !== null && $input['door_sensor_gpio'] !== '' ? (int)$input['door_sensor_gpio'] : null,
             !empty($input['door_sensor_invert']) ? 1 : 0,
         ]);
+
+        // Gate / status-LED / lockdown settings submitted with the create form.
+        // Only the PUT handler used to persist these, so a door created with
+        // Gate Mode enabled silently lost its gate config. Validated against the
+        // just-inserted row inside the transaction; json_error() exits and the
+        // open transaction rolls back, so a rejected config leaves no door behind.
+        $extra_fields = [];
+        $extra_params = [];
+        if (array_key_exists('is_gate', $input)) {
+            $extra_fields[] = "is_gate = ?";
+            $extra_params[] = !empty($input['is_gate']) ? 1 : 0;
+        }
+        if (isset($input['lockdown_mode'])) {
+            $extra_fields[] = "lockdown_mode = ?";
+            $extra_params[] = (int)$input['lockdown_mode'];
+        }
+        if (array_key_exists('gate_config', $input) && is_array($input['gate_config'])) {
+            $err = validate_gate_pins($pdo_access, $name, $input['gate_config'], $input);
+            if ($err) { $pdo_access->rollBack(); json_error($err); }
+            $extra_fields[] = "gate_config = ?";
+            $extra_params[] = json_encode($input['gate_config']);
+        }
+        if (array_key_exists('status_led_config', $input) && is_array($input['status_led_config'])) {
+            $err = validate_status_led_pin($pdo_access, $name, $input['status_led_config'], $input);
+            if ($err) { $pdo_access->rollBack(); json_error($err); }
+            $extra_fields[] = "status_led_config = ?";
+            $extra_params[] = json_encode($input['status_led_config']);
+        }
+        if (!empty($extra_fields)) {
+            $extra_params[] = $name;
+            $pdo_access->prepare("UPDATE doors SET " . implode(', ', $extra_fields) . " WHERE name = ?")->execute($extra_params);
+        }
+        $pdo_access->commit();
+
         log_security_event($pdo, 'door_created', $_SESSION['user_id'], "Door created: $name");
         json_success([], 'Door created');
     }
@@ -1002,6 +1052,17 @@ if ($resource === 'doors') {
 // ──────────────────────────────────────────────
 // CARDS
 // ──────────────────────────────────────────────
+/**
+ * Cards are addressed by card_id in the API, but a card created in the web UI
+ * has card_id = NULL until its first scan. Accept "id:<n>" to address such a
+ * card by its primary key so it can still be edited or deleted.
+ * Returns [where-clause, bound value].
+ */
+function card_where(string $id): array {
+    if (preg_match('/^id:(\d+)$/', $id, $m)) return ['id = ?', (int)$m[1]];
+    return ['card_id = ?', $id];
+}
+
 if ($resource === 'cards') {
     if ($method === 'GET' && $id === null) {
         require_admin_auth();
@@ -1191,8 +1252,9 @@ if ($resource === 'cards') {
 
     if ($method === 'GET' && $id !== null) {
         require_admin_auth();
-        $stmt = $pdo_access->prepare("SELECT * FROM cards WHERE card_id = ?");
-        $stmt->execute([$id]);
+        [$card_where, $card_key] = card_where((string)$id);
+        $stmt = $pdo_access->prepare("SELECT * FROM cards WHERE $card_where");
+        $stmt->execute([$card_key]);
         $card = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$card) json_error('Card not found', 404);
         $card['active'] = (int)$card['active'];
@@ -1263,9 +1325,13 @@ if ($resource === 'cards') {
         require_admin_auth();
         require_csrf();
 
-        $stmt = $pdo_access->prepare("SELECT card_id FROM cards WHERE card_id = ?");
-        $stmt->execute([$id]);
-        if (!$stmt->fetch()) json_error('Card not found', 404);
+        [$card_where, $card_key] = card_where((string)$id);
+        $stmt = $pdo_access->prepare("SELECT card_id FROM cards WHERE $card_where");
+        $stmt->execute([$card_key]);
+        $card_row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$card_row) json_error('Card not found', 404);
+        // Real card_id — NULL for a card that has not been scanned yet.
+        $id = $card_row['card_id'];
 
         $fields = [];
         $params = [];
@@ -1286,12 +1352,13 @@ if ($resource === 'cards') {
         if (empty($fields) && !isset($input['master_card'])) json_error('No fields to update');
 
         if (!empty($fields)) {
-            $params[] = $id;
-            $pdo_access->prepare("UPDATE cards SET " . implode(', ', $fields) . " WHERE card_id = ?")->execute($params);
+            $params[] = $card_key;
+            $pdo_access->prepare("UPDATE cards SET " . implode(', ', $fields) . " WHERE $card_where")->execute($params);
         }
 
-        // Sync master_card status
-        if (isset($input['master_card'])) {
+        // Sync master_card status (master_cards is keyed by card_id, so a card
+        // with no card_id yet cannot be a master until it has been scanned)
+        if (isset($input['master_card']) && $id !== null) {
             try {
                 $mc_stmt = $pdo_access->prepare("SELECT id FROM master_cards WHERE card_id = ? AND active = 1");
                 $mc_stmt->execute([$id]);
@@ -1320,15 +1387,18 @@ if ($resource === 'cards') {
         require_admin_auth();
         require_csrf();
         // Get card info for audit log
-        $stmt = $pdo_access->prepare("SELECT user_id, firstname, lastname FROM cards WHERE card_id = ?");
-        $stmt->execute([$id]);
+        [$card_where, $card_key] = card_where((string)$id);
+        $stmt = $pdo_access->prepare("SELECT card_id, user_id, firstname, lastname FROM cards WHERE $card_where");
+        $stmt->execute([$card_key]);
         $card_info = $stmt->fetch();
         if (!$card_info) json_error('Card not found', 404);
 
         // Delete from master_cards first (foreign key)
-        $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?")->execute([$id]);
+        if ($card_info['card_id'] !== null) {
+            $pdo_access->prepare("DELETE FROM master_cards WHERE card_id = ?")->execute([$card_info['card_id']]);
+        }
         // Delete card
-        $pdo_access->prepare("DELETE FROM cards WHERE card_id = ?")->execute([$id]);
+        $pdo_access->prepare("DELETE FROM cards WHERE $card_where")->execute([$card_key]);
         log_security_event($pdo, 'card_deleted', $_SESSION['user_id'], "Card deleted: {$card_info['firstname']} {$card_info['lastname']} (card_id=$id)");
         json_success([], 'Card deleted');
     }
@@ -1659,13 +1729,22 @@ if ($resource === 'settings') {
 
         require_once $config['apppath'] . 'includes/smtp.php';
         try {
-            $result = send_test_email($to, $settings);
+            $site = $settings['site_name'] ?? 'PiDoors';
+            $html = '<p>This is a test email from <strong>' . htmlspecialchars($site) . '</strong>.</p>'
+                  . '<p>SMTP is configured correctly. Sent ' . date('Y-m-d H:i:s') . '.</p>';
+            $result = smtp_send($to, "[$site] Test email", $html, [
+                'host' => $settings['smtp_host'] ?? '',
+                'port' => $settings['smtp_port'] ?? 587,
+                'user' => $settings['smtp_user'] ?? '',
+                'pass' => $settings['smtp_pass'] ?? '',
+                'from' => $settings['smtp_from'] ?? ($settings['smtp_user'] ?? ''),
+            ]);
             if ($result === true) {
                 json_success([], 'Test email sent successfully');
             } else {
                 json_error($result ?: 'Failed to send test email');
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             json_error('SMTP error: ' . $e->getMessage());
         }
     }

@@ -56,9 +56,9 @@ export default function App() {
                 <Route path="cards/import" element={<RequireAdmin><ImportCardsPage /></RequireAdmin>} />
                 <Route path="logs" element={<LogsPage />} />
                 <Route path="reports" element={<RequireAdmin><ReportsPage /></RequireAdmin>} />
-                <Route path="schedules" element={<SchedulesPage />} />
-                <Route path="groups" element={<GroupsPage />} />
-                <Route path="holidays" element={<HolidaysPage />} />
+                <Route path="schedules" element={<RequireAdmin><SchedulesPage /></RequireAdmin>} />
+                <Route path="groups" element={<RequireAdmin><GroupsPage /></RequireAdmin>} />
+                <Route path="holidays" element={<RequireAdmin><HolidaysPage /></RequireAdmin>} />
                 <Route path="users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
                 <Route path="audit" element={<RequireAdmin><AuditPage /></RequireAdmin>} />
                 <Route path="settings" element={<RequireAdmin><SettingsPage /></RequireAdmin>} />

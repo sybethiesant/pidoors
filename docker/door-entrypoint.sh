@@ -97,7 +97,7 @@ if true; then
     CSR_PEM=$(cat /tmp/pidoors-controller.csr)
     SIGN_RESPONSE=$(curl -sf -k "https://$DB_HOST/api/certs/sign" \
         -H 'Content-Type: application/json' \
-        -d "{\"db_user\":\"$DB_USER\",\"db_pass\":\"$DB_PASS\",\"csr\":$("$INSTALL_DIR/venv/bin/python3" -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "$CSR_PEM"),\"door_name\":\"$DOOR_NAME\",\"door_ip\":\"$(hostname -i)\"}" \
+        -d "{\"db_user\":\"$DB_USER\",\"db_pass\":\"$DB_PASS\",\"csr\":$("$INSTALL_DIR/venv/bin/python3" -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "$CSR_PEM"),\"door_name\":\"$DOOR_NAME\",\"door_ip\":\"$(hostname -i)\",\"enrollment_token\":\"${ENROLLMENT_TOKEN:-}\"}" \
         2>/dev/null) || SIGN_RESPONSE=""
 
     if echo "$SIGN_RESPONSE" | "$INSTALL_DIR/venv/bin/python3" -c "import sys,json; cert=json.load(sys.stdin)['cert']; open('$INSTALL_DIR/conf/listener.crt','w').write(cert)" 2>/dev/null; then
@@ -156,6 +156,7 @@ cat > "$INSTALL_DIR/conf/config.json" <<EOF
         "sqlpass": "$DB_PASS",
         "sqldb": "$DB_NAME",
         "api_key": "$API_KEY",
+        "enrollment_token": "${ENROLLMENT_TOKEN:-}",
         "listen_port": $LISTEN_PORT
     }
 }

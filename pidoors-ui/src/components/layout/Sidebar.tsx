@@ -83,18 +83,23 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             <FileText className="h-4 w-4" />
             Access Logs
           </NavLink>
-          <NavLink to="/schedules" className={navLinkClass} onClick={onClose}>
-            <Calendar className="h-4 w-4" />
-            Schedules
-          </NavLink>
-          <NavLink to="/groups" className={navLinkClass} onClick={onClose}>
-            <Users2 className="h-4 w-4" />
-            Access Groups
-          </NavLink>
-          <NavLink to="/holidays" className={navLinkClass} onClick={onClose}>
-            <CalendarDays className="h-4 w-4" />
-            Holidays
-          </NavLink>
+          {/* Admin-only on the API — hide from non-admins instead of 403ing */}
+          {user?.isAdmin && (
+            <>
+              <NavLink to="/schedules" className={navLinkClass} onClick={onClose}>
+                <Calendar className="h-4 w-4" />
+                Schedules
+              </NavLink>
+              <NavLink to="/groups" className={navLinkClass} onClick={onClose}>
+                <Users2 className="h-4 w-4" />
+                Access Groups
+              </NavLink>
+              <NavLink to="/holidays" className={navLinkClass} onClick={onClose}>
+                <CalendarDays className="h-4 w-4" />
+                Holidays
+              </NavLink>
+            </>
+          )}
 
           {/* Admin section */}
           {user?.isAdmin && (

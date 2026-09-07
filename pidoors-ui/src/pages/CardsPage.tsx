@@ -19,6 +19,11 @@ import { getGroups } from '../api/groups';
 import toast from 'react-hot-toast';
 import type { Card, Schedule, AccessGroup } from '../types';
 
+/** API key for a card: card_id once scanned, otherwise "id:<pk>" for a card
+ *  created in the UI that has not been presented to a reader yet. */
+const cardKey = (c: Partial<Card>): string =>
+  c.card_id ?? (c.id != null ? `id:${c.id}` : '');
+
 function CardFormModal({
   card,
   schedules,
@@ -34,7 +39,7 @@ function CardFormModal({
   onSave: (data: Partial<Card>) => void;
   saving: boolean;
 }) {
-  const isEdit = card && card.card_id;
+  const isEdit = !!(card && (card.card_id || card.id != null));
   const [form, setForm] = useState<Partial<Card> & { master_card?: number }>({
     user_id: '',
     facility: '',
@@ -305,7 +310,7 @@ export function CardsPage() {
                 </tr>
               ) : (
                 paginated.map((card) => (
-                  <tr key={card.card_id} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                  <tr key={cardKey(card)} className="border-b border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/30">
                     <td className="px-4 py-3 font-mono text-slate-900 dark:text-white">{card.user_id}</td>
                     <td className="px-4 py-3 text-slate-900 dark:text-white">
                       {card.firstname} {card.lastname}
@@ -362,7 +367,7 @@ export function CardsPage() {
           onClose={() => { setShowForm(false); setEditCard(null); setPrefill(null); }}
           onSave={(data) => {
             if (editCard) {
-              editMutation.mutate({ id: editCard.card_id, data });
+              editMutation.mutate({ id: cardKey(editCard), data });
             } else {
               addMutation.mutate(data);
             }
@@ -381,7 +386,7 @@ export function CardsPage() {
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setConfirmDelete(null)} className="btn btn-secondary">Cancel</button>
-              <button onClick={() => deleteMutation.mutate(confirmDelete.card_id)} className="btn btn-danger" disabled={deleteMutation.isPending}>
+              <button onClick={() => deleteMutation.mutate(cardKey(confirmDelete))} className="btn btn-danger" disabled={deleteMutation.isPending}>
                 {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                 Delete
               </button>

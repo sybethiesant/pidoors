@@ -5,8 +5,8 @@ Wiegand-based access control system for Raspberry Pi
 
 Features:
 - Wiegand 26, 32, 34, 35, 36, 37, 48-bit card reading
-- OSDP encrypted reader support
-- NFC/RFID reader support (PN532, MFRC522)
+- OSDP reader module (present, not yet wired into the controller)
+- NFC/RFID reader modules PN532 / MFRC522 (present, not yet wired into the controller)
 - Local 24-hour cache for offline operation
 - Persistent master cards for emergency access (bounded fail-open during outages)
 - Time-based access schedules
@@ -693,15 +693,25 @@ def sync_cache_from_server():
         # the leading space — yet both lookup paths strip spaces. Normalize by
         # removing spaces from the column (REPLACE) before matching so the cache
         # contents agree with the lookup logic and cards aren't silently missing.
+        # Access groups grant extra doors: a card whose group's door list names
+        # this zone gets access even when its own doors column does not.
+        # Previously groups were labels only — the controller never read them.
+        group_doors = fetch_group_doors(cursor)
+        granting_groups = [gid for gid, doors in group_doors.items() if zone in doors]
         sql = """
             SELECT card_id, user_id, facility, bstr, firstname, lastname,
                    doors, active, group_id, schedule_id, valid_from, valid_until,
                    daily_scan_limit
             FROM cards
             WHERE active = 1
-              AND (FIND_IN_SET(%s, REPLACE(doors, ' ', '')) > 0 OR doors = '*')
+              AND (FIND_IN_SET(%s, REPLACE(doors, ' ', '')) > 0 OR doors = '*'
         """
-        cursor.execute(sql, (zone,))
+        params = [zone]
+        if granting_groups:
+            sql += "       OR group_id IN (" + ",".join(["%s"] * len(granting_groups)) + ")\n"
+            params.extend(granting_groups)
+        sql += "              )"
+        cursor.execute(sql, tuple(params))
         cards = cursor.fetchall()
 
         # Fetch schedules
@@ -712,7 +722,9 @@ def sync_cache_from_server():
         sync_master_cards_from_db(cursor)
 
         # Fetch holidays
-        cursor.execute("SELECT * FROM holidays WHERE date >= CURDATE()")
+        # Recurring holidays are matched by month/day, so a past date is still
+        # live — include them or the offline cache silently drops them.
+        cursor.execute("SELECT * FROM holidays WHERE date >= CURDATE() OR recurring = 1")
         holidays = cursor.fetchall()
 
         # Fetch door settings for this zone
@@ -734,11 +746,14 @@ def sync_cache_from_server():
         # Add regular cards to cache
         for card in cards:
             key = f"{card['facility']},{card['user_id']}"
+            doors_val = card['doors'] or ''
+            if card.get('group_id') in granting_groups and not doors_grant_zone(doors_val, zone):
+                doors_val = f"{doors_val},{zone}" if doors_val else zone
             new_cache['cards'][key] = {
                 'card_id': card['card_id'],
                 'firstname': card['firstname'],
                 'lastname': card['lastname'],
-                'doors': card['doors'],
+                'doors': doors_val,
                 'schedule_id': card['schedule_id'],
                 'valid_from': str(card['valid_from']) if card['valid_from'] else None,
                 'valid_until': str(card['valid_until']) if card['valid_until'] else None,
@@ -747,7 +762,6 @@ def sync_cache_from_server():
 
         with cache_lock:
             local_cache = new_cache
-        save_cache()
         report(f"Cache synced from server: {len(new_cache['cards'])} cards")
 
         # Apply gate config + status LED config + master scan settings from door settings
@@ -767,6 +781,11 @@ def sync_cache_from_server():
                 local_cache['settings'] = cached_settings
         except Exception:
             pass
+
+        # Save AFTER the settings are attached. Saving before (as this used to)
+        # meant the cache file never carried 'settings', so a restart with the
+        # DB down lost the configured heartbeat interval.
+        save_cache()
 
     except pymysql.Error as e:
         with state_lock:
@@ -2033,6 +2052,8 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
             card_doors = card.get('doors', '')
             card_door_list = [d.strip() for d in card_doors.split(',') if d.strip()]
             has_door_access = zone in card_door_list or card_doors == '*'
+            if not has_door_access and card.get('group_id'):
+                has_door_access = group_grants_zone(cursor, card.get('group_id'))
 
             if card['active'] != 1:
                 reason = "Card inactive"
@@ -2122,6 +2143,55 @@ def try_database_lookup(card_id, facility, user_id, bstr, now):
                 pass
 
 
+def parse_group_doors(raw):
+    """Parse access_groups.doors into a set of door names.
+
+    The web UI stores a JSON array of door names; tolerate a legacy comma list.
+    NULL / empty grants nothing extra — a group must name doors explicitly to
+    widen access (conservative: upgrading never silently opens doors)."""
+    if not raw:
+        return set()
+    if isinstance(raw, (list, tuple, set)):
+        return {str(d).strip() for d in raw if str(d).strip()}
+    raw = str(raw).strip()
+    if raw.startswith('['):
+        try:
+            return {str(d).strip() for d in json.loads(raw) if str(d).strip()}
+        except (ValueError, TypeError):
+            return set()
+    return {d.strip() for d in raw.split(',') if d.strip()}
+
+
+def doors_grant_zone(doors_str, zone_name):
+    """True if a cards.doors value grants zone_name ('*' = all doors)."""
+    doors_str = doors_str or ''
+    door_list = [d.strip() for d in doors_str.split(',') if d.strip()]
+    return zone_name in door_list or doors_str.strip() == '*'
+
+
+def fetch_group_doors(cursor):
+    """Return {group_id: set(door names)} for every access group."""
+    try:
+        cursor.execute("SELECT id, doors FROM access_groups")
+        return {row['id']: parse_group_doors(row.get('doors')) for row in cursor.fetchall()}
+    except pymysql.Error as e:
+        debug(f"access_groups lookup failed: {e}")
+        return {}
+
+
+def group_grants_zone(cursor, group_id):
+    """True if the card's access group explicitly lists this zone (online path)."""
+    if not group_id:
+        return False
+    try:
+        cursor.execute("SELECT doors FROM access_groups WHERE id = %s", (group_id,))
+        row = cursor.fetchone()
+    except pymysql.Error as e:
+        debug(f"access_groups lookup failed: {e}")
+        return False
+    return bool(row) and zone in parse_group_doors(row.get('doors'))
+
+
 def check_schedule(schedule_id, now):
     """Check if current time is within the schedule (from cache)"""
     if not schedule_id:
@@ -2151,7 +2221,9 @@ def check_schedule(schedule_id, now):
     start_time = schedule.get(start_key)
     end_time = schedule.get(end_key)
 
-    if not start_time or not end_time:
+    # `is None` rather than falsiness: a 00:00 bound arrives from PyMySQL as
+    # timedelta(0), which is falsy but valid (the DB path already does this).
+    if start_time is None or end_time is None:
         return False  # No access on this day
 
     # Normalize bounds to datetime.time before comparing. PyMySQL returns TIME
@@ -2664,7 +2736,7 @@ def command_poll_loop():
 
             # Check for remote commands and read current poll interval
             cursor.execute(
-                "SELECT unlock_requested, hold_requested, poll_interval FROM doors WHERE name = %s",
+                "SELECT unlock_requested, hold_requested, poll_interval, lockdown_mode FROM doors WHERE name = %s",
                 (zone,)
             )
             row = cursor.fetchone()
@@ -2674,6 +2746,15 @@ def command_poll_loop():
                 new_interval = row.get('poll_interval')
                 if new_interval and 1 <= int(new_interval) <= 60:
                     poll_interval = int(new_interval)
+
+                # Mirror lockdown_mode into the cached door settings so a
+                # lockdown takes effect within one poll instead of waiting for
+                # the hourly cache sync (or a push the door may never receive).
+                if 'lockdown_mode' in row:
+                    with cache_lock:
+                        ds = local_cache.get('door_settings')
+                        if isinstance(ds, dict):
+                            ds['lockdown_mode'] = row.get('lockdown_mode')
 
                 # Handle remote unlock request
                 if row.get('unlock_requested'):

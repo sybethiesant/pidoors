@@ -328,9 +328,9 @@ function DoorFormModal({
                 onChange={(e) => setForm({ ...form, reader_type: e.target.value })}
               >
                 <option value="wiegand">Wiegand</option>
-                <option value="osdp">OSDP</option>
-                <option value="nfc_pn532">NFC PN532</option>
-                <option value="nfc_mfrc522">NFC MFRC522</option>
+                <option value="osdp" disabled>OSDP (planned — not yet supported)</option>
+                <option value="nfc_pn532" disabled>NFC PN532 (planned — not yet supported)</option>
+                <option value="nfc_mfrc522" disabled>NFC MFRC522 (planned — not yet supported)</option>
               </select>
             </div>
             <div>

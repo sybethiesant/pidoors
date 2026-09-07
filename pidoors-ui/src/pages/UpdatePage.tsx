@@ -69,10 +69,21 @@ export function UpdatePage() {
   const autoCheckDisabled = status?.latest_version === 'disabled';
   const currentVer = status?.current_version?.replace(/^v/, '') || '';
   const latestVer = status?.latest_version?.replace(/^v/, '') || '';
+  // Numeric semver compare — string comparison breaks past single digits
+  // ("0.4.10" < "0.4.9" lexicographically).
+  const cmpVer = (a: string, b: string): number => {
+    const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  };
   // Handle version reset: 3.x was renumbered to 0.x
-  const isVersionReset = currentVer >= '3.0.0' && latestVer < '1.0.0' && latestVer !== '';
+  const isVersionReset = latestVer !== '' && cmpVer(currentVer, '3.0.0') >= 0 && cmpVer(latestVer, '1.0.0') < 0;
   const isUpToDate = !autoCheckDisabled && status && currentVer && latestVer &&
-    !isVersionReset && currentVer === latestVer;
+    !isVersionReset && cmpVer(currentVer, latestVer) >= 0;
 
   const targetVersion = status?.current_version?.replace(/^v/, '') || '';
   const hasOutdatedControllers = controllers.some(

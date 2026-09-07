@@ -99,7 +99,9 @@ export interface StatusLedConfig {
 }
 
 export interface Card {
-  card_id: string;
+  id?: number;
+  /** Hex of the Wiegand frame. NULL until the card is first scanned. */
+  card_id: string | null;
   user_id: string;
   facility: string;
   firstname: string;

@@ -158,7 +158,7 @@ function notify_security_alert($event_type, $details, $config, $pdo_access) {
         $body .= "<div style='background: white; padding: 10px; border-left: 4px solid #dc3545;'>";
         $body .= nl2br(htmlspecialchars($details));
         $body .= "</div>";
-        $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/audit.php' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Audit Log</a></p>";
+        $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/audit' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Audit Log</a></p>";
 
         return send_notification($ns['notification_email'], $subject, $body, $merged);
     } catch (Exception $e) {
@@ -186,7 +186,7 @@ function notify_door_status($door_name, $status, $config, $pdo_access) {
         $body .= "<p><strong>Status:</strong> <span style='color: {$status_color}; font-weight: bold;'>" . ucfirst($status) . "</span></p>";
         $body .= "<p><strong>Time:</strong> " . date('Y-m-d H:i:s') . "</p>";
         $body .= "</div>";
-        $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/doors.php' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Doors</a></p>";
+        $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/doors' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Doors</a></p>";
 
         return send_notification($ns['notification_email'], $subject, $body, $merged);
     } catch (Exception $e) {
@@ -215,7 +215,7 @@ function notify_access_denied($card_id, $door_name, $attempt_count, $config, $pd
         $body .= "<p><strong>Time:</strong> " . date('Y-m-d H:i:s') . "</p>";
         $body .= "</div>";
         $body .= "<p>This may indicate a lost or stolen card, or an attempted breach.</p>";
-        $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/logs.php' style='background: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Access Logs</a></p>";
+        $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/logs' style='background: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Access Logs</a></p>";
 
         return send_notification($ns['notification_email'], $subject, $body, $merged);
     } catch (Exception $e) {
@@ -282,7 +282,7 @@ function send_daily_summary($config, $pdo_access) {
             $body .= "</ul>";
         }
 
-        $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/reports.php' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Full Reports</a></p>";
+        $body .= "<p style='margin-top: 20px;'><a href='" . htmlspecialchars($config['url']) . "/reports' style='background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>View Full Reports</a></p>";
 
         return send_notification($ns['notification_email'], $subject, $body, $merged);
     } catch (Exception $e) {

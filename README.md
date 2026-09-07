@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.4-green)
+![Version](https://img.shields.io/badge/version-0.4.5-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -174,6 +174,8 @@ The installer presents three installation modes:
 3. Navigate to **Doors** to see your door controllers as they come online
 4. Navigate to **Cards** to add access cards
 5. Set up **Schedules** and **Access Groups** as needed
+
+> **Installing a door controller on a separate Pi?** The server install prints a **controller enrollment token** at the end (also stored in `/var/www/pidoors/includes/config.php` as `enrollment_token`). Enter it when the door-controller install asks for it. It lets the controller obtain a CA-signed certificate so the server can push commands to it instantly; without it the controller still works, but commands fall back to database polling.
 
 ### Manual Installation
 
@@ -569,6 +571,14 @@ Upload at **Cards** > **Import CSV**. Optional columns: `email`, `phone`, `depar
 3. Set time windows for each day
 4. Assign to cards (restricts when the card works) or to doors (see below)
 
+### Access Groups
+
+An access group carries a list of doors. A card assigned to a group is granted every door in the group's list **in addition to** the doors on the card itself, so you can manage door sets centrally and leave most cards' own door list empty. Notes:
+
+- The group must list doors explicitly. A group with no doors selected grants nothing extra (it is just a label), and it never restricts a card's own doors.
+- Schedules, validity dates, holidays and scan limits still come from the card.
+- Controllers pick up group changes on their next cache sync (hourly, or immediately on a config push).
+
 ### Scheduled Unlock (Hold Open by Schedule)
 
 To keep a door or gate open during set hours — a community gate open 6am–7pm, a lobby door unlocked during business hours — assign a schedule to the **door** in **Doors** > edit > **Unlock Schedule**.
@@ -592,7 +602,7 @@ To keep a door or gate open during set hours — a community gate open 6am–7pm
 ## Maintenance
 
 ### Automatic Backups
-Backups run daily at 2 AM to `/var/backups/pidoors/`
+Backups run daily at 2 AM to `/var/backups/pidoors/` (database dumps plus the web root). Retention follows the **Backup retention (days)** value on the Settings page, default 30. The dump credentials live in the root-only file `/etc/pidoors/backup.cnf`.
 
 ### Manual Backup
 ```bash
@@ -756,7 +766,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.4** - Pre-release
+**Current Version: 0.4.5** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -770,6 +780,34 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.5 (September 2026)
+**Audit fixes.** A sweep of the controller, API, SPA and installer for features that were exposed but not wired up. Everything below was broken or inert before this release.
+
+Controller
+- **Access groups now grant access.** The controller never read `access_groups`, so a group's door list was a label. Cards whose group lists the door are now included in the door's cache and pass the online check. Groups must name doors explicitly; an empty group grants nothing (conservative on upgrade). See *Access Groups* under Usage.
+- **Schedules starting at 00:00 denied access on the offline path** — the cached check used falsiness and PyMySQL returns midnight as `timedelta(0)`. Now `is None`, matching the DB path.
+- **Recurring holidays with a past date never reached the offline cache** (`date >= CURDATE()` dropped them). Recurring rows are always synced.
+- **Global settings were dropped from the cache file** because it was saved before they were attached. Saved after.
+- **Lockdown mode is read on the fast command poll**, so it takes effect within seconds instead of on the hourly sync.
+- Docstring no longer claims OSDP/NFC support; the reader-type dropdown marks those options as planned and disabled.
+
+Server / web UI
+- **Controller certificate enrollment could never succeed.** `/api/certs/sign` refused unless `enrollment_token` was set in config.php, and nothing ever set or sent it — every controller fell back to a self-signed cert the server's CA pin then rejected, so push commands silently degraded to polling. The server install now generates the token (printed in the summary), the door install prompts for it, and all three signing callers send it. Existing installs: set `enrollment_token` in config.php, add it to the controller's `config.json`, and re-run `pidoors-update.sh` to re-sign.
+- **In-app server update now verifies the published `.sha256`** before extracting and no longer falls back to the GitHub source archive (which skipped verification and contained no built SPA). Matches `server-update.sh`.
+- **"Send Test Email" always failed** — it called a function that did not exist. Uses the SMTP sender.
+- **Cards created in the UI could not be edited or deleted** until first scanned (the API keys on `card_id`, which is NULL until then). They can now be addressed by primary key.
+- **Creating a door dropped its gate, status-LED and lockdown settings** — only the edit path saved them. The create path persists and validates them too; a door named `all` is rejected (it collides with the update-all route).
+- **Security settings were inert.** Login lockout attempts/duration and password rules edited on the Settings page are now applied (they were read from config.php only).
+- Notification emails link to the SPA routes instead of the retired `.php` pages.
+- Schedules, Access Groups and Holidays are hidden from non-admins instead of loading and failing with 403.
+- Update page compares versions numerically (string compare broke past `0.4.9`).
+
+Installer
+- **Automatic backup is actually scheduled** (daily 02:00). It was installed but never added to cron. Retention now follows the Settings page value, and the DB password moved from a command-line argument to a root-only credentials file.
+- The `nginx/` template is copied into the web root so the nginx upgrade helper has a source after a fresh install.
+
+Not changed (known, documented): `pin_code` and anti-passback columns are stored but unused; several Settings keys (`maintenance_mode`, `log_retention_days`, `cache_duration`, `default_*`) are saved but read by nothing; legacy PHP pages are still shipped though unreachable behind the SPA nginx config.
 
 ### Version 0.4.4 (September 2026)
 **Scheduled unlock (hold open by schedule) — fixes #5.** The **Schedule** dropdown on the door edit page has existed since the schedules feature landed, but the controller never read `doors.schedule_id` — the field was saved and then ignored, so "hold the gate open 6am–7pm" silently did nothing. The controller now runs an unlock-schedule thread that holds the door (or opens and holds the gate) when the assigned schedule's window opens and releases it when the window closes. It is edge-triggered, so master-card / admin releases mid-window are respected; it re-applies after a reboot mid-window; and lockdown mode or an access-denied holiday overrides it. The field is now labeled **Unlock Schedule** in both UIs with the behavior spelled out. See *Scheduled Unlock* under Usage.

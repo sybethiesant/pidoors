@@ -57,6 +57,11 @@ prompt() {
     printf -v "$var_name" '%s' "$value"
 }
 
+# Enrollment token for /api/certs/sign (generated on server install; typed in
+# on a door-only install). Initialised here so 'set -u' never trips on it.
+ENROLL_TOKEN=""
+ENROLL_TOKEN_DOOR=""
+
 prompt_secret() {
     local var_name="$1" prompt_text="$2"
     local value=""
@@ -471,6 +476,9 @@ EOF
     info "Installing web files..."
     mkdir -p "$WEB_ROOT"
     cp -r "$SCRIPT_DIR/pidoorserv/"* "$WEB_ROOT/"
+    # nginx template — the nginx upgrade helper reads it from the web root on
+    # later updates; without this copy the helper had nothing to compare against.
+    [ -d "$SCRIPT_DIR/nginx" ] && cp -r "$SCRIPT_DIR/nginx" "$WEB_ROOT/"
     # Copy VERSION file to web root for footer/update page
     [ -f "$SCRIPT_DIR/VERSION" ] && cp "$SCRIPT_DIR/VERSION" "$WEB_ROOT/"
     # Copy CA cert to web root for door controllers to download
@@ -532,6 +540,11 @@ EOF
         sed -i "s/'sqlpass' => ''/'sqlpass' => '$ESCAPED_DB_PASS'/g" "$WEB_ROOT/includes/config.php"
         SERVER_IP=$(hostname -I | awk '{print $1}')
         sed -i "s|'url' => 'http://localhost'|'url' => 'https://$SERVER_IP'|g" "$WEB_ROOT/includes/config.php"
+        # Enrollment token: /api/certs/sign refuses to sign controller certs
+        # unless this is set, and nothing used to set it — so every controller
+        # ended up self-signed and the server's CA pin rejected push commands.
+        ENROLL_TOKEN=$(openssl rand -hex 32)
+        sed -i "s/'enrollment_token' => ''/'enrollment_token' => '$ENROLL_TOKEN'/" "$WEB_ROOT/includes/config.php"
         chmod 640 "$WEB_ROOT/includes/config.php"
         chown www-data:www-data "$WEB_ROOT/includes/config.php"
         ok "Config file created"
@@ -695,6 +708,7 @@ if [ "$INSTALL_DOOR" = true ]; then
         DB_USER="pidoors"
         DB_PASS_DOOR="$DB_PASS"
         DB_NAME="access"
+        ENROLL_TOKEN_DOOR="$ENROLL_TOKEN"
         info "Using local database (same machine as server)"
         ok "Server: $DB_HOST"
     else
@@ -705,6 +719,13 @@ if [ "$INSTALL_DOOR" = true ]; then
         prompt DB_USER "Database username" "pidoors"
         prompt_secret DB_PASS_DOOR "Database password"
         DB_NAME="access"
+        echo
+        echo "  Enrollment token: shown at the end of the server install, and stored on the"
+        echo "  server in /var/www/pidoors/includes/config.php ('enrollment_token')."
+        echo "  It lets this controller get a CA-signed certificate so the server can push"
+        echo "  commands to it. Leave blank to skip (commands fall back to DB polling)."
+        read -p "  Enrollment token (optional): " ENROLL_TOKEN_DOOR
+        ENROLL_TOKEN_DOOR="${ENROLL_TOKEN_DOOR//[^A-Za-z0-9]/}"
     fi
 
     # ── Card reader ──
@@ -874,7 +895,7 @@ if [ "$INSTALL_DOOR" = true ]; then
     CURL_EXIT=0
     SIGN_RESPONSE=$(curl -s -k --max-time 10 "https://$DB_HOST/api/certs/sign" \
         -H 'Content-Type: application/json' \
-        -d "{\"db_user\":\"$DB_USER\",\"db_pass\":\"$(echo "$DB_PASS_DOOR" | sed 's/"/\\"/g')\",\"csr\":$(echo "$CSR_PEM" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),\"door_name\":\"$DOOR_NAME\",\"door_ip\":\"$CONTROLLER_IP\"}" \
+        -d "{\"db_user\":\"$DB_USER\",\"db_pass\":\"$(echo "$DB_PASS_DOOR" | sed 's/"/\\"/g')\",\"csr\":$(echo "$CSR_PEM" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),\"door_name\":\"$DOOR_NAME\",\"door_ip\":\"$CONTROLLER_IP\",\"enrollment_token\":\"$ENROLL_TOKEN_DOOR\"}" \
         2>&1) || CURL_EXIT=$?
 
     if [ $CURL_EXIT -ne 0 ]; then
@@ -911,6 +932,7 @@ if [ "$INSTALL_DOOR" = true ]; then
         "sqlpass": "$DB_PASS_DOOR",
         "sqldb": "$DB_NAME",
         "api_key": "$API_KEY",
+        "enrollment_token": "$ENROLL_TOKEN_DOOR",
         "listen_port": $LISTEN_PORT
     }
 }
@@ -1153,31 +1175,44 @@ if [ "$INSTALL_SERVER" = true ]; then
     chown www-data:www-data /var/backups/pidoors
     chmod 750 /var/backups/pidoors
 
+    # Root-only credentials file so the DB password never appears on a command
+    # line (argv is world-readable via /proc). Read by mysqldump below.
+    mkdir -p /etc/pidoors
+    printf '[client]\nuser=pidoors\npassword=%s\n' "$DB_PASS" > /etc/pidoors/backup.cnf
+    chmod 600 /etc/pidoors/backup.cnf
+
     cat > /usr/local/bin/pidoors-backup.sh <<'BACKUP'
 #!/bin/bash
 BACKUP_DIR="/var/backups/pidoors"
+CNF="/etc/pidoors/backup.cnf"
 DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR"
+# Retention comes from the Settings page (backup_retention_days); default 30.
+RETAIN=$(mysql --defaults-extra-file="$CNF" -N -s -e "SELECT setting_value FROM access.settings WHERE setting_key='backup_retention_days'" 2>/dev/null)
+case "$RETAIN" in ''|*[!0-9]*) RETAIN=30 ;; esac
+[ "$RETAIN" -lt 1 ] && RETAIN=30
 # The pidoors DB user only holds DML privileges (SELECT/INSERT/UPDATE/DELETE),
 # not LOCK TABLES. Use --single-transaction (InnoDB-consistent snapshot) and
 # --skip-lock-tables so the dump works without table-lock privileges.
 DUMP_OPTS="--single-transaction --skip-lock-tables"
-mysqldump $DUMP_OPTS -u pidoors -p"$1" users > "$BACKUP_DIR/users_$DATE.sql"
-mysqldump $DUMP_OPTS -u pidoors -p"$1" access > "$BACKUP_DIR/access_$DATE.sql"
+mysqldump --defaults-extra-file="$CNF" $DUMP_OPTS users > "$BACKUP_DIR/users_$DATE.sql"
+mysqldump --defaults-extra-file="$CNF" $DUMP_OPTS access > "$BACKUP_DIR/access_$DATE.sql"
 tar --exclude='config.php' -czf "$BACKUP_DIR/web_$DATE.tar.gz" /var/www/pidoors
-find "$BACKUP_DIR" -name "*.sql" -mtime +30 -delete
-find "$BACKUP_DIR" -name "*.tar.gz" -mtime +30 -delete
-echo "Backup completed: $DATE"
+find "$BACKUP_DIR" -name "*.sql" -mtime +"$RETAIN" -delete
+find "$BACKUP_DIR" -name "*.tar.gz" -mtime +"$RETAIN" -delete
+echo "Backup completed: $DATE (retention ${RETAIN}d)"
 BACKUP
     chmod +x /usr/local/bin/pidoors-backup.sh
     ok "Backup script installed"
 
-    # Notification cron job (runs every 5 minutes)
+    # Cron: notifications every 5 minutes, daily backup at 02:00. (The backup
+    # script used to be installed but never scheduled.)
     cat > /etc/cron.d/pidoors <<'CRON'
 */5 * * * * www-data php /var/www/pidoors/cron/notify.php > /dev/null 2>&1
+0 2 * * * root /usr/local/bin/pidoors-backup.sh > /dev/null 2>&1
 CRON
     chmod 644 /etc/cron.d/pidoors
-    ok "Notification cron job installed"
+    ok "Cron jobs installed (notifications every 5 min, backup daily 02:00)"
 fi
 
 # ============================================================
@@ -1197,7 +1232,11 @@ if [ "$INSTALL_SERVER" = true ]; then
     echo -e "    Login:      $ADMIN_EMAIL"
     echo -e "    Web root:   $WEB_ROOT"
     echo -e "    Nginx:      /etc/nginx/sites-available/pidoors"
-    echo -e "    Backup:     /usr/local/bin/pidoors-backup.sh"
+    echo -e "    Backup:     /usr/local/bin/pidoors-backup.sh (daily 02:00)"
+    echo
+    echo -e "  ${BOLD}Controller enrollment token${NC} (needed when installing a door controller"
+    echo -e "  on another Pi — also stored in $WEB_ROOT/includes/config.php):"
+    echo -e "    ${GREEN}${ENROLL_TOKEN}${NC}"
     echo
 fi
 

@@ -490,7 +490,7 @@ zc = cfg.get('$ZONE', {})
 csr = open('/tmp/pidoors-controller.csr').read()
 controller_ip = subprocess.check_output(['hostname', '-I']).decode().split()[0] if subprocess.check_output(['hostname', '-I']).decode().strip() else ''
 import urllib.request, urllib.error
-payload = json.dumps({'db_user': zc.get('sqluser',''), 'db_pass': zc.get('sqlpass',''), 'csr': csr, 'door_name': '$ZONE', 'door_ip': controller_ip}).encode()
+payload = json.dumps({'db_user': zc.get('sqluser',''), 'db_pass': zc.get('sqlpass',''), 'csr': csr, 'door_name': '$ZONE', 'door_ip': controller_ip, 'enrollment_token': zc.get('enrollment_token', '')}).encode()
 req = urllib.request.Request('https://' + zc.get('sqladdr','') + '/api/certs/sign', data=payload, headers={'Content-Type': 'application/json'}, method='POST')
 import ssl
 # SECURITY: this request carries the shared DB credentials (db_user/db_pass) to the

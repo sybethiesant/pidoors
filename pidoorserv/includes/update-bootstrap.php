@@ -14,11 +14,12 @@
 function pidoors_bootstrap_update(array $config, PDO $pdo_access, PDO $pdo, string $target_version): array {
     $tag_with_v = 'v' . $target_version;
 
-    // Download URLs — try release asset first (has pre-built SPA), fall back to source archive
-    $tarball_urls = [
-        "https://github.com/sybethiesant/pidoors/releases/download/{$tag_with_v}/{$tag_with_v}.tar.gz",
-        "https://github.com/sybethiesant/pidoors/archive/refs/tags/{$tag_with_v}.tar.gz",
-    ];
+    // Only the published release ASSET has a matching .sha256 we can verify
+    // against. The GitHub auto-generated source archive is not covered by our
+    // checksum (and contains no built SPA), so it is deliberately NOT a fallback —
+    // that would silently defeat the supply-chain check server-update.sh enforces.
+    $asset_url = "https://github.com/sybethiesant/pidoors/releases/download/{$tag_with_v}/{$tag_with_v}.tar.gz";
+    $sha_url   = $asset_url . '.sha256';
 
     $tmpdir = sys_get_temp_dir() . '/pidoors-server-update-' . uniqid();
     if (!mkdir($tmpdir, 0700, true)) {
@@ -26,11 +27,9 @@ function pidoors_bootstrap_update(array $config, PDO $pdo_access, PDO $pdo, stri
     }
     $tarball = $tmpdir . '/release.tar.gz';
 
-    // Download — try each URL until one succeeds
-    $http_code = 0;
-    foreach ($tarball_urls as $url) {
+    $fetch = function (string $url, string $dest) {
         $ch = curl_init($url);
-        $fp = fopen($tarball, 'w');
+        $fp = fopen($dest, 'w');
         curl_setopt_array($ch, [
             CURLOPT_FILE => $fp,
             CURLOPT_FOLLOWLOCATION => true,
@@ -38,17 +37,34 @@ function pidoors_bootstrap_update(array $config, PDO $pdo_access, PDO $pdo, stri
             CURLOPT_HTTPHEADER => ['User-Agent: PiDoors-Update'],
         ]);
         curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         fclose($fp);
-        if ($http_code === 200 && file_exists($tarball) && filesize($tarball) >= 1000) {
-            break;
-        }
-    }
+        return $code;
+    };
 
+    $http_code = $fetch($asset_url, $tarball);
     if ($http_code !== 200 || !file_exists($tarball) || filesize($tarball) < 1000) {
         @exec('rm -rf ' . escapeshellarg($tmpdir));
-        return ['ok' => false, 'msg' => "Failed to download release tarball (HTTP $http_code).", 'details' => []];
+        return ['ok' => false, 'msg' => "Failed to download release asset {$tag_with_v}.tar.gz (HTTP $http_code). A published release with a .sha256 asset is required.", 'details' => []];
+    }
+
+    // Verify the tarball against its published checksum BEFORE extracting.
+    // Fails secure: any download/parse/mismatch problem aborts the update.
+    $sum_file = $tarball . '.sha256';
+    $sum_code = $fetch($sha_url, $sum_file);
+    $published = '';
+    if ($sum_code === 200 && is_file($sum_file)) {
+        $published = strtolower(trim((string)strtok((string)file_get_contents($sum_file), " \t\r\n")));
+    }
+    if (!preg_match('/^[0-9a-f]{64}$/', $published)) {
+        @exec('rm -rf ' . escapeshellarg($tmpdir));
+        return ['ok' => false, 'msg' => "Could not fetch a valid checksum for {$tag_with_v} (HTTP $sum_code). Refusing to deploy an unverified release.", 'details' => []];
+    }
+    $actual = hash_file('sha256', $tarball);
+    if (!hash_equals($published, $actual)) {
+        @exec('rm -rf ' . escapeshellarg($tmpdir));
+        return ['ok' => false, 'msg' => "Checksum mismatch for {$tag_with_v}.tar.gz — refusing to deploy. Expected $published, got $actual.", 'details' => []];
     }
 
     // Extract
