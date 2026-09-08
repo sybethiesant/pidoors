@@ -76,10 +76,10 @@ if [ ! -f "$MIG" ]; then
     exit 2
 fi
 if [ -f "$CNF" ]; then
-    exec mysql --defaults-extra-file="$CNF" access < "$MIG"
+    exec mysql --defaults-extra-file="$CNF" access < "$MIG" > /dev/null
 fi
 # No dedicated user: fall back to the MariaDB root account over the unix socket
-exec mysql -u root access < "$MIG"
+exec mysql -u root access < "$MIG" > /dev/null
 MIGSH
     chown root:root /usr/local/sbin/pidoors-db-migrate
     chmod 755 /usr/local/sbin/pidoors-db-migrate
@@ -282,8 +282,9 @@ tar xzf "$TARBALL" -C "$TMPDIR" || {
     exit 1
 }
 
-# Find extracted directory
-EXTRACTED=$(find "$TMPDIR" -maxdepth 1 -type d -name "pidoors*" | head -1)
+# Find extracted directory. -mindepth 1 matters: $TMPDIR is itself named
+# pidoors-server-update-XXXXXX and would otherwise match first.
+EXTRACTED=$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d -name "pidoors*" | head -1)
 if [ -z "$EXTRACTED" ]; then
     fail "Could not find extracted directory"
     exit 1

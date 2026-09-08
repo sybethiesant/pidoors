@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.7-green)
+![Version](https://img.shields.io/badge/version-0.4.8-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -795,7 +795,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.7** - Pre-release
+**Current Version: 0.4.8** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -809,6 +809,9 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.8 (September 2026)
+- **`server-update.sh` failed at "Release archive missing pidoorserv/ directory".** Its temp directory is named `pidoors-server-update-…`, and the search for the extracted `pidoors-*` folder matched the temp directory itself. The CLI updater had been broken since that temp-dir naming was introduced; the in-app updater was unaffected. This matters now because v0.4.7 tells existing installs to run it once. Also: the migration helper no longer echoes the migration's placeholder `SELECT 1` rows.
 
 ### Version 0.4.7 (September 2026)
 - **Database migrations now actually run on upgrades.** Since the v0.4.0 hardening the app DB user has had no CREATE/ALTER, so the migration step in both the in-app updater and `server-update.sh` failed on its first statement and was reported as a *warning*. Every schema change shipped since then was silently skipped on upgraded installs (fresh installs were fine). v0.4.6 was the first release to add a column (`lcd_config`), which made this visible: saving a door's LCD config failed with an unknown-column error.

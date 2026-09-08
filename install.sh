@@ -81,10 +81,10 @@ if [ ! -f "$MIG" ]; then
     exit 2
 fi
 if [ -f "$CNF" ]; then
-    exec mysql --defaults-extra-file="$CNF" access < "$MIG"
+    exec mysql --defaults-extra-file="$CNF" access < "$MIG" > /dev/null
 fi
 # No dedicated user: fall back to the MariaDB root account over the unix socket
-exec mysql -u root access < "$MIG"
+exec mysql -u root access < "$MIG" > /dev/null
 MIGSH
     chown root:root /usr/local/sbin/pidoors-db-migrate
     chmod 755 /usr/local/sbin/pidoors-db-migrate
