@@ -56,6 +56,13 @@ except ImportError:
     FORMAT_REGISTRY_AVAILABLE = False
     print("Warning: Format registry not available. Using legacy format support.")
 
+# Optional character LCD at the door (lcd.py). Missing module = no display.
+try:
+    from lcd import create_lcd
+    LCD_AVAILABLE = True
+except ImportError:
+    LCD_AVAILABLE = False
+
 # Version
 def _read_version():
     """Read version from VERSION file, fallback to 'unknown'"""
@@ -131,6 +138,18 @@ gate_auto_close_timer = None   # threading.Timer for auto-close countdown
 # Status LED state
 status_led_pin = None          # Configured LED pin (None = disabled)
 status_led_active = 1          # Polarity: 1 = active high, 0 = active low
+
+# Door LCD state (see lcd.py). lcd is None when no display is configured.
+lcd = None
+lcd_lock = threading.Lock()
+lcd_revert_timer = None        # Timer that returns the display to idle after a message
+lcd_refresh_started = False    # Idle refresh thread started once per process
+lcd_applied_cfg = None         # lcd_config dict last applied (skip re-init when unchanged)
+
+# Per-key Wiegand keypad defaults (4-bit / 8-bit "one frame per keypress" mode).
+# Overridable per reader in config.json with "pin_timeout" / "pin_max_length".
+KEYPAD_PIN_TIMEOUT = 5.0       # Seconds between keys before a partial PIN is discarded
+KEYPAD_PIN_MAX_LENGTH = 10     # 2^32-1 fits in 10 digits (34-bit frame)
 
 # Master card hold settings (loaded from DB settings)
 master_scans_hold_open = 3
@@ -341,6 +360,8 @@ def _reseed_reader_runtime_keys():
         if reader.get("d0") and reader.get("d1"):
             reader.setdefault("stream", "")
             reader.setdefault("timer", None)
+            reader.setdefault("pin_buffer", "")
+            reader.setdefault("pin_timer", None)
             reader["name"] = name
             reader.setdefault("unlocked", False)
 
@@ -842,6 +863,8 @@ def setup_readers():
         if reader.get("d0") and reader.get("d1"):
             reader["stream"] = ""
             reader["timer"] = None
+            reader["pin_buffer"] = ""    # Digits typed so far on a per-key keypad
+            reader["pin_timer"] = None   # Inter-key timeout for that buffer
             reader["name"] = name
             reader["unlocked"] = False
 
@@ -1003,6 +1026,118 @@ def status_led_flash(times=3, interval=0.1):
             status_led_set(False)
             time.sleep(interval)
     threading.Thread(target=_flash, daemon=True).start()
+
+
+# ============================================================
+# DOOR LCD
+# ============================================================
+
+def setup_lcd(lcd_cfg):
+    """(Re)build the door LCD from the door's lcd_config. Called from
+    apply_door_settings() on every sync, so a config change in the web UI
+    takes effect on the next reload-config push. Passing None/disabled tears
+    the display down."""
+    global lcd, lcd_refresh_started, lcd_applied_cfg
+    if lcd_cfg == lcd_applied_cfg:
+        return  # Unchanged since the last sync — don't re-init (flicker) the panel
+    lcd_applied_cfg = lcd_cfg
+    with lcd_lock:
+        old = lcd
+        lcd = None
+    if old is not None:
+        try:
+            old.close()
+        except Exception:
+            pass
+
+    if not lcd_cfg or not lcd_cfg.get('enabled'):
+        return
+    if not LCD_AVAILABLE:
+        report("LCD configured but lcd.py could not be imported — display disabled")
+        return
+    try:
+        new = create_lcd(lcd_cfg)
+    except Exception as e:
+        report(f"LCD setup failed: {e}")
+        return
+    if new is None:
+        return
+    with lcd_lock:
+        lcd = new
+    debug(f"LCD configured: {lcd_cfg.get('type', 'i2c')} {new.cols}x{new.rows}")
+    lcd_idle()
+
+    if not lcd_refresh_started:
+        lcd_refresh_started = True
+        threading.Thread(target=_lcd_refresh_loop, daemon=True).start()
+
+
+def _lcd_idle_lines():
+    """What the display shows when nothing is happening: the door name, its
+    hold/lockdown state, and the time."""
+    cols = lcd.cols if lcd else 16
+    line1 = (zone or "PiDoors")
+    if door_is_locked_down():
+        state = "LOCKDOWN"
+    elif gate_enabled and gate_held:
+        state = "Gate held"
+    elif config.get(zone, {}).get("unlocked"):
+        state = "Held open"
+    else:
+        state = "Ready"
+    clock = datetime.now().strftime("%H:%M")
+    if cols >= len(state) + len(clock) + 1:
+        line2 = state.ljust(cols - len(clock)) + clock
+    else:
+        line2 = state
+    return [line1, line2]
+
+
+def lcd_idle():
+    """Return the display to its idle screen (no-op when no LCD)."""
+    global lcd_revert_timer
+    with lcd_lock:
+        if lcd_revert_timer:
+            lcd_revert_timer.cancel()
+            lcd_revert_timer = None
+        if lcd is None:
+            return
+        try:
+            lcd.write_lines(_lcd_idle_lines())
+        except Exception as e:
+            debug(f"LCD write failed: {e}")
+
+
+def lcd_show(line1, line2="", hold=None):
+    """Show a message. With hold=<seconds> the display reverts to idle after
+    that long; without it the message stays until the next lcd_* call."""
+    global lcd_revert_timer
+    with lcd_lock:
+        if lcd is None:
+            return
+        if lcd_revert_timer:
+            lcd_revert_timer.cancel()
+            lcd_revert_timer = None
+        try:
+            lcd.write_lines([line1, line2])
+        except Exception as e:
+            debug(f"LCD write failed: {e}")
+            return
+        if hold:
+            lcd_revert_timer = threading.Timer(hold, lcd_idle)
+            lcd_revert_timer.daemon = True
+            lcd_revert_timer.start()
+
+
+def _lcd_refresh_loop():
+    """Keep the idle clock and hold/lockdown state current. Only redraws when
+    no timed message is on screen."""
+    while running:
+        time.sleep(20)
+        with lcd_lock:
+            busy = lcd is None or lcd_revert_timer is not None
+        if not busy:
+            lcd_idle()
 
 
 # ============================================================
@@ -1494,6 +1629,16 @@ def apply_door_settings(door_info):
     if led_cfg:
         setup_status_led(led_cfg)
 
+    # Door LCD config (same JSON-in-a-column pattern as the status LED)
+    lcd_str = door_info.get('lcd_config')
+    lcd_cfg = None
+    if lcd_str:
+        try:
+            lcd_cfg = json.loads(lcd_str) if isinstance(lcd_str, str) else lcd_str
+        except Exception:
+            pass
+    setup_lcd(lcd_cfg)
+
 
 def _apply_global_setting(key, value):
     """Apply a global setting fetched from the settings table."""
@@ -1723,7 +1868,121 @@ def wiegand_stream_done(reader):
         reader["timer"] = None
 
     # Process outside the lock
-    validate_bits(bitstring)
+    if len(bitstring) in (4, 8):
+        # Per-key keypad output: one short frame per keypress, not a credential
+        keypad_key(reader, bitstring)
+    else:
+        validate_bits(bitstring)
+
+
+# ── Per-key Wiegand keypads ──────────────────────────────────────────
+# Keypads in "4-bit" / "8-bit" output mode send one frame per keypress instead
+# of the whole code in a 26-bit burst. We collect the digits ourselves, and on
+# '#' pack them into the same 26-bit (or 34-bit) frame a burst-mode keypad
+# would have sent, so a PIN enrolls and matches identically either way.
+
+def _decode_keypad_frame(bstr):
+    """Return the key ('0'-'9', '*', '#') for a 4- or 8-bit frame, or None."""
+    if len(bstr) == 4:
+        value = int(bstr, 2)
+    elif len(bstr) == 8:
+        # 8-bit mode = key in the low nibble, its complement in the high nibble
+        hi, lo = int(bstr[:4], 2), int(bstr[4:], 2)
+        if hi != (~lo & 0x0F):
+            debug(f"8-bit keypad frame failed complement check: {bstr}")
+            return None
+        value = lo
+    else:
+        return None
+    if value <= 9:
+        return str(value)
+    if value == 10:
+        return '*'
+    if value == 11:
+        return '#'
+    debug(f"Ignoring unknown keypad key code {value}")
+    return None
+
+
+def build_wiegand_frame(value):
+    """Pack an integer into a standard 26-bit (<2^24) or 34-bit (<2^32) frame
+    with the usual even/odd parity halves. Returns the bitstring or None."""
+    if value < 0:
+        return None
+    if value < (1 << 24):
+        data_bits = 24
+    elif value < (1 << 32):
+        data_bits = 32
+    else:
+        return None
+    data = format(value, f'0{data_bits}b')
+    half = data_bits // 2
+    lparity = data[:half].count('1') % 2            # even parity over first half
+    rparity = 1 - (data[half:].count('1') % 2)      # odd parity over second half
+    return f"{lparity}{data}{rparity}"
+
+
+def _keypad_cancel_timer(reader):
+    if reader.get("pin_timer"):
+        reader["pin_timer"].cancel()
+        reader["pin_timer"] = None
+
+
+def _keypad_timeout(reader):
+    """Inter-key timeout: throw away a half-typed code."""
+    with wiegand_lock:
+        if reader.get("pin_buffer"):
+            debug(f"Keypad PIN entry timed out after {len(reader['pin_buffer'])} digit(s)")
+        reader["pin_buffer"] = ""
+        reader["pin_timer"] = None
+    lcd_idle()
+
+
+def keypad_key(reader, bstr):
+    """Handle one keypress from a per-key keypad."""
+    key = _decode_keypad_frame(bstr)
+    if key is None:
+        return
+    pin_timeout = float(reader.get("pin_timeout", KEYPAD_PIN_TIMEOUT))
+    max_len = int(reader.get("pin_max_length", KEYPAD_PIN_MAX_LENGTH))
+
+    with wiegand_lock:
+        _keypad_cancel_timer(reader)
+        if key == '*':
+            reader["pin_buffer"] = ""
+            digits = None
+        elif key == '#':
+            digits = reader.get("pin_buffer", "")
+            reader["pin_buffer"] = ""
+        else:
+            buf = reader.get("pin_buffer", "")
+            if len(buf) < max_len:
+                buf += key
+            reader["pin_buffer"] = buf
+            digits = None
+            reader["pin_timer"] = threading.Timer(pin_timeout, _keypad_timeout, args=[reader])
+            reader["pin_timer"].daemon = True
+            reader["pin_timer"].start()
+        typed = len(reader["pin_buffer"])
+
+    if key == '*':
+        lcd_idle()
+        return
+    if key != '#':
+        lcd_show("Enter code", "*" * typed, hold=pin_timeout + 1)
+        return
+
+    # '#' pressed — submit whatever was typed
+    if not digits:
+        lcd_idle()
+        return
+    frame = build_wiegand_frame(int(digits))
+    if frame is None:
+        report(f"Keypad code of {len(digits)} digits is too large for a Wiegand frame; ignored")
+        lcd_show("Code too long", "", hold=2)
+        return
+    debug(f"Keypad PIN ({len(digits)} digits) -> {len(frame)}-bit frame")
+    validate_bits(frame)
 
 
 def validate_bits(bstr):
@@ -2351,8 +2610,9 @@ def open_door(user_id, name, is_master=False):
         last_card = user_id
         current_repeat_count = repeat_read_count + 1  # 1-indexed scan count
 
-    # ── Status LED feedback for the access event ──
+    # ── Status LED / LCD feedback for the access event ──
     status_led_pulse(2)
+    lcd_show("Access granted", name, hold=3)
 
     # ── Gate mode routing ──
     if gate_enabled:
@@ -2410,8 +2670,9 @@ def reject_card(user_id, reason="Access denied"):
 
     report(f"Access denied at {zone} for user {user_id}: {reason}")
 
-    # Status LED flash for denied access
+    # Status LED / LCD feedback for denied access
     status_led_flash(times=3, interval=0.1)
+    lcd_show("Access denied", reason, hold=3)
 
     # Legacy red LED on GPIO 22 (kept for backwards compat with builds that wired it up)
     try:
@@ -3144,6 +3405,12 @@ def cleanup(sig=None, frame=None):
         send_offline_status()
     except Exception:
         pass  # Ignore errors during cleanup
+
+    if lcd is not None:
+        try:
+            lcd.close()
+        except Exception:
+            pass
 
     GPIO.cleanup()
     sys.exit(0)

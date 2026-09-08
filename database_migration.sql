@@ -744,6 +744,13 @@ PREPARE stmt FROM @sqlstmt;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- lcd_config: JSON config for an optional character LCD at the door (type, i2c address or GPIO pins, size)
+SET @exist := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'doors' AND column_name = 'lcd_config');
+SET @sqlstmt := IF(@exist = 0, 'ALTER TABLE `doors` ADD COLUMN `lcd_config` longtext DEFAULT NULL AFTER `status_led_config`', 'SELECT 1');
+PREPARE stmt FROM @sqlstmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- Master card hold settings
 INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
 ('master_scans_hold_open', '3', 'Number of consecutive master card scans required to enter hold-open state'),

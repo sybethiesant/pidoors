@@ -22,7 +22,7 @@ import {
 import { getDoors, createDoor, updateDoor, deleteDoor, unlockDoor, holdDoor, pingDoor, getAvailablePins, gateCommand } from '../api/doors';
 import { getSchedules } from '../api/schedules';
 import toast from 'react-hot-toast';
-import type { Door, Schedule, GateConfig, GateIO, StatusLedConfig } from '../types';
+import type { Door, Schedule, GateConfig, GateIO, StatusLedConfig, LcdConfig, LcdPinName } from '../types';
 
 function DoorFormModal({
   door,
@@ -50,6 +50,7 @@ function DoorFormModal({
     is_gate: 0,
     gate_config: null,
     status_led_config: null,
+    lcd_config: null,
     ...door,
   });
 
@@ -106,6 +107,19 @@ function DoorFormModal({
     setForm({ ...form, status_led_config: { ...current, ...patch } });
   };
 
+  const defaultLcd: LcdConfig = { enabled: false, type: 'i2c', cols: 16, rows: 2, i2c_bus: 1, i2c_address: '0x27', pins: {} };
+  const updateLcd = (patch: Partial<LcdConfig>) => {
+    const current = (form.lcd_config || defaultLcd) as LcdConfig;
+    setForm({ ...form, lcd_config: { ...current, ...patch } });
+  };
+  const updateLcdPin = (name: LcdPinName, pin: number | null) => {
+    const current = (form.lcd_config || defaultLcd) as LcdConfig;
+    setForm({ ...form, lcd_config: { ...current, pins: { ...(current.pins || {}), [name]: pin } } });
+  };
+  const lcdPinLabels: Record<LcdPinName, string> = {
+    rs: 'RS', e: 'E (enable)', d4: 'D4', d5: 'D5', d6: 'D6', d7: 'D7', backlight: 'Backlight (optional)',
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave(form);
@@ -116,6 +130,7 @@ function DoorFormModal({
   type SelfRef =
     | { kind: 'gate'; section: 'inputs' | 'outputs'; name: 'open' | 'stop' | 'close' | 'clearance' }
     | { kind: 'led' }
+    | { kind: 'lcd'; name: LcdPinName }
     | { kind: 'sensor' };
 
   const labelMap: Record<string, string> = {
@@ -141,6 +156,18 @@ function DoorFormModal({
     // Status LED
     if (excludeSelf?.kind !== 'led' && form.status_led_config?.enabled && form.status_led_config.pin != null) {
       used.set(form.status_led_config.pin, 'Status LED');
+    }
+    // LCD
+    if (form.lcd_config?.enabled) {
+      if (form.lcd_config.type === 'i2c') {
+        used.set(2, 'LCD I2C SDA');
+        used.set(3, 'LCD I2C SCL');
+      } else {
+        for (const [name, pin] of Object.entries(form.lcd_config.pins || {}) as [LcdPinName, number | null][]) {
+          if (excludeSelf?.kind === 'lcd' && excludeSelf.name === name) continue;
+          if (pin != null) used.set(pin, `LCD ${lcdPinLabels[name] || name}`);
+        }
+      }
     }
     // Door sensor
     if (excludeSelf?.kind !== 'sensor' && form.door_sensor_gpio != null) {
@@ -614,6 +641,102 @@ function DoorFormModal({
               <p className="mt-2 text-xs text-slate-400">
                 Reserved pins: {Object.entries(reservedPins).map(([p, w]) => `GPIO ${p} (${w})`).join(', ')}
               </p>
+            )}
+          </div>
+
+          {/* ── LCD DISPLAY ── */}
+          <div className="border-t border-slate-200 pt-4 dark:border-slate-700">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={!!form.lcd_config?.enabled}
+                onChange={(e) => updateLcd({ enabled: e.target.checked })}
+                className="rounded border-slate-300"
+              />
+              LCD display (shows status, granted / denied, PIN entry)
+            </label>
+            {!!form.lcd_config?.enabled && (
+              <div className="mt-2 space-y-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="label text-xs">Wiring</label>
+                    <select
+                      className="input"
+                      value={form.lcd_config?.type || 'i2c'}
+                      onChange={(e) => updateLcd({ type: e.target.value as 'i2c' | 'gpio' })}
+                    >
+                      <option value="i2c">I2C backpack (PCF8574)</option>
+                      <option value="gpio">GPIO wired (4-bit)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label text-xs">Columns</label>
+                    <select
+                      className="input"
+                      value={form.lcd_config?.cols || 16}
+                      onChange={(e) => updateLcd({ cols: parseInt(e.target.value) })}
+                    >
+                      <option value={16}>16</option>
+                      <option value={20}>20</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label text-xs">Rows</label>
+                    <select
+                      className="input"
+                      value={form.lcd_config?.rows || 2}
+                      onChange={(e) => updateLcd({ rows: parseInt(e.target.value) })}
+                    >
+                      <option value={1}>1</option>
+                      <option value={2}>2</option>
+                      <option value={4}>4</option>
+                    </select>
+                  </div>
+                </div>
+                {(form.lcd_config?.type || 'i2c') === 'i2c' ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="label text-xs">I2C address</label>
+                      <input
+                        type="text"
+                        className="input"
+                        value={form.lcd_config?.i2c_address ?? '0x27'}
+                        onChange={(e) => updateLcd({ i2c_address: e.target.value })}
+                        placeholder="0x27"
+                      />
+                    </div>
+                    <div>
+                      <label className="label text-xs">I2C bus</label>
+                      <input
+                        type="number"
+                        className="input"
+                        min={0}
+                        value={form.lcd_config?.i2c_bus ?? 1}
+                        onChange={(e) => updateLcd({ i2c_bus: parseInt(e.target.value) || 0 })}
+                      />
+                    </div>
+                    <p className="col-span-2 text-xs text-slate-400">
+                      Uses GPIO 2 (SDA) and GPIO 3 (SCL). Enable I2C on the controller with <code>raspi-config</code>. Most backpacks are 0x27 or 0x3F.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {(['rs', 'e', 'd4', 'd5', 'd6', 'd7', 'backlight'] as LcdPinName[]).map((name) => (
+                      <div key={name}>
+                        <label className="label text-xs">{lcdPinLabels[name]}</label>
+                        {renderPinSelect(
+                          form.lcd_config?.pins?.[name],
+                          (v) => updateLcdPin(name, v),
+                          { kind: 'lcd', name }
+                        )}
+                      </div>
+                    ))}
+                    <p className="col-span-2 text-xs text-slate-400 sm:col-span-4">
+                      HD44780 in 4-bit mode. Tie RW to GND; D0–D3 unused.
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

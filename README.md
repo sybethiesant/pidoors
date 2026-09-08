@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.5-green)
+![Version](https://img.shields.io/badge/version-0.4.6-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -355,7 +355,8 @@ The server pings controllers on each page load for instant status. Heartbeat run
 | Type | Interface | Notes |
 |------|-----------|-------|
 | Wiegand (26/32/34/35/36/37/48-bit) | GPIO | Most common, auto-detection |
-| Wiegand keypad (PIN codes) | GPIO | Keypad must be in buffered/burst mode — see *Wiegand Keypads (PIN Codes)* below |
+| Wiegand keypad (PIN codes) | GPIO | Burst mode or per-key (4/8-bit) mode — see *Wiegand Keypads (PIN Codes)* below |
+| LCD display (HD44780) | I2C or GPIO | Optional status display at the door — see *LCD Display at the Door* below |
 | OSDP v2 | RS-485 (UART) | Encrypted, requires USB-RS485 adapter — **planned, reader module not yet wired into the controller** |
 | PN532 NFC | I2C or SPI | Mifare Classic, Ultralight, NTAG — **planned, reader module not yet wired into the controller** |
 | MFRC522 NFC | SPI | Low-cost Mifare reader |
@@ -489,19 +490,39 @@ This is useful for Wiegand keypads with a built-in bicolor LED — wire the LED 
 
 **Configurable Status LED** — For more flexibility, enable the **Status LED** option in the door edit page. Assign any available GPIO pin and polarity. The LED pulses on access granted and flashes on access denied. Works on both doors and gates, independent of the legacy LEDs.
 
+### LCD Display at the Door
+
+An optional character LCD (the common HD44780 type: 16x2, 20x4, etc.) can be attached to the controller to show what is happening at the door. Enable **LCD display** on the door edit page; the controller picks the change up on the next config push, no restart needed.
+
+What it shows:
+- **Idle**: the door name on line 1; `Ready`, `Held open`, `Gate held` or `LOCKDOWN` plus the time on line 2.
+- **Access granted** with the cardholder's name, or **Access denied** with the reason, for 3 seconds.
+- **Enter code** with one `*` per digit while a PIN is typed on a per-key keypad.
+
+Two wiring types are supported. Pins are assigned in the web UI and checked against everything else on the door (reader, lock, sensor, gate I/O, status LED).
+
+| Wiring | Config | Notes |
+|--------|--------|-------|
+| **I2C backpack** (PCF8574 piggyback board, 4 wires) | Address (usually `0x27` or `0x3F`), bus (1) | Uses GPIO 2 (SDA) / GPIO 3 (SCL). Enable I2C once on the controller: `sudo raspi-config nonint do_i2c 0`, and make sure the service user can use the bus: `sudo usermod -aG i2c pidoors` (fresh installs do this for you). Find the address with `i2cdetect -y 1`. |
+| **GPIO wired** (HD44780 in 4-bit mode) | RS, E, D4, D5, D6, D7, optional backlight pin | Tie RW to GND, D0–D3 unconnected, contrast pot on V0. Any free GPIO pins. |
+
+Most 5V LCDs run happily with 3.3V logic on the data lines; power the panel from 5V. The display is best-effort: if it fails to initialise the controller logs `LCD setup failed` and carries on without it.
+
 ### Wiegand Keypads (PIN Codes)
 
 A Wiegand keypad works with PiDoors today with no extra configuration. The controller does not distinguish a code typed on a keypad from a card presented to a reader: both arrive as a Wiegand frame, and a PIN is enrolled and managed exactly like a card. This also makes PiDoors usable for machine or equipment access (see the end of this section).
 
 **What you need**
 
-- A keypad, or combined reader/keypad, with a Wiegand output that can be set to **buffered / burst / "card format" mode**: the user types the digits and presses `#` (or waits for the keypad's timeout), and the keypad sends the whole code as **one** 26-bit (or 34/37-bit) frame. This is the default on most standalone Wiegand keypads and is usually a DIP switch or a programming-code option in the keypad's manual.
+- Any keypad, or combined reader/keypad, with a Wiegand output. Both output modes work:
+  - **Buffered / burst / "card format" mode**: the user types the digits and presses `#` (or waits for the keypad's timeout), and the keypad sends the whole code as **one** 26-bit (or 34/37-bit) frame. The controller decodes it like a card.
+  - **Per-key mode** (4-bit or 8-bit "one frame per keypress"): the keypad sends each key as it is pressed. The controller collects the digits itself; `#` submits, `*` clears, and a pause of more than 5 seconds between keys discards a half-typed code. The digits are packed into the same 26-bit (or 34-bit for codes above 16,777,215) frame a burst-mode keypad would send, so a code enrolled on one kind of keypad matches on the other. Per-reader settings in `config.json`: `pin_timeout` (seconds, default 5) and `pin_max_length` (digits, default 10).
+  - Most inexpensive keypads support both and default to per-key; the mode is a DIP switch or programming-code option in the keypad's manual (look for "Wiegand output format"). It no longer matters which one you pick.
 - Wire DATA0 / DATA1 exactly like a card reader (see *Wiegand Reader to Raspberry Pi* above), including the 5V → 3.3V level shifter. The keypad's LED control line can go to GPIO 22 (see *LED Feedback*) so it turns green on a valid code.
 - Nothing to change on the controller or in `config.json`. The frame is decoded by the same format registry (26/32/34/35/36/37/48-bit, parity checked).
 
 **What does not work**
 
-- **Per-key mode** (4-bit or 8-bit "one frame per keypress"). The controller expects one complete frame per credential. 4- and 8-bit frames are logged as `Unsupported Wiegand format` and ignored. If your keypad only does per-key output, switch it to buffered mode or choose a different keypad.
 - **Card + PIN (two-factor).** The `pin_code` column on cards is stored, imported and exported, but the controller does not enforce it. A PIN is a standalone credential.
 - **Non-Wiegand keypads**: matrix keypads on GPIO, I²C expanders such as the PCF8574, USB keypads. These would need a new reader module under `pidoors/readers/`. The `BaseReader` interface is there, but only the Wiegand reader is wired into the controller today; the OSDP and NFC modules are also not yet integrated.
 
@@ -766,7 +787,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.5** - Pre-release
+**Current Version: 0.4.6** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -780,6 +801,10 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.6 (September 2026)
+- **Per-key Wiegand keypads now work.** Keypads in 4-bit or 8-bit "one frame per keypress" mode were ignored (`Unsupported Wiegand format`). The controller now collects the keys itself (`#` submits, `*` clears, 5 s inter-key timeout) and packs the digits into the same 26/34-bit frame a burst-mode keypad sends, so the same code enrolls and matches on either kind. Per-reader `pin_timeout` / `pin_max_length` in `config.json`. Closes the remaining question on issue #4.
+- **LCD display at the door.** Optional HD44780 character LCD, either on a PCF8574 I2C backpack or wired to GPIO in 4-bit mode, configured per door in the web UI with pin-conflict checking. Shows door name and hold/lockdown state at idle, granted/denied with name or reason, and PIN entry progress. New `lcd_config` column on `doors`, new `pidoors/lcd.py` on the controller. See *LCD Display at the Door*.
 
 ### Version 0.4.5 (September 2026)
 **Audit fixes.** A sweep of the controller, API, SPA and installer for features that were exposed but not wired up. Everything below was broken or inert before this release.

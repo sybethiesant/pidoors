@@ -54,6 +54,7 @@ export interface Door {
   gate_held: number;
   gate_config: GateConfig | null;
   status_led_config: StatusLedConfig | null;
+  lcd_config: LcdConfig | null;
 }
 
 export interface GateIO {
@@ -96,6 +97,20 @@ export interface StatusLedConfig {
   enabled: boolean;
   pin: number | null;
   active_high: boolean;
+}
+
+export type LcdPinName = 'rs' | 'e' | 'd4' | 'd5' | 'd6' | 'd7' | 'backlight';
+
+/** Character LCD at the door. `i2c` = PCF8574 backpack; `gpio` = HD44780 wired in 4-bit mode. */
+export interface LcdConfig {
+  enabled: boolean;
+  type: 'i2c' | 'gpio';
+  cols: number;
+  rows: number;
+  i2c_bus?: number;
+  /** Hex string as typed, e.g. "0x27". */
+  i2c_address?: string;
+  pins?: Partial<Record<LcdPinName, number | null>>;
 }
 
 export interface Card {

@@ -10,6 +10,10 @@
         "d1": 23,
         "wiegand_format": "auto",
 
+        "_keypad_settings": "--- Per-key Wiegand keypads (4-bit / 8-bit output). Burst-mode keypads need nothing here. ---",
+        "pin_timeout": 5,
+        "pin_max_length": 10,
+
         "_door_settings": "--- Door Control ---",
         "latch_gpio": 18,
         "unlock_value": 1,

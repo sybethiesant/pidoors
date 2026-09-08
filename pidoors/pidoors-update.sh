@@ -351,6 +351,9 @@ copy_file() {
 
 # Core files
 copy_file "$SRC_DIR/pidoors.py" "$INSTALL_DIR/pidoors.py"
+[ -f "$SRC_DIR/lcd.py" ] && copy_file "$SRC_DIR/lcd.py" "$INSTALL_DIR/lcd.py"
+# I2C access for an I2C LCD (group only exists on a Pi image)
+getent group i2c > /dev/null 2>&1 && usermod -aG i2c pidoors 2>/dev/null || true
 
 if [ -f "$SRC_DIR/pidoors-update.sh" ]; then
     copy_file "$SRC_DIR/pidoors-update.sh" "$INSTALL_DIR/pidoors-update.sh"

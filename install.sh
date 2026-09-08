@@ -860,8 +860,11 @@ if [ "$INSTALL_DOOR" = true ]; then
     else
         ok "pidoors user exists"
     fi
+    # I2C access for an I2C LCD or PN532 (group only exists on a Pi image)
+    getent group i2c > /dev/null 2>&1 && usermod -aG i2c pidoors 2>/dev/null || true
 
     cp "$DOOR_SRC/pidoors.py" "$INSTALL_DIR/"
+    [ -f "$DOOR_SRC/lcd.py" ] && cp "$DOOR_SRC/lcd.py" "$INSTALL_DIR/"
     [ -d "$DOOR_SRC/readers" ] && cp -r "$DOOR_SRC/readers/"* "$INSTALL_DIR/readers/" 2>/dev/null || true
     [ -d "$DOOR_SRC/formats" ] && cp -r "$DOOR_SRC/formats/"* "$INSTALL_DIR/formats/" 2>/dev/null || true
 

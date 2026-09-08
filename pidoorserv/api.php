@@ -301,6 +301,113 @@ function validate_gate_pins(PDO $pdo, string $door_name, array $cfg, array $inpu
         return "GPIO $led_pin assigned to status LED conflicts with gate {$used[$led_pin]}";
     }
 
+    // ...and the LCD doesn't either
+    foreach (lcd_pins_for($door, $input) as $lcd_pin => $label) {
+        if (isset($used[$lcd_pin])) {
+            return "GPIO $lcd_pin assigned to $label conflicts with gate {$used[$lcd_pin]}";
+        }
+    }
+
+    return null;
+}
+
+/**
+ * GPIO pins claimed by an lcd_config, as pin => label. Empty when disabled.
+ * An I2C display claims the I2C bus pins (GPIO 2/3); a GPIO-wired one claims
+ * whatever RS/E/D4..D7 (and optional backlight) pins it was given.
+ */
+function lcd_pins_from_config($cfg): array {
+    if (!is_array($cfg) || empty($cfg['enabled'])) return [];
+    $type = $cfg['type'] ?? 'i2c';
+    if ($type === 'i2c') {
+        return [2 => 'LCD I2C SDA', 3 => 'LCD I2C SCL'];
+    }
+    $pins = [];
+    foreach (['rs' => 'LCD RS', 'e' => 'LCD E', 'd4' => 'LCD D4', 'd5' => 'LCD D5', 'd6' => 'LCD D6', 'd7' => 'LCD D7', 'backlight' => 'LCD backlight'] as $key => $label) {
+        $p = (int)($cfg['pins'][$key] ?? 0);
+        if ($p > 0) $pins[$p] = $label;
+    }
+    return $pins;
+}
+
+/** LCD pins for a door, preferring the incoming request body over the stored row. */
+function lcd_pins_for(array $door, ?array $input): array {
+    if (is_array($input) && array_key_exists('lcd_config', $input)) {
+        return lcd_pins_from_config($input['lcd_config']);
+    }
+    if (!empty($door['lcd_config'])) {
+        return lcd_pins_from_config(json_decode($door['lcd_config'], true));
+    }
+    return [];
+}
+
+/**
+ * Validate LCD config: pins are sane, distinct, and don't collide with the
+ * reader, lock, sensor, gate I/O or status LED.
+ */
+function validate_lcd_config(PDO $pdo, string $door_name, array $cfg, array $input): ?string {
+    if (empty($cfg['enabled'])) return null;
+    $type = $cfg['type'] ?? 'i2c';
+    if (!in_array($type, ['i2c', 'gpio'], true)) return "Unknown LCD type: $type";
+    $cols = (int)($cfg['cols'] ?? 16);
+    $rows = (int)($cfg['rows'] ?? 2);
+    if ($cols < 8 || $cols > 40 || $rows < 1 || $rows > 4) return 'LCD size must be 8-40 columns and 1-4 rows';
+
+    if ($type === 'i2c') {
+        $addr = $cfg['i2c_address'] ?? 0x27;
+        if (is_string($addr)) $addr = stripos($addr, '0x') === 0 ? hexdec($addr) : (int)$addr;
+        if ($addr < 0x03 || $addr > 0x77) return 'LCD I2C address must be between 0x03 and 0x77';
+    } else {
+        $seen = [];
+        foreach (['rs', 'e', 'd4', 'd5', 'd6', 'd7'] as $key) {
+            $p = (int)($cfg['pins'][$key] ?? 0);
+            if ($p <= 0 || $p > 27) return "LCD pin " . strtoupper($key) . " must be set (GPIO 1-27)";
+            if (isset($seen[$p])) return "LCD pin " . strtoupper($key) . " is the same as " . strtoupper($seen[$p]);
+            $seen[$p] = $key;
+        }
+        $bl = (int)($cfg['pins']['backlight'] ?? 0);
+        if ($bl > 27) return 'LCD backlight pin must be GPIO 1-27';
+        if ($bl > 0 && isset($seen[$bl])) return 'LCD backlight pin is the same as ' . strtoupper($seen[$bl]);
+    }
+
+    $stmt = $pdo->prepare("SELECT * FROM doors WHERE name = ?");
+    $stmt->execute([$door_name]);
+    $door = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$door) return 'Door not found';
+
+    $reserved = get_reserved_pins($door, $input);
+
+    // Gate I/O pins
+    $gate_cfg = null;
+    if (array_key_exists('gate_config', $input) && is_array($input['gate_config'])) {
+        $gate_cfg = $input['gate_config'];
+    } elseif (!empty($door['gate_config'])) {
+        $gate_cfg = json_decode($door['gate_config'], true);
+    }
+    if ($gate_cfg) {
+        foreach (['inputs' => ['open', 'stop', 'close', 'clearance'], 'outputs' => ['open', 'stop', 'close']] as $section => $names) {
+            foreach ($names as $name) {
+                $entry = $gate_cfg[$section][$name] ?? null;
+                if ($entry && !empty($entry['enabled']) && !empty($entry['pin'])) {
+                    $reserved[(int)$entry['pin']] = "gate $section.$name";
+                }
+            }
+        }
+    }
+    // Status LED pin
+    $led = null;
+    if (array_key_exists('status_led_config', $input) && is_array($input['status_led_config'])) {
+        $led = $input['status_led_config'];
+    } elseif (!empty($door['status_led_config'])) {
+        $led = json_decode($door['status_led_config'], true);
+    }
+    if ($led && !empty($led['enabled']) && !empty($led['pin'])) {
+        $reserved[(int)$led['pin']] = 'status LED';
+    }
+
+    foreach (lcd_pins_from_config($cfg) as $pin => $label) {
+        if (isset($reserved[$pin])) return "GPIO $pin ($label) is already used by {$reserved[$pin]}";
+    }
     return null;
 }
 
@@ -319,6 +426,9 @@ function validate_status_led_pin(PDO $pdo, string $door_name, array $cfg, array 
 
     $reserved = get_reserved_pins($door, $input);
     if (isset($reserved[$pin])) return "GPIO $pin is already used by {$reserved[$pin]}";
+
+    $lcd_pins = lcd_pins_for($door, $input);
+    if (isset($lcd_pins[$pin])) return "GPIO $pin is already used by {$lcd_pins[$pin]}";
 
     // Check gate config
     $gate_cfg = null;
@@ -582,6 +692,7 @@ if ($resource === 'doors') {
             $d['gate_held'] = (int)($d['gate_held'] ?? 0);
             $d['gate_config'] = !empty($d['gate_config']) ? json_decode($d['gate_config'], true) : null;
             $d['status_led_config'] = !empty($d['status_led_config']) ? json_decode($d['status_led_config'], true) : null;
+            $d['lcd_config'] = !empty($d['lcd_config']) ? json_decode($d['lcd_config'], true) : null;
             unset($d['api_key']); // Never expose API key to browser
         }
         unset($d);
@@ -629,6 +740,7 @@ if ($resource === 'doors') {
         $door['gate_held'] = (int)($door['gate_held'] ?? 0);
         $door['gate_config'] = !empty($door['gate_config']) ? json_decode($door['gate_config'], true) : null;
         $door['status_led_config'] = !empty($door['status_led_config']) ? json_decode($door['status_led_config'], true) : null;
+        $door['lcd_config'] = !empty($door['lcd_config']) ? json_decode($door['lcd_config'], true) : null;
         unset($door['api_key']);
         json_success(['door' => $door]);
     }
@@ -667,6 +779,9 @@ if ($resource === 'doors') {
             if (!empty($led['enabled']) && !empty($led['pin'])) {
                 $reserved[(int)$led['pin']] = 'Status LED';
             }
+        }
+        foreach (lcd_pins_for($door, null) as $p => $label) {
+            $reserved[$p] = $label;
         }
 
         $available = [];
@@ -743,6 +858,12 @@ if ($resource === 'doors') {
             if ($err) { $pdo_access->rollBack(); json_error($err); }
             $extra_fields[] = "status_led_config = ?";
             $extra_params[] = json_encode($input['status_led_config']);
+        }
+        if (array_key_exists('lcd_config', $input) && is_array($input['lcd_config'])) {
+            $err = validate_lcd_config($pdo_access, $name, $input['lcd_config'], $input);
+            if ($err) { $pdo_access->rollBack(); json_error($err); }
+            $extra_fields[] = "lcd_config = ?";
+            $extra_params[] = json_encode($input['lcd_config']);
         }
         if (!empty($extra_fields)) {
             $extra_params[] = $name;
@@ -863,14 +984,26 @@ if ($resource === 'doors') {
                 $params[] = null;
             }
         }
+        if (array_key_exists('lcd_config', $input)) {
+            $cfg = $input['lcd_config'];
+            if (is_array($cfg)) {
+                $err = validate_lcd_config($pdo_access, $door_name, $cfg, $input);
+                if ($err) json_error($err);
+                $fields[] = "lcd_config = ?";
+                $params[] = json_encode($cfg);
+            } elseif ($cfg === null) {
+                $fields[] = "lcd_config = ?";
+                $params[] = null;
+            }
+        }
 
         if (empty($fields)) json_error('No fields to update');
 
         $params[] = $door_name;
         $pdo_access->prepare("UPDATE doors SET " . implode(', ', $fields) . " WHERE name = ?")->execute($params);
 
-        // Push config change to controller if it's online (gate/LED config changes need a restart)
-        if (array_key_exists('gate_config', $input) || array_key_exists('status_led_config', $input) || array_key_exists('is_gate', $input)) {
+        // Push config change to controller if it's online (gate/LED/LCD config changes need a reload)
+        if (array_key_exists('gate_config', $input) || array_key_exists('status_led_config', $input) || array_key_exists('lcd_config', $input) || array_key_exists('is_gate', $input)) {
             require_once __DIR__ . '/includes/push.php';
             @push_to_controller($pdo_access, $door_name, 'reload-config');
         }
