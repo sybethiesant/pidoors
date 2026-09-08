@@ -32,6 +32,65 @@ fail() { echo -e "  ${RED}✗${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 info() { echo -e "  ${BLUE}→${NC} $1"; }
 
+# ── Database migration helper ─────────────────────────────────────────
+# Same function as in install.sh. Schema upgrades need CREATE/ALTER, which
+# the locked-down app user does not have (by design since v0.4.0). A dedicated
+# 'pidoors_migrate' DB user with root-only credentials plus a sudoers helper
+# lets both this script and the web UI updater apply database_migration.sql.
+#   $1 = MySQL root password ("" when root logs in via the unix socket)
+install_db_migrate_helper() {
+    local root_pw="$1"
+    mkdir -p /etc/pidoors
+    chmod 755 /etc/pidoors
+
+    if [ ! -f /etc/pidoors/migrate.cnf ]; then
+        local mpw
+        mpw=$(openssl rand -base64 36 | tr -dc 'A-Za-z0-9' | cut -c1-32)
+        if MYSQL_PWD="$root_pw" mysql -u root > /dev/null 2>&1 <<SQL
+CREATE USER IF NOT EXISTS 'pidoors_migrate'@'localhost' IDENTIFIED BY '$mpw';
+ALTER USER 'pidoors_migrate'@'localhost' IDENTIFIED BY '$mpw';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES ON \`access\`.* TO 'pidoors_migrate'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES ON \`users\`.* TO 'pidoors_migrate'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+        then
+            printf '[client]\nuser=pidoors_migrate\npassword=%s\nhost=localhost\n' "$mpw" > /etc/pidoors/migrate.cnf
+            chown root:root /etc/pidoors/migrate.cnf
+            chmod 600 /etc/pidoors/migrate.cnf
+            ok "Migration DB user created (credentials in /etc/pidoors/migrate.cnf, root only)"
+        else
+            warn "Could not create the pidoors_migrate DB user; the migration helper will use root socket auth"
+        fi
+    fi
+
+    cat > /usr/local/sbin/pidoors-db-migrate <<'MIGSH'
+#!/bin/bash
+# Apply the deployed PiDoors database migration with DDL-capable credentials.
+# Called by the web UI updater (via sudoers) and by server-update.sh.
+# Idempotent: database_migration.sql only adds what is missing.
+set -u
+MIG="/var/www/pidoors/database_migration.sql"
+CNF="/etc/pidoors/migrate.cnf"
+if [ ! -f "$MIG" ]; then
+    echo "Migration file not found: $MIG"
+    exit 2
+fi
+if [ -f "$CNF" ]; then
+    exec mysql --defaults-extra-file="$CNF" access < "$MIG"
+fi
+# No dedicated user: fall back to the MariaDB root account over the unix socket
+exec mysql -u root access < "$MIG"
+MIGSH
+    chown root:root /usr/local/sbin/pidoors-db-migrate
+    chmod 755 /usr/local/sbin/pidoors-db-migrate
+
+    cat > /etc/sudoers.d/pidoors-db-migrate <<'SUDOEOF'
+www-data ALL=(ALL) NOPASSWD: /usr/local/sbin/pidoors-db-migrate
+SUDOEOF
+    chmod 440 /etc/sudoers.d/pidoors-db-migrate
+    ok "Database migration helper installed"
+}
+
 # ──────────────────────────────────────────────
 # Supply-chain integrity: verify a downloaded release tarball against the
 # published <tarball>.sha256 asset BEFORE extracting/deploying it.
@@ -403,6 +462,22 @@ SUDOEOF
     ok "Nginx upgrade helper installed"
 fi
 
+# Install the database migration helper if missing (existing installs).
+# Needs MariaDB root once to create the pidoors_migrate user.
+if [ ! -x /usr/local/sbin/pidoors-db-migrate ] || [ ! -f /etc/pidoors/migrate.cnf ]; then
+    info "Installing database migration helper..."
+    MYSQL_ROOT_PASS=""
+    if ! mysql -u root -e "SELECT 1" > /dev/null 2>&1; then
+        if [ -t 0 ]; then
+            read -rs -p "  Enter MariaDB root password (to create the migration DB user): " MYSQL_ROOT_PASS
+            echo
+        else
+            warn "MariaDB root needs a password and no TTY is available; helper installed without a dedicated user"
+        fi
+    fi
+    install_db_migrate_helper "$MYSQL_ROOT_PASS"
+fi
+
 # ──────────────────────────────────────────────
 # Run database migration
 # ──────────────────────────────────────────────
@@ -411,6 +486,7 @@ MIGRATION_SQL=""
 if [ -f "$EXTRACTED/database_migration.sql" ]; then
     MIGRATION_SQL="$EXTRACTED/database_migration.sql"
 fi
+MIGRATION_FAILED=0
 
 DB_PASS=""
 DB_USER="pidoors"
@@ -444,26 +520,42 @@ if [ -f "$WEB_ROOT/includes/config.php" ]; then
     " 2>/dev/null) || DB_NAME="access"
 fi
 
-# If we still have no password but a migration needs to run, prompt for it
-# interactively (silently). This avoids ever taking it from argv. If stdin
-# is not a TTY (non-interactive run), we fall through to the warn branch.
-if [ -n "$MIGRATION_SQL" ] && [ -z "$DB_PASS" ] && [ -t 0 ]; then
-    read -rs -p "  Enter database password for $DB_USER@$DB_HOST: " DB_PASS
-    echo
-fi
-
-if [ -n "$MIGRATION_SQL" ] && [ -n "$DB_PASS" ]; then
+if [ -n "$MIGRATION_SQL" ] && [ -x /usr/local/sbin/pidoors-db-migrate ]; then
+    # Preferred path: DDL-capable credentials via the helper. It reads the
+    # migration from the web root, which was deployed above.
+    cp "$MIGRATION_SQL" "$WEB_ROOT/database_migration.sql"
     info "Running database migration..."
-    if MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < "$MIGRATION_SQL" 2>/dev/null; then
+    if MIG_OUT=$(/usr/local/sbin/pidoors-db-migrate 2>&1); then
         ok "Database migration completed"
     else
-        warn "Database migration had errors (non-fatal for upgrades)"
+        MIGRATION_FAILED=1
+        fail "Database migration FAILED: $MIG_OUT"
     fi
 elif [ -n "$MIGRATION_SQL" ]; then
-    warn "Could not determine database password"
-    warn "Run manually: mysql -u $DB_USER -p $DB_NAME < $WEB_ROOT/database_migration.sql"
+    # Legacy path (helper could not be installed): run as the app user. This
+    # only works on installs where that user still has CREATE/ALTER.
+    if [ -z "$DB_PASS" ] && [ -t 0 ]; then
+        read -rs -p "  Enter database password for $DB_USER@$DB_HOST: " DB_PASS
+        echo
+    fi
+    if [ -n "$DB_PASS" ]; then
+        info "Running database migration as $DB_USER..."
+        if MIG_OUT=$(MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < "$MIGRATION_SQL" 2>&1); then
+            ok "Database migration completed"
+        else
+            MIGRATION_FAILED=1
+            fail "Database migration FAILED: $MIG_OUT"
+        fi
+    else
+        MIGRATION_FAILED=1
+        fail "Could not run the database migration (no credentials)"
+    fi
 else
     warn "No database_migration.sql found in release"
+fi
+if [ "$MIGRATION_FAILED" = "1" ]; then
+    fail "Schema changes in this release were NOT applied. Fix the error above, then run:"
+    fail "  sudo /usr/local/sbin/pidoors-db-migrate"
 fi
 
 # ──────────────────────────────────────────────
@@ -542,3 +634,9 @@ echo -e "  ${BOLD}Previous version:${NC}  $CURRENT_VERSION"
 echo -e "  ${BOLD}New version:${NC}       $NEW_VERSION"
 echo -e "  ${BOLD}Web root:${NC}          $WEB_ROOT"
 echo
+if [ "${MIGRATION_FAILED:-0}" = "1" ]; then
+    echo -e "${RED}  Files were updated but the DATABASE MIGRATION FAILED (see above).${NC}"
+    echo -e "${RED}  Run: sudo /usr/local/sbin/pidoors-db-migrate${NC}"
+    echo
+    exit 1
+fi

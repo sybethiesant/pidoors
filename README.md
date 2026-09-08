@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.6-green)
+![Version](https://img.shields.io/badge/version-0.4.7-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -649,7 +649,15 @@ sudo systemctl restart pidoors  # On door controllers
 
 ### Database Migrations
 
-When upgrading, run the migration script to add any new columns:
+Both the in-app updater and `server-update.sh` apply `database_migration.sql` automatically through the root helper `/usr/local/sbin/pidoors-db-migrate` (v0.4.7+). If an update reports that the migration failed, fix the reported error and run:
+
+```bash
+sudo /usr/local/sbin/pidoors-db-migrate
+```
+
+If the helper is missing (installs made before v0.4.7 that have only ever updated through the web UI), run `sudo bash server-update.sh` once from the extracted release; it installs the helper and applies any missed migrations.
+
+To run the migration by hand instead:
 
 ```bash
 # Backup first
@@ -787,7 +795,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.6** - Pre-release
+**Current Version: 0.4.7** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -801,6 +809,12 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.7 (September 2026)
+- **Database migrations now actually run on upgrades.** Since the v0.4.0 hardening the app DB user has had no CREATE/ALTER, so the migration step in both the in-app updater and `server-update.sh` failed on its first statement and was reported as a *warning*. Every schema change shipped since then was silently skipped on upgraded installs (fresh installs were fine). v0.4.6 was the first release to add a column (`lcd_config`), which made this visible: saving a door's LCD config failed with an unknown-column error.
+  - New root helper `/usr/local/sbin/pidoors-db-migrate` runs the deployed migration as a dedicated `pidoors_migrate` DB user (DDL on the two PiDoors databases only, credentials in root-only `/etc/pidoors/migrate.cnf`). The web updater calls it via sudoers, the same way as the nginx helper.
+  - A failed migration is now an **error** in the UI and a non-zero exit from `server-update.sh`, with the command to fix it.
+  - **Existing installs:** run `sudo bash server-update.sh` once (from the extracted release or a clone). It installs the helper and the DB user, asking for the MariaDB root password only if root needs one, and applies any missed migrations. After that, in-app updates handle schema changes on their own.
 
 ### Version 0.4.6 (September 2026)
 - **Per-key Wiegand keypads now work.** Keypads in 4-bit or 8-bit "one frame per keypress" mode were ignored (`Unsupported Wiegand format`). The controller now collects the keys itself (`#` submits, `*` clears, 5 s inter-key timeout) and packs the digits into the same 26/34-bit frame a burst-mode keypad sends, so the same code enrolls and matches on either kind. Per-reader `pin_timeout` / `pin_max_length` in `config.json`. Closes the remaining question on issue #4.

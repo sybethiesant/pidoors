@@ -295,25 +295,46 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
     }
 
     // --- Database migration ---
+    // Schema changes need CREATE/ALTER, which the app DB user does not have
+    // (locked down since v0.4.0). The pidoors-db-migrate helper (installed by
+    // install.sh / server-update.sh, root via sudoers) runs the migration that
+    // was copied into the web root above with DDL-capable credentials. Without
+    // the helper we fall back to the app user, which only works on old installs.
+    // Either way a failure is reported as an ERROR, not a warning: the files are
+    // deployed but the schema is behind, and the admin must act.
     $migration_file = $extracted . '/database_migration.sql';
+    $migration_error = null;
     if (file_exists($migration_file)) {
-        putenv('MYSQL_PWD=' . $config['sqlpass']);
-        $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
-            escapeshellarg($config['sqladdr']),
-            escapeshellarg($config['sqluser']),
-            escapeshellarg($config['sqldb2']),
-            escapeshellarg($migration_file)
-        );
+        $helper = '/usr/local/sbin/pidoors-db-migrate';
         $mig_output = [];
         $mig_code = 0;
-        exec($mig_cmd, $mig_output, $mig_code);
-        putenv('MYSQL_PWD');
+        if (is_executable($helper) && file_exists($apppath . '/database_migration.sql')) {
+            exec('sudo -n ' . escapeshellarg($helper) . ' 2>&1', $mig_output, $mig_code);
+            $how = 'helper';
+        } else {
+            putenv('MYSQL_PWD=' . $config['sqlpass']);
+            $mig_cmd = sprintf('mysql -h %s -u %s %s < %s 2>&1',
+                escapeshellarg($config['sqladdr']),
+                escapeshellarg($config['sqluser']),
+                escapeshellarg($config['sqldb2']),
+                escapeshellarg($migration_file)
+            );
+            exec($mig_cmd, $mig_output, $mig_code);
+            putenv('MYSQL_PWD');
+            $how = 'app user';
+        }
         if ($mig_code === 0) {
             $details[] = 'Database schema updated';
         } else {
-            $mig_err = implode(' ', $mig_output);
-            $details[] = 'WARNING: Database migration had errors — ' . $mig_err;
-            error_log("Database migration failed (exit $mig_code): $mig_err");
+            $mig_err = trim(implode(' ', $mig_output));
+            // Keep the useful part: the ERROR line, not the echoed statement.
+            if (preg_match('/ERROR \d+ \([0-9A-Z]+\)[^\n]*/', $mig_err, $m)) $mig_err = $m[0];
+            error_log("Database migration failed via $how (exit $mig_code): $mig_err");
+            $migration_error = "Database migration FAILED ($mig_err). Files are updated but the schema is not. "
+                . ($how === 'helper'
+                    ? 'Fix the error and run: sudo /usr/local/sbin/pidoors-db-migrate'
+                    : 'Run server-update.sh once as root to install the migration helper: sudo bash server-update.sh');
+            $details[] = $migration_error;
         }
     }
 
@@ -332,5 +353,9 @@ function pidoors_deploy_update(array $config, PDO $pdo_access, PDO $pdo, string 
     }
 
     $msg = "Server updated to version $new_version. " . implode('. ', $details) . '.';
+    if ($migration_error !== null) {
+        // Loud failure: the UI shows this as an error even though files deployed.
+        return ['ok' => false, 'msg' => "Server files updated to version $new_version, but: $migration_error", 'details' => $details, 'version' => $new_version];
+    }
     return ['ok' => true, 'msg' => $msg, 'details' => $details, 'version' => $new_version];
 }

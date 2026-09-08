@@ -36,6 +36,66 @@ fail() { echo -e "  ${RED}✗${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 info() { echo -e "  ${BLUE}→${NC} $1"; }
 
+# ── Database migration helper ─────────────────────────────────────────
+# Schema upgrades (database_migration.sql) need CREATE/ALTER, which the
+# locked-down app user deliberately does not have. Instead of widening the
+# app user, we create a dedicated 'pidoors_migrate' DB user whose credentials
+# live in a root-only file, plus a root helper the web updater may run via
+# sudoers. The same function lives in server-update.sh for existing installs.
+#   $1 = MySQL root password ("" when root logs in via the unix socket)
+install_db_migrate_helper() {
+    local root_pw="$1"
+    mkdir -p /etc/pidoors
+    chmod 755 /etc/pidoors
+
+    if [ ! -f /etc/pidoors/migrate.cnf ]; then
+        local mpw
+        mpw=$(openssl rand -base64 36 | tr -dc 'A-Za-z0-9' | cut -c1-32)
+        if MYSQL_PWD="$root_pw" mysql -u root > /dev/null 2>&1 <<SQL
+CREATE USER IF NOT EXISTS 'pidoors_migrate'@'localhost' IDENTIFIED BY '$mpw';
+ALTER USER 'pidoors_migrate'@'localhost' IDENTIFIED BY '$mpw';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES ON \`access\`.* TO 'pidoors_migrate'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES ON \`users\`.* TO 'pidoors_migrate'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+        then
+            printf '[client]\nuser=pidoors_migrate\npassword=%s\nhost=localhost\n' "$mpw" > /etc/pidoors/migrate.cnf
+            chown root:root /etc/pidoors/migrate.cnf
+            chmod 600 /etc/pidoors/migrate.cnf
+            ok "Migration DB user created (credentials in /etc/pidoors/migrate.cnf, root only)"
+        else
+            warn "Could not create the pidoors_migrate DB user; the migration helper will use root socket auth"
+        fi
+    fi
+
+    cat > /usr/local/sbin/pidoors-db-migrate <<'MIGSH'
+#!/bin/bash
+# Apply the deployed PiDoors database migration with DDL-capable credentials.
+# Called by the web UI updater (via sudoers) and by server-update.sh.
+# Idempotent: database_migration.sql only adds what is missing.
+set -u
+MIG="/var/www/pidoors/database_migration.sql"
+CNF="/etc/pidoors/migrate.cnf"
+if [ ! -f "$MIG" ]; then
+    echo "Migration file not found: $MIG"
+    exit 2
+fi
+if [ -f "$CNF" ]; then
+    exec mysql --defaults-extra-file="$CNF" access < "$MIG"
+fi
+# No dedicated user: fall back to the MariaDB root account over the unix socket
+exec mysql -u root access < "$MIG"
+MIGSH
+    chown root:root /usr/local/sbin/pidoors-db-migrate
+    chmod 755 /usr/local/sbin/pidoors-db-migrate
+
+    cat > /etc/sudoers.d/pidoors-db-migrate <<'SUDOEOF'
+www-data ALL=(ALL) NOPASSWD: /usr/local/sbin/pidoors-db-migrate
+SUDOEOF
+    chmod 440 /etc/sudoers.d/pidoors-db-migrate
+    ok "Database migration helper installed"
+}
+
 step() {
     echo
     echo -e "${BLUE}─── $1 ───${NC}"
@@ -468,6 +528,9 @@ EOF
         exit 1
     fi
     ok "Table schemas created and verified ($TABLES_OK core tables)"
+
+    # Helper + dedicated DB user so future in-app updates can apply schema changes
+    install_db_migrate_helper "$MYSQL_ROOT_PASS"
 
     # ── Web interface ──
 
