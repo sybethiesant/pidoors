@@ -755,5 +755,47 @@ DEALLOCATE PREPARE stmt;
 INSERT IGNORE INTO `settings` (`setting_key`, `setting_value`, `description`) VALUES
 ('master_scans_hold_open', '3', 'Number of consecutive master card scans required to enter hold-open state'),
 ('master_scans_release_hold', '1', 'Number of master card scans required to release any hold state');
+-- --------------------------------------------------------
+-- v0.4.9 - Multiple time windows per schedule
+-- --------------------------------------------------------
+
+-- A schedule used to hold exactly one start/end per weekday (the columns on
+-- access_schedules). schedule_windows holds any number of windows per schedule:
+-- one row per (schedule, weekday, start, end). day_of_week is 0=Monday .. 6=Sunday
+-- (Python weekday()). A window whose end is before its start wraps past midnight.
+-- The legacy per-day columns are kept and always carry each day's FIRST window
+-- so controllers that predate this table keep working on a reduced schedule.
+CREATE TABLE IF NOT EXISTS `schedule_windows` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `schedule_id` int(11) NOT NULL,
+  `day_of_week` tinyint(1) NOT NULL,
+  `start_time` time NOT NULL,
+  `end_time` time NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_schedule_day` (`schedule_id`, `day_of_week`),
+  CONSTRAINT `fk_schedule_windows_schedule` FOREIGN KEY (`schedule_id`)
+    REFERENCES `access_schedules` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Seed windows from the legacy per-day columns for schedules that have none yet.
+-- Single statement so the NOT EXISTS is evaluated once for all seven days.
+INSERT INTO `schedule_windows` (`schedule_id`, `day_of_week`, `start_time`, `end_time`)
+SELECT * FROM (
+  SELECT id AS schedule_id, 0 AS day_of_week, monday_start AS start_time, monday_end AS end_time
+    FROM access_schedules WHERE monday_start IS NOT NULL AND monday_end IS NOT NULL
+  UNION ALL
+  SELECT id, 1, tuesday_start,   tuesday_end   FROM access_schedules WHERE tuesday_start   IS NOT NULL AND tuesday_end   IS NOT NULL
+  UNION ALL
+  SELECT id, 2, wednesday_start, wednesday_end FROM access_schedules WHERE wednesday_start IS NOT NULL AND wednesday_end IS NOT NULL
+  UNION ALL
+  SELECT id, 3, thursday_start,  thursday_end  FROM access_schedules WHERE thursday_start  IS NOT NULL AND thursday_end  IS NOT NULL
+  UNION ALL
+  SELECT id, 4, friday_start,    friday_end    FROM access_schedules WHERE friday_start    IS NOT NULL AND friday_end    IS NOT NULL
+  UNION ALL
+  SELECT id, 5, saturday_start,  saturday_end  FROM access_schedules WHERE saturday_start  IS NOT NULL AND saturday_end  IS NOT NULL
+  UNION ALL
+  SELECT id, 6, sunday_start,    sunday_end    FROM access_schedules WHERE sunday_start    IS NOT NULL AND sunday_end    IS NOT NULL
+) AS legacy
+WHERE NOT EXISTS (SELECT 1 FROM schedule_windows w WHERE w.schedule_id = legacy.schedule_id);
 
 COMMIT;

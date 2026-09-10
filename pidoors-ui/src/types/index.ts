@@ -152,6 +152,14 @@ export interface AccessLog {
   card_active?: number;
 }
 
+/** One time window: applies on each listed day (0 = Monday .. 6 = Sunday).
+ *  `end` before `start` wraps past midnight. Times are 'HH:MM'. */
+export interface ScheduleWindow {
+  days: number[];
+  start: string;
+  end: string;
+}
+
 export interface Schedule {
   id: number;
   name: string;
@@ -171,6 +179,8 @@ export interface Schedule {
   saturday_end: string | null;
   sunday_start: string | null;
   sunday_end: string | null;
+  /** All time windows (v0.4.9+). The per-day columns above mirror each day's first window. */
+  windows: ScheduleWindow[];
 }
 
 export interface AccessGroup {

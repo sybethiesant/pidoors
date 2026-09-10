@@ -735,9 +735,26 @@ def sync_cache_from_server():
         cursor.execute(sql, tuple(params))
         cards = cursor.fetchall()
 
-        # Fetch schedules
+        # Fetch schedules plus their time windows (schedule_windows, v0.4.9+).
+        # Windows are cached as HH:MM:SS strings; the legacy per-day columns
+        # on access_schedules remain the fallback for a schedule with none.
         cursor.execute("SELECT * FROM access_schedules")
         schedules = {s['id']: s for s in cursor.fetchall()}
+        for s in schedules.values():
+            s['windows'] = []
+        try:
+            cursor.execute("SELECT schedule_id, day_of_week, start_time, end_time FROM schedule_windows")
+            for w in cursor.fetchall():
+                sched = schedules.get(w['schedule_id'])
+                if sched is not None:
+                    sched['windows'].append({
+                        'day': int(w['day_of_week']),
+                        'start': _schedule_time_str(w['start_time']),
+                        'end': _schedule_time_str(w['end_time']),
+                    })
+        except Exception as e:
+            # Server not yet migrated to v0.4.9 — legacy columns still apply.
+            debug(f"schedule_windows unavailable, using per-day columns: {e}")
 
         # Sync master cards to persistent storage (never expires)
         sync_master_cards_from_db(cursor)
@@ -2466,41 +2483,69 @@ def check_schedule(schedule_id, now):
     if not schedule:
         return False  # Schedule not found = deny access (fail secure)
 
+    return _schedule_matches(schedule, schedule.get('windows'), now)
+
+
+def _schedule_matches(schedule, windows, now):
+    """Evaluate a schedule row (+ optional list of windows) against `now`.
+
+    A schedule may have any number of windows per weekday (schedule_windows,
+    v0.4.9+). When the list is empty or missing, fall back to the legacy
+    single start/end columns on access_schedules so a server that has not
+    migrated yet, or an older cache file, still evaluates correctly.
+    Any parse error denies (fail secure)."""
     if schedule.get('is_24_7'):
         return True
 
-    # Get current day and time
-    day_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-    current_day = day_names[now.weekday()]
     current_time = now.time()
+    today = now.weekday()  # 0=Monday .. 6=Sunday, same as schedule_windows.day_of_week
+    yesterday = (today - 1) % 7
 
-    start_key = f"{current_day}_start"
-    end_key = f"{current_day}_end"
-
-    start_time = schedule.get(start_key)
-    end_time = schedule.get(end_key)
-
-    # `is None` rather than falsiness: a 00:00 bound arrives from PyMySQL as
-    # timedelta(0), which is falsy but valid (the DB path already does this).
-    if start_time is None or end_time is None:
-        return False  # No access on this day
-
-    # Normalize bounds to datetime.time before comparing. PyMySQL returns TIME
-    # columns as datetime.timedelta; comparing a timedelta to a datetime.time
-    # raises TypeError, which previously denied every scheduled card and — on
-    # this cache path, where only ValueError was caught — escaped and killed the
-    # scan thread.
     try:
-        start_time = _coerce_schedule_time(start_time)
-        end_time = _coerce_schedule_time(end_time)
-        if end_time < start_time:
-            # Overnight window (e.g. 22:00 -> 06:00): the allowed range wraps
-            # past midnight, so match if we're at/after start OR at/before end.
-            return current_time >= start_time or current_time <= end_time
-        return start_time <= current_time <= end_time
+        if windows:
+            for w in windows:
+                day = int(w.get('day', w.get('day_of_week', -1)))
+                start = w.get('start', w.get('start_time'))
+                end = w.get('end', w.get('end_time'))
+                if start is None or end is None:
+                    continue
+                start = _coerce_schedule_time(start)
+                end = _coerce_schedule_time(end)
+                if day == today and _time_in_window(current_time, start, end):
+                    return True
+                # A window that wraps past midnight (22:00 -> 06:00) on the previous
+                # day is still open in the early hours of today.
+                if day == yesterday and end < start and current_time <= end:
+                    return True
+            return False
+
+        day_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        current_day = day_names[today]
+        start_time = schedule.get(f"{current_day}_start")
+        end_time = schedule.get(f"{current_day}_end")
+
+        # `is None` rather than falsiness: a 00:00 bound arrives from PyMySQL as
+        # timedelta(0), which is falsy but valid.
+        if start_time is None or end_time is None:
+            return False  # No access on this day
+
+        # Normalize bounds to datetime.time before comparing. PyMySQL returns TIME
+        # columns as datetime.timedelta; comparing a timedelta to a datetime.time
+        # raises TypeError, which previously denied every scheduled card and — on
+        # the cache path, where only ValueError was caught — escaped and killed the
+        # scan thread.
+        return _time_in_window(current_time, _coerce_schedule_time(start_time), _coerce_schedule_time(end_time))
     except (ValueError, TypeError) as e:
         debug(f"Schedule time parsing error: {e}")
         return False  # Fail secure on parsing errors
+
+
+def _time_in_window(current_time, start_time, end_time):
+    """True when current_time falls inside [start, end], wrapping past midnight
+    when end < start (e.g. 22:00 -> 06:00)."""
+    if end_time < start_time:
+        return current_time >= start_time or current_time <= end_time
+    return start_time <= current_time <= end_time
 
 
 def _coerce_schedule_time(value):
@@ -2508,15 +2553,21 @@ def _coerce_schedule_time(value):
 
     Schedule columns are MySQL TIME, which PyMySQL returns as datetime.timedelta
     (NOT datetime.time). Comparing a timedelta against a datetime.time raises
-    TypeError. Cached schedules may instead hold 'HH:MM:SS' strings. Normalize
-    all of these to datetime.time so the <= comparisons are valid.
+    TypeError. Cached schedules may instead hold 'HH:MM:SS' (or 'HH:MM') strings.
+    Normalize all of these to datetime.time so the <= comparisons are valid.
     """
     if isinstance(value, timedelta):
         secs = int(value.total_seconds()) % 86400
         return (datetime.min + timedelta(seconds=secs)).time()
     if isinstance(value, str):
-        return datetime.strptime(value, '%H:%M:%S').time()
+        fmt = '%H:%M:%S' if value.count(':') == 2 else '%H:%M'
+        return datetime.strptime(value, fmt).time()
     return value  # already a datetime.time
+
+
+def _schedule_time_str(value):
+    """Render a schedule bound as 'HH:MM:SS' for the JSON cache."""
+    return _coerce_schedule_time(value).strftime('%H:%M:%S')
 
 
 def check_schedule_from_db(cursor, schedule_id, now):
@@ -2527,31 +2578,14 @@ def check_schedule_from_db(cursor, schedule_id, now):
     if not schedule:
         return False  # Schedule not found = deny access (fail secure)
 
-    if schedule.get('is_24_7'):
-        return True
-
-    day_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-    current_day = day_names[now.weekday()]
-    current_time = now.time()
-
-    start_time = schedule.get(f"{current_day}_start")
-    end_time = schedule.get(f"{current_day}_end")
-
-    # `is None` rather than falsiness: a midnight bound (timedelta(0)) is falsy
-    # but valid, and must not be mistaken for "no schedule set".
-    if start_time is None or end_time is None:
-        return False
-
+    windows = []
     try:
-        start_time = _coerce_schedule_time(start_time)
-        end_time = _coerce_schedule_time(end_time)
-        if end_time < start_time:
-            # Overnight window (e.g. 22:00 -> 06:00) wraps past midnight.
-            return current_time >= start_time or current_time <= end_time
-        return start_time <= current_time <= end_time
-    except (ValueError, TypeError) as e:
-        debug(f"Schedule time error: {e}")
-        return False  # Fail secure
+        cursor.execute("SELECT day_of_week, start_time, end_time FROM schedule_windows WHERE schedule_id = %s", (schedule_id,))
+        windows = cursor.fetchall()
+    except Exception as e:
+        debug(f"schedule_windows unavailable, using per-day columns: {e}")
+
+    return _schedule_matches(schedule, windows, now)
 
 
 def is_holiday_denied(now):

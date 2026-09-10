@@ -1633,10 +1633,110 @@ if ($resource === 'logs') {
 // SCHEDULES
 // ──────────────────────────────────────────────
 if ($resource === 'schedules') {
+    $SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+    /**
+     * Load schedule_windows for the given schedule ids, grouped by identical
+     * start/end into [{days:[0..6], start:'HH:MM', end:'HH:MM'}] per schedule.
+     * day 0 = Monday .. 6 = Sunday.
+     */
+    $load_schedule_windows = function (array $ids) use ($pdo_access): array {
+        $out = [];
+        foreach ($ids as $sid) $out[(int)$sid] = [];
+        if (empty($ids)) return $out;
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $pdo_access->prepare("SELECT schedule_id, day_of_week, TIME_FORMAT(start_time, '%H:%i') AS s, TIME_FORMAT(end_time, '%H:%i') AS e
+                                      FROM schedule_windows WHERE schedule_id IN ($ph)
+                                      ORDER BY schedule_id, start_time, end_time, day_of_week");
+        $stmt->execute(array_map('intval', $ids));
+        $groups = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $w) {
+            $sid = (int)$w['schedule_id'];
+            $key = $w['s'] . '|' . $w['e'];
+            if (!isset($groups[$sid][$key])) $groups[$sid][$key] = ['days' => [], 'start' => $w['s'], 'end' => $w['e']];
+            $groups[$sid][$key]['days'][] = (int)$w['day_of_week'];
+        }
+        foreach ($groups as $sid => $g) $out[$sid] = array_values($g);
+        return $out;
+    };
+
+    /**
+     * Validate a client-supplied windows array into flat rows [[day, 'HH:MM:SS', 'HH:MM:SS'], ...].
+     * Calls json_error() on bad input.
+     */
+    $parse_schedule_windows = function ($windows): array {
+        if (!is_array($windows)) json_error('windows must be an array');
+        $rows = [];
+        foreach (array_values($windows) as $i => $w) {
+            $n = $i + 1;
+            if (!is_array($w)) json_error("Window $n is invalid");
+            $days = $w['days'] ?? null;
+            if (!is_array($days) || count($days) === 0) json_error("Window $n needs at least one day");
+            $start = trim((string)($w['start'] ?? ''));
+            $end = trim((string)($w['end'] ?? ''));
+            foreach (['start' => $start, 'end' => $end] as $label => $t) {
+                if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/', $t)) json_error("Window $n has an invalid $label time");
+            }
+            if (strlen($start) === 5) $start .= ':00';
+            if (strlen($end) === 5) $end .= ':00';
+            if ($start === $end) json_error("Window $n start and end are the same");
+            foreach (array_unique(array_map('intval', $days)) as $d) {
+                if ($d < 0 || $d > 6) json_error("Window $n has an invalid day");
+                $rows[] = [$d, $start, $end];
+            }
+        }
+        return $rows;
+    };
+
+    /** Build flat window rows from the legacy per-day fields (older clients). */
+    $windows_from_day_fields = function (array $src) use ($SCHEDULE_DAYS): array {
+        $rows = [];
+        foreach ($SCHEDULE_DAYS as $i => $day) {
+            $st = $src["{$day}_start"] ?? null;
+            $en = $src["{$day}_end"] ?? null;
+            if (empty($st) || empty($en)) continue;
+            foreach ([$st, $en] as $t) {
+                if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/', $t)) json_error("Invalid time for $day");
+            }
+            $rows[] = [$i, strlen($st) === 5 ? "$st:00" : $st, strlen($en) === 5 ? "$en:00" : $en];
+        }
+        return $rows;
+    };
+
+    /**
+     * Legacy per-day columns mirror each day's FIRST window (earliest start) so
+     * controllers that predate schedule_windows still enforce a reduced schedule.
+     */
+    $legacy_columns_from_rows = function (array $rows) use ($SCHEDULE_DAYS): array {
+        $cols = [];
+        foreach ($SCHEDULE_DAYS as $i => $day) {
+            $first = null;
+            foreach ($rows as $r) {
+                if ($r[0] !== $i) continue;
+                if ($first === null || strcmp($r[1], $first[1]) < 0) $first = $r;
+            }
+            $cols["{$day}_start"] = $first ? $first[1] : null;
+            $cols["{$day}_end"] = $first ? $first[2] : null;
+        }
+        return $cols;
+    };
+
+    $replace_schedule_windows = function (int $sid, array $rows) use ($pdo_access) {
+        $pdo_access->prepare("DELETE FROM schedule_windows WHERE schedule_id = ?")->execute([$sid]);
+        if (empty($rows)) return;
+        $ins = $pdo_access->prepare("INSERT INTO schedule_windows (schedule_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?)");
+        foreach ($rows as $r) $ins->execute([$sid, $r[0], $r[1], $r[2]]);
+    };
+
     if ($method === 'GET' && $id === null) {
         require_admin_auth();
         $schedules = $pdo_access->query("SELECT * FROM access_schedules ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($schedules as &$s) { $s['id'] = (int)$s['id']; $s['is_24_7'] = (int)$s['is_24_7']; }
+        $windows = $load_schedule_windows(array_column($schedules, 'id'));
+        foreach ($schedules as &$s) {
+            $s['id'] = (int)$s['id'];
+            $s['is_24_7'] = (int)$s['is_24_7'];
+            $s['windows'] = $windows[$s['id']] ?? [];
+        }
         unset($s);
         json_success(['schedules' => $schedules]);
     }
@@ -1647,24 +1747,27 @@ if ($resource === 'schedules') {
         $name = sanitize_string($input['name'] ?? '');
         if (empty($name)) json_error('Schedule name is required');
 
-        $days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        $rows = isset($input['windows']) ? $parse_schedule_windows($input['windows']) : $windows_from_day_fields($input);
+        $is_24_7 = (int)($input['is_24_7'] ?? 0);
+        if (!$is_24_7 && empty($rows)) json_error('Add at least one time window, or make the schedule 24/7');
+
         $cols = ['name', 'description', 'is_24_7'];
-        $vals = [$name, sanitize_string($input['description'] ?? ''), (int)($input['is_24_7'] ?? 0)];
-        foreach ($days as $day) {
-            $cols[] = "{$day}_start";
-            $cols[] = "{$day}_end";
-            $vals[] = !empty($input["{$day}_start"]) ? $input["{$day}_start"] : null;
-            $vals[] = !empty($input["{$day}_end"]) ? $input["{$day}_end"] : null;
-        }
+        $vals = [$name, sanitize_string($input['description'] ?? ''), $is_24_7];
+        foreach ($legacy_columns_from_rows($rows) as $col => $val) { $cols[] = $col; $vals[] = $val; }
         $placeholders = implode(', ', array_fill(0, count($vals), '?'));
         try {
+            $pdo_access->beginTransaction();
             $pdo_access->prepare("INSERT INTO access_schedules (" . implode(', ', $cols) . ") VALUES ($placeholders)")->execute($vals);
+            $new_id = (int)$pdo_access->lastInsertId();
+            $replace_schedule_windows($new_id, $rows);
+            $pdo_access->commit();
         } catch (PDOException $e) {
+            if ($pdo_access->inTransaction()) $pdo_access->rollBack();
             if ($e->getCode() == 23000) json_error('A schedule with this name already exists');
             throw $e;
         }
         log_security_event($pdo, 'schedule_created', $_SESSION['user_id'], "Schedule created: $name");
-        json_success(['id' => (int)$pdo_access->lastInsertId()], 'Schedule created');
+        json_success(['id' => $new_id], 'Schedule created');
     }
 
     if ($method === 'GET' && $id !== null) {
@@ -1675,6 +1778,7 @@ if ($resource === 'schedules') {
         if (!$schedule) json_error('Schedule not found', 404);
         $schedule['id'] = (int)$schedule['id'];
         $schedule['is_24_7'] = (int)$schedule['is_24_7'];
+        $schedule['windows'] = $load_schedule_windows([$schedule['id']])[$schedule['id']] ?? [];
         json_success(['schedule' => $schedule]);
     }
 
@@ -1682,20 +1786,51 @@ if ($resource === 'schedules') {
         require_admin_auth();
         require_csrf();
 
+        $stmt = $pdo_access->prepare("SELECT * FROM access_schedules WHERE id = ?");
+        $stmt->execute([(int)$id]);
+        $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$existing) json_error('Schedule not found', 404);
+
         $fields = [];
         $params = [];
         if (isset($input['name'])) { $fields[] = "name = ?"; $params[] = sanitize_string($input['name']); }
         if (isset($input['description'])) { $fields[] = "description = ?"; $params[] = sanitize_string($input['description']); }
         if (isset($input['is_24_7'])) { $fields[] = "is_24_7 = ?"; $params[] = (int)$input['is_24_7']; }
-        $days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-        foreach ($days as $day) {
-            if (isset($input["{$day}_start"])) { $fields[] = "{$day}_start = ?"; $params[] = !empty($input["{$day}_start"]) ? $input["{$day}_start"] : null; }
-            if (isset($input["{$day}_end"])) { $fields[] = "{$day}_end = ?"; $params[] = !empty($input["{$day}_end"]) ? $input["{$day}_end"] : null; }
+
+        // Time windows: either the new `windows` array, or (older clients) any
+        // per-day field merged over the stored columns. Both rebuild schedule_windows
+        // and the legacy columns together so they never disagree.
+        $rows = null;
+        if (isset($input['windows'])) {
+            $rows = $parse_schedule_windows($input['windows']);
+        } else {
+            $touched = false;
+            $merged = $existing;
+            foreach ($SCHEDULE_DAYS as $day) {
+                foreach (["{$day}_start", "{$day}_end"] as $k) {
+                    if (isset($input[$k])) { $merged[$k] = !empty($input[$k]) ? $input[$k] : null; $touched = true; }
+                }
+            }
+            if ($touched) $rows = $windows_from_day_fields($merged);
+        }
+        if ($rows !== null) {
+            $is_24_7 = isset($input['is_24_7']) ? (int)$input['is_24_7'] : (int)$existing['is_24_7'];
+            if (!$is_24_7 && empty($rows)) json_error('Add at least one time window, or make the schedule 24/7');
+            foreach ($legacy_columns_from_rows($rows) as $col => $val) { $fields[] = "$col = ?"; $params[] = $val; }
         }
 
         if (empty($fields)) json_error('No fields to update');
         $params[] = (int)$id;
-        $pdo_access->prepare("UPDATE access_schedules SET " . implode(', ', $fields) . " WHERE id = ?")->execute($params);
+        try {
+            $pdo_access->beginTransaction();
+            $pdo_access->prepare("UPDATE access_schedules SET " . implode(', ', $fields) . " WHERE id = ?")->execute($params);
+            if ($rows !== null) $replace_schedule_windows((int)$id, $rows);
+            $pdo_access->commit();
+        } catch (PDOException $e) {
+            if ($pdo_access->inTransaction()) $pdo_access->rollBack();
+            if ($e->getCode() == 23000) json_error('A schedule with this name already exists');
+            throw $e;
+        }
         log_security_event($pdo, 'schedule_updated', $_SESSION['user_id'], "Schedule updated: id=$id");
         json_success([], 'Schedule updated');
     }
@@ -1706,6 +1841,7 @@ if ($resource === 'schedules') {
         $stmt = $pdo_access->prepare("DELETE FROM access_schedules WHERE id = ?");
         $stmt->execute([(int)$id]);
         if ($stmt->rowCount() === 0) json_error('Schedule not found', 404);
+        // schedule_windows rows go with it (ON DELETE CASCADE)
         log_security_event($pdo, 'schedule_deleted', $_SESSION['user_id'], "Schedule deleted: id=$id");
         json_success([], 'Schedule deleted');
     }

@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.8-green)
+![Version](https://img.shields.io/badge/version-0.4.9-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -589,7 +589,7 @@ Upload at **Cards** > **Import CSV**. Optional columns: `email`, `phone`, `depar
 
 1. Go to **Schedules** > **Add Schedule**
 2. Name the schedule (e.g., "Business Hours")
-3. Set time windows for each day
+3. Add one or more **time windows**. Each window has a set of days (tap to toggle Mon–Sun) and a start/end time; a day can appear in as many windows as you need, and an end earlier than the start runs past midnight. For example, a gate that opens every day 11:30–13:10, Mon–Fri 16:45–18:30 and Sat–Sun 07:30–09:15 is three windows on one schedule.
 4. Assign to cards (restricts when the card works) or to doors (see below)
 
 ### Access Groups
@@ -608,6 +608,7 @@ To keep a door or gate open during set hours — a community gate open 6am–7pm
 - The controller evaluates the schedule every 15 seconds and acts on the transitions, so a master card or an admin can still release a hold mid-window; the schedule will not fight that release and re-applies on the next window start.
 - A controller that reboots mid-window re-applies the hold. Clearing the door's schedule releases a hold the schedule applied.
 - **Lockdown mode** and **access-denied holidays** override the schedule — a door that is locked down or closed for a holiday is never propped open.
+- A schedule can have several windows a day (v0.4.9+); the door is held open during each one and relocks in the gaps between them.
 - Overnight windows (e.g. 22:00 → 06:00) are supported. Master-card and admin holds placed *before* the window opens are left alone at window end.
 - Card access is unaffected: outside the window the door works normally for authorized cards. Leave the door schedule at **None** for a door that should only ever open on a valid card.
 
@@ -795,7 +796,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.8** - Pre-release
+**Current Version: 0.4.9** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -809,6 +810,12 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.9 (September 2026)
+- **Schedules can have more than one time window per day — fixes #6.** A schedule used to hold a single start/end per weekday, so "open 11:30–13:10 and again 19:25–21:10 every day, plus 16:45–18:30 on weekdays" could not be expressed. Schedules are now a list of windows, each with its own set of days and start/end time, with no limit on how many windows share a day. This applies to both card access schedules and door **Unlock Schedules**.
+  - New `schedule_windows` table. The migration seeds it from the existing per-day columns, so current schedules carry over unchanged.
+  - The legacy per-day columns are kept and always mirror each day's *first* window, so a controller still on an older release keeps enforcing a reduced version of the schedule until it is updated. Update controllers to 0.4.9 to get every window.
+  - Schedules page redesigned around the window list (day toggles + start/end per row). Older API clients that still send the per-day fields keep working.
 
 ### Version 0.4.8 (September 2026)
 - **`server-update.sh` failed at "Release archive missing pidoorserv/ directory".** Its temp directory is named `pidoors-server-update-…`, and the search for the extracted `pidoors-*` folder matched the temp directory itself. The CLI updater had been broken since that temp-dir naming was introduced; the in-app updater was unaffected. This matters now because v0.4.7 tells existing installs to run it once. Also: the migration helper no longer echoes the migration's placeholder `SELECT 1` rows.

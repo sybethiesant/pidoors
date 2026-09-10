@@ -1,12 +1,95 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Calendar, Plus, Pencil, Trash2, Loader2, X, Clock } from 'lucide-react';
 import { getSchedules, createSchedule, updateSchedule, deleteSchedule } from '../api/schedules';
 import toast from 'react-hot-toast';
-import type { Schedule } from '../types';
+import type { Schedule, ScheduleWindow } from '../types';
 
-const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
+// Day index 0 = Monday .. 6 = Sunday (matches schedule_windows.day_of_week and Python weekday()).
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const WEEKDAYS = [0, 1, 2, 3, 4];
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+type ScheduleForm = {
+  name: string;
+  description: string;
+  is_24_7: number;
+  windows: ScheduleWindow[];
+};
+
+function hhmm(t: string | null | undefined): string {
+  return t ? t.slice(0, 5) : '';
+}
+
+/** Human label for a window's day set: "Every day", "Mon–Fri", "Sat, Sun", "Mon, Wed, Fri". */
+function daysLabel(days: number[]): string {
+  const d = [...days].sort((a, b) => a - b);
+  if (d.length === 7) return 'Every day';
+  if (d.length === 5 && d.every((x, i) => x === i)) return 'Mon–Fri';
+  if (d.length === 2 && d[0] === 5 && d[1] === 6) return 'Sat–Sun';
+  // Collapse consecutive runs of 3+ days into ranges.
+  const parts: string[] = [];
+  let i = 0;
+  while (i < d.length) {
+    let j = i;
+    while (j + 1 < d.length && d[j + 1] === d[j] + 1) j++;
+    if (j - i >= 2) parts.push(`${DAY_LABELS[d[i]]}–${DAY_LABELS[d[j]]}`);
+    else for (let k = i; k <= j; k++) parts.push(DAY_LABELS[d[k]]);
+    i = j + 1;
+  }
+  return parts.join(', ');
+}
+
+/** Windows for an existing schedule. Older servers only send the per-day columns. */
+function windowsOf(schedule: Partial<Schedule>): ScheduleWindow[] {
+  if (schedule.windows && schedule.windows.length > 0) {
+    return schedule.windows.map((w) => ({ days: [...w.days], start: hhmm(w.start), end: hhmm(w.end) }));
+  }
+  const keys = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
+  const groups = new Map<string, ScheduleWindow>();
+  keys.forEach((day, i) => {
+    const start = hhmm(schedule[`${day}_start`] as string | null);
+    const end = hhmm(schedule[`${day}_end`] as string | null);
+    if (!start || !end) return;
+    const key = `${start}|${end}`;
+    const g = groups.get(key) ?? { days: [], start, end };
+    g.days.push(i);
+    groups.set(key, g);
+  });
+  return [...groups.values()];
+}
+
+function sortedWindows(windows: ScheduleWindow[]): ScheduleWindow[] {
+  return [...windows].sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
+}
+
+function DayToggles({ days, onChange }: { days: number[]; onChange: (days: number[]) => void }) {
+  const toggle = (d: number) => onChange(days.includes(d) ? days.filter((x) => x !== d) : [...days, d]);
+  return (
+    <div className="flex gap-1" role="group" aria-label="Days">
+      {DAY_SHORT.map((label, d) => {
+        const on = days.includes(d);
+        return (
+          <button
+            key={d}
+            type="button"
+            onClick={() => toggle(d)}
+            title={DAY_LABELS[d]}
+            aria-pressed={on}
+            className={`h-7 w-7 rounded-full text-xs font-semibold transition-colors ${
+              on
+                ? 'bg-primary-600 text-white'
+                : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-400 dark:hover:bg-slate-600'
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function ScheduleFormModal({
   schedule,
@@ -19,20 +102,41 @@ function ScheduleFormModal({
   onSave: (data: Partial<Schedule>) => void;
   saving: boolean;
 }) {
-  const isEdit = schedule && schedule.id;
-  const [form, setForm] = useState<Record<string, unknown>>({
-    name: '',
-    description: '',
-    is_24_7: 0,
-    ...Object.fromEntries(DAYS.flatMap((d) => [[`${d}_start`, '08:00'], [`${d}_end`, '17:00']])),
-    ...schedule,
+  const isEdit = !!(schedule && schedule.id);
+  const [form, setForm] = useState<ScheduleForm>({
+    name: schedule?.name ?? '',
+    description: schedule?.description ?? '',
+    is_24_7: schedule?.is_24_7 ?? 0,
+    windows: schedule ? windowsOf(schedule) : [{ days: [...WEEKDAYS], start: '08:00', end: '17:00' }],
   });
 
-  const set = (field: string, value: unknown) => setForm({ ...form, [field]: value });
+  const set = <K extends keyof ScheduleForm>(field: K, value: ScheduleForm[K]) => setForm({ ...form, [field]: value });
+  const setWindow = (i: number, patch: Partial<ScheduleWindow>) =>
+    set('windows', form.windows.map((w, idx) => (idx === i ? { ...w, ...patch } : w)));
+  const addWindow = () => set('windows', [...form.windows, { days: [...ALL_DAYS], start: '08:00', end: '17:00' }]);
+  const removeWindow = (i: number) => set('windows', form.windows.filter((_, idx) => idx !== i));
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!form.is_24_7) {
+      if (form.windows.length === 0) { toast.error('Add at least one time window, or make the schedule 24/7'); return; }
+      for (const [i, w] of form.windows.entries()) {
+        if (w.days.length === 0) { toast.error(`Time window ${i + 1} needs at least one day`); return; }
+        if (!w.start || !w.end) { toast.error(`Time window ${i + 1} needs a start and end time`); return; }
+        if (w.start === w.end) { toast.error(`Time window ${i + 1} starts and ends at the same time`); return; }
+      }
+    }
+    onSave({
+      name: form.name,
+      description: form.description,
+      is_24_7: form.is_24_7,
+      windows: form.is_24_7 ? [] : form.windows,
+    });
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="card w-full max-w-xl max-h-[90vh] overflow-y-auto p-6">
+      <div className="card w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
             {isEdit ? 'Edit Schedule' : 'Add Schedule'}
@@ -40,14 +144,14 @@ function ScheduleFormModal({
           <button onClick={onClose} className="btn-ghost rounded-lg p-1"><X className="h-5 w-5" /></button>
         </div>
 
-        <form onSubmit={(e) => { e.preventDefault(); onSave(form as Partial<Schedule>); }} className="space-y-4">
+        <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="label">Name *</label>
-            <input className="input" value={(form.name as string) || ''} onChange={(e) => set('name', e.target.value)} required />
+            <input className="input" value={form.name} onChange={(e) => set('name', e.target.value)} required />
           </div>
           <div>
             <label className="label">Description</label>
-            <input className="input" value={(form.description as string) || ''} onChange={(e) => set('description', e.target.value)} />
+            <input className="input" value={form.description} onChange={(e) => set('description', e.target.value)} />
           </div>
 
           <div className="flex items-center gap-2">
@@ -64,22 +168,54 @@ function ScheduleFormModal({
           </div>
 
           {!form.is_24_7 && (
-            <div className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-              {DAYS.map((day, i) => (
-                <div key={day} className="grid grid-cols-[60px_1fr_1fr] gap-2 items-center">
-                  <span className="text-sm font-medium text-slate-600 dark:text-slate-400">{DAY_LABELS[i]}</span>
-                  <input
-                    type="time"
-                    className="input text-xs"
-                    value={(form[`${day}_start`] as string) || ''}
-                    onChange={(e) => set(`${day}_start`, e.target.value)}
-                  />
-                  <input
-                    type="time"
-                    className="input text-xs"
-                    value={(form[`${day}_end`] as string) || ''}
-                    onChange={(e) => set(`${day}_end`, e.target.value)}
-                  />
+            <div className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Time windows</span>
+                <button type="button" onClick={addWindow} className="btn btn-secondary btn-sm">
+                  <Plus className="h-3.5 w-3.5" />
+                  Add window
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">
+                Each window applies on the days selected. Add as many as you need — a day can have several
+                windows. An end time earlier than the start runs past midnight.
+              </p>
+
+              {form.windows.length === 0 && (
+                <p className="py-2 text-center text-sm text-slate-500">No time windows. Add one above.</p>
+              )}
+
+              {form.windows.map((w, i) => (
+                <div
+                  key={i}
+                  className="flex flex-wrap items-center gap-3 rounded-md bg-slate-50 p-2 dark:bg-slate-800/60"
+                >
+                  <DayToggles days={w.days} onChange={(days) => setWindow(i, { days })} />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="time"
+                      className="input text-xs"
+                      value={w.start}
+                      onChange={(e) => setWindow(i, { start: e.target.value })}
+                      required
+                    />
+                    <span className="text-xs text-slate-400">to</span>
+                    <input
+                      type="time"
+                      className="input text-xs"
+                      value={w.end}
+                      onChange={(e) => setWindow(i, { end: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeWindow(i)}
+                    className="ml-auto rounded p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    title="Remove window"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div>
               ))}
             </div>
@@ -145,39 +281,39 @@ export function SchedulesPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {schedules.map((schedule) => (
-            <div key={schedule.id} className="card p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-semibold text-slate-900 dark:text-white">{schedule.name}</h3>
-                  {schedule.description && <p className="text-sm text-slate-500 mt-1">{schedule.description}</p>}
-                </div>
-                <div className="flex gap-1">
-                  <button onClick={() => setEditSchedule(schedule)} className="btn-ghost rounded p-1"><Pencil className="h-4 w-4" /></button>
-                  <button onClick={() => setConfirmDelete(schedule)} className="rounded p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"><Trash2 className="h-4 w-4" /></button>
-                </div>
-              </div>
-              <div className="mt-3">
-                {schedule.is_24_7 ? (
-                  <span className="badge badge-success"><Clock className="mr-1 h-3 w-3" />24/7 Access</span>
-                ) : (
-                  <div className="space-y-1 text-xs text-slate-500">
-                    {DAYS.map((day, i) => {
-                      const start = schedule[`${day}_start` as keyof Schedule] as string;
-                      const end = schedule[`${day}_end` as keyof Schedule] as string;
-                      if (!start && !end) return null;
-                      return (
-                        <div key={day} className="flex justify-between">
-                          <span className="font-medium">{DAY_LABELS[i]}</span>
-                          <span>{start || '--'} - {end || '--'}</span>
-                        </div>
-                      );
-                    })}
+          {schedules.map((schedule) => {
+            const windows = sortedWindows(windowsOf(schedule));
+            return (
+              <div key={schedule.id} className="card p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-semibold text-slate-900 dark:text-white">{schedule.name}</h3>
+                    {schedule.description && <p className="text-sm text-slate-500 mt-1">{schedule.description}</p>}
                   </div>
-                )}
+                  <div className="flex gap-1">
+                    <button onClick={() => setEditSchedule(schedule)} className="btn-ghost rounded p-1"><Pencil className="h-4 w-4" /></button>
+                    <button onClick={() => setConfirmDelete(schedule)} className="rounded p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"><Trash2 className="h-4 w-4" /></button>
+                  </div>
+                </div>
+                <div className="mt-3">
+                  {schedule.is_24_7 ? (
+                    <span className="badge badge-success"><Clock className="mr-1 h-3 w-3" />24/7 Access</span>
+                  ) : windows.length === 0 ? (
+                    <p className="text-xs text-slate-400">No time windows</p>
+                  ) : (
+                    <div className="space-y-1 text-xs text-slate-500">
+                      {windows.map((w, i) => (
+                        <div key={i} className="flex justify-between gap-2">
+                          <span className="font-medium">{daysLabel(w.days)}</span>
+                          <span className="tabular-nums">{w.start} – {w.end}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
