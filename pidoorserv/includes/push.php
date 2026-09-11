@@ -107,6 +107,137 @@ function push_to_controller($pdo_access, $door_name, $command, $body = []) {
 }
 
 /**
+ * Queue a cache-sync push to door controllers, delivered after the HTTP
+ * response has been sent (json_success() calls flush_deferred_pushes()).
+ *
+ * Controllers only re-read cards, schedules, holidays, groups and door/global
+ * settings from the database once an hour. Anything that edits that data
+ * should call this so online doors pick the change up within a second or two
+ * instead of waiting for the hourly resync. Offline doors still catch up on
+ * their next sync — nothing here is load-bearing.
+ *
+ * @param array|null $door_names  Specific doors, or null for every door
+ */
+function queue_controller_sync($door_names = null) {
+    if (!array_key_exists('_pidoors_sync_queue', $GLOBALS)) {
+        $GLOBALS['_pidoors_sync_queue'] = [];
+    }
+    if ($door_names === null || $GLOBALS['_pidoors_sync_queue'] === null) {
+        $GLOBALS['_pidoors_sync_queue'] = null;   // null = all doors
+        return;
+    }
+    foreach ((array)$door_names as $n) {
+        $GLOBALS['_pidoors_sync_queue'][$n] = true;
+    }
+}
+
+/**
+ * Deliver queued sync pushes. Called by json_success() after the response
+ * body is written; finishes the request first (PHP-FPM) so the browser is not
+ * kept waiting on controller round-trips.
+ */
+function flush_deferred_pushes($pdo_access) {
+    if (!array_key_exists('_pidoors_sync_queue', $GLOBALS)) return;
+    $queue = $GLOBALS['_pidoors_sync_queue'];
+    unset($GLOBALS['_pidoors_sync_queue']);
+    if (is_array($queue) && empty($queue)) return;
+
+    // Release the session lock and hand the response to the client before
+    // talking to controllers, so a slow or unreachable door never delays the UI.
+    if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        @ob_end_flush();
+        @flush();
+    }
+    ignore_user_abort(true);
+
+    try {
+        push_sync_to_controllers($pdo_access, is_array($queue) ? array_keys($queue) : null);
+    } catch (Throwable $e) {
+        error_log('PiDoors: deferred sync push failed: ' . $e->getMessage());
+    }
+}
+
+/**
+ * POST /cmd/sync to a set of door controllers in parallel (curl_multi).
+ * Best-effort: doors without push config, or that have not been reachable,
+ * are skipped; a failure just marks push_available = 0 like push_to_controller().
+ *
+ * @param array|null $door_names  Specific doors, or null for every door
+ * @return array  door name => bool delivered
+ */
+function push_sync_to_controllers($pdo_access, $door_names = null) {
+    $sql = "SELECT name, ip_address, listen_port, api_key FROM doors
+            WHERE ip_address IS NOT NULL AND ip_address <> ''
+              AND listen_port IS NOT NULL AND listen_port > 0
+              AND api_key IS NOT NULL AND api_key <> ''
+              AND (status = 'online' OR push_available = 1)";
+    $params = [];
+    if (is_array($door_names)) {
+        if (empty($door_names)) return [];
+        $sql .= " AND name IN (" . implode(',', array_fill(0, count($door_names), '?')) . ")";
+        $params = array_values($door_names);
+    }
+    $stmt = $pdo_access->prepare($sql);
+    $stmt->execute($params);
+    $doors = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (!$doors) return [];
+
+    $ssl_opts = _push_ssl_opts();
+    if ($ssl_opts === null) return [];   // cannot verify controller certs — fail closed
+
+    $timeout = 5;
+    $ts = $pdo_access->query("SELECT setting_value FROM settings WHERE setting_key = 'push_timeout'")->fetch(PDO::FETCH_ASSOC);
+    if ($ts && $ts['setting_value']) $timeout = max(2, (int)$ts['setting_value']);
+
+    $mh = curl_multi_init();
+    $handles = [];
+    foreach ($doors as $d) {
+        $ch = curl_init("https://{$d['ip_address']}:" . (int)$d['listen_port'] . "/cmd/sync");
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => $timeout,
+            CURLOPT_CONNECTTIMEOUT => $timeout - 1,
+            CURLOPT_HTTPHEADER     => [
+                'Content-Type: application/json',
+                "Authorization: Bearer {$d['api_key']}",
+            ],
+            CURLOPT_POSTFIELDS     => '{}',
+        ] + $ssl_opts);
+        curl_multi_add_handle($mh, $ch);
+        $handles[$d['name']] = $ch;
+    }
+
+    $errors = [];   // transfer errors by handle id — curl_error() is empty for multi handles
+    do {
+        $status = curl_multi_exec($mh, $active);
+        while ($info = curl_multi_info_read($mh)) {
+            if ($info['result'] !== CURLE_OK) {
+                $errors[spl_object_id($info['handle'])] = curl_strerror($info['result']);
+            }
+        }
+        if ($active) curl_multi_select($mh, 1.0);
+    } while ($active && $status === CURLM_OK);
+
+    $results = [];
+    $mark = $pdo_access->prepare("UPDATE doors SET push_available = ? WHERE name = ?");
+    foreach ($handles as $name => $ch) {
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $ok = ($code >= 200 && $code < 300);
+        $results[$name] = $ok;
+        $mark->execute([$ok ? 1 : 0, $name]);
+        if (!$ok) error_log("PiDoors: sync push to {$name} failed: " . ($errors[spl_object_id($ch)] ?? "HTTP {$code}"));
+        curl_multi_remove_handle($mh, $ch);
+        curl_close($ch);
+    }
+    curl_multi_close($mh);
+    return $results;
+}
+
+/**
  * Ping a door controller and return its live status.
  *
  * @param PDO    $pdo_access  Database connection (access DB)

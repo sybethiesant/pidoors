@@ -166,6 +166,8 @@ schedule_state = {
 # Thread locks for shared state
 state_lock = threading.Lock()  # For db_connected, last_db_attempt, cache_last_sync
 cache_lock = threading.Lock()  # For local_cache access
+sync_lock = threading.Lock()   # Serializes sync_cache_from_server (hourly vs. push-triggered)
+schedule_eval_lock = threading.Lock()  # Serializes unlock-schedule evaluation (loop vs. post-sync)
 card_lock = threading.Lock()   # For last_card, repeat_read_count, repeat_read_timeout
 master_lock = threading.Lock() # For master_cards access
 wiegand_lock = threading.Lock() # For legacy Wiegand stream access
@@ -692,7 +694,19 @@ def verify_master_card_online(card_id, facility, user_id):
 
 
 def sync_cache_from_server():
-    """Sync the local cache from the database server"""
+    """Sync the local cache from the database server, then re-evaluate the
+    unlock schedule so a pushed change takes effect right away.
+
+    Serialized: a push-triggered sync that lands while the hourly one is
+    running waits for it instead of racing it for local_cache and the cache
+    file."""
+    with sync_lock:
+        _sync_cache_from_server_locked()
+    evaluate_unlock_schedule()
+
+
+def _sync_cache_from_server_locked():
+    """Body of sync_cache_from_server. Call the wrapper, not this."""
     global local_cache, cache_last_sync, db_connected
 
     if not MYSQL_AVAILABLE:
@@ -1828,8 +1842,19 @@ def schedule_loop():
     manual release mid-window sticks until the next window. On startup the
     first evaluation counts as a transition, so a controller that reboots
     mid-window re-applies the hold. Clearing the door's schedule, enabling
-    lockdown, or an access-denied holiday all count as the window closing."""
+    lockdown, or an access-denied holiday all count as the window closing.
+
+    Also run once right after every cache sync (see sync_cache_from_server), so
+    a schedule edit pushed from the server is acted on immediately rather than
+    at the next tick."""
     while running:
+        evaluate_unlock_schedule()
+        time.sleep(SCHEDULE_CHECK_INTERVAL)
+
+
+def evaluate_unlock_schedule():
+    """One edge-triggered evaluation of the unlock schedule (see schedule_loop)."""
+    with schedule_eval_lock:
         try:
             now = datetime.now()
             in_window = unlock_schedule_in_window(now)
@@ -1841,7 +1866,6 @@ def schedule_loop():
                 schedule_state['in_window'] = in_window
         except Exception as e:
             report(f"Unlock schedule error: {e}")
-        time.sleep(SCHEDULE_CHECK_INTERVAL)
 
 
 def start_schedule_thread():

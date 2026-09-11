@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.9-green)
+![Version](https://img.shields.io/badge/version-0.4.10-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -796,7 +796,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.9** - Pre-release
+**Current Version: 0.4.10** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -810,6 +810,11 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.10 (September 2026)
+- **Schedule, holiday, card, group, door and settings changes reach online doors immediately — fixes #7.** Controllers cache this data and only re-read it from the database once an hour, and the server only pushed a reload for gate/LED/LCD config changes. Assigning an **Unlock Schedule** to a door, or editing the schedule's hours, therefore did nothing until the next hourly sync (or a controller restart). The API now pushes a cache sync to every reachable controller after any such change, in parallel and after the HTTP response is sent, so the UI is never held up by a slow door. Doors that are offline still catch up on their next sync.
+  - The controller re-evaluates its unlock schedule right after each sync, so a window that is already open is applied within a second instead of at the next 15 s tick. Concurrent syncs (hourly vs. pushed) are serialized.
+  - Card swipes were never affected while online: the controller checks the database live for those and only uses its cache when the server is unreachable.
 
 ### Version 0.4.9 (September 2026)
 - **Schedules can have more than one time window per day — fixes #6.** A schedule used to hold a single start/end per weekday, so "open 11:30–13:10 and again 19:25–21:10 every day, plus 16:45–18:30 on weekdays" could not be expressed. Schedules are now a list of windows, each with its own set of days and start/end time, with no limit on how many windows share a day. This applies to both card access schedules and door **Unlock Schedules**.

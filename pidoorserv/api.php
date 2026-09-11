@@ -153,7 +153,10 @@ if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
 
 // Helper functions
 function json_success($data = [], $msg = 'OK') {
+    global $pdo_access;
     echo json_encode(array_merge(['ok' => true, 'msg' => $msg], $data));
+    // Any controller sync queued by the handler goes out now, after the response.
+    if (function_exists('flush_deferred_pushes')) flush_deferred_pushes($pdo_access);
     exit();
 }
 
@@ -1002,11 +1005,10 @@ if ($resource === 'doors') {
         $params[] = $door_name;
         $pdo_access->prepare("UPDATE doors SET " . implode(', ', $fields) . " WHERE name = ?")->execute($params);
 
-        // Push config change to controller if it's online (gate/LED/LCD config changes need a reload)
-        if (array_key_exists('gate_config', $input) || array_key_exists('status_led_config', $input) || array_key_exists('lcd_config', $input) || array_key_exists('is_gate', $input)) {
-            require_once __DIR__ . '/includes/push.php';
-            @push_to_controller($pdo_access, $door_name, 'reload-config');
-        }
+        // Every one of these fields lives in the controller's cached door
+        // settings (unlock schedule, unlock duration, lockdown, gate/LED/LCD
+        // config, heartbeat...). Push a sync so it applies now, not in an hour.
+        queue_controller_sync([$door_name]);
 
         log_security_event($pdo, 'door_updated', $_SESSION['user_id'], "Door updated: $door_name");
         json_success([], 'Door updated');
@@ -1352,6 +1354,7 @@ if ($resource === 'cards') {
         fclose($handle);
 
         log_security_event($pdo, 'cards_imported', $_SESSION['user_id'], "CSV import: $imported imported, $skipped skipped");
+        queue_controller_sync();
         json_success(['imported' => $imported, 'skipped' => $skipped, 'errors' => $errors_list], "Imported $imported cards, skipped $skipped");
     }
 
@@ -1451,6 +1454,7 @@ if ($resource === 'cards') {
         }
 
         log_security_event($pdo, 'card_created', $_SESSION['user_id'], "Card created: $user_id");
+        queue_controller_sync();
         json_success(['card_id' => $new_card_id], 'Card created');
     }
 
@@ -1513,6 +1517,7 @@ if ($resource === 'cards') {
         }
 
         log_security_event($pdo, 'card_updated', $_SESSION['user_id'], "Card updated: card_id=$id");
+        queue_controller_sync();
         json_success([], 'Card updated');
     }
 
@@ -1533,6 +1538,7 @@ if ($resource === 'cards') {
         // Delete card
         $pdo_access->prepare("DELETE FROM cards WHERE $card_where")->execute([$card_key]);
         log_security_event($pdo, 'card_deleted', $_SESSION['user_id'], "Card deleted: {$card_info['firstname']} {$card_info['lastname']} (card_id=$id)");
+        queue_controller_sync();
         json_success([], 'Card deleted');
     }
 
@@ -1767,6 +1773,7 @@ if ($resource === 'schedules') {
             throw $e;
         }
         log_security_event($pdo, 'schedule_created', $_SESSION['user_id'], "Schedule created: $name");
+        queue_controller_sync();
         json_success(['id' => $new_id], 'Schedule created');
     }
 
@@ -1832,6 +1839,7 @@ if ($resource === 'schedules') {
             throw $e;
         }
         log_security_event($pdo, 'schedule_updated', $_SESSION['user_id'], "Schedule updated: id=$id");
+        queue_controller_sync();
         json_success([], 'Schedule updated');
     }
 
@@ -1843,6 +1851,7 @@ if ($resource === 'schedules') {
         if ($stmt->rowCount() === 0) json_error('Schedule not found', 404);
         // schedule_windows rows go with it (ON DELETE CASCADE)
         log_security_event($pdo, 'schedule_deleted', $_SESSION['user_id'], "Schedule deleted: id=$id");
+        queue_controller_sync();
         json_success([], 'Schedule deleted');
     }
 
@@ -1873,6 +1882,7 @@ if ($resource === 'groups') {
         $stmt = $pdo_access->prepare("INSERT INTO access_groups (name, description, doors) VALUES (?, ?, ?)");
         $stmt->execute([$name, sanitize_string($input['description'] ?? ''), $doors]);
         log_security_event($pdo, 'group_created', $_SESSION['user_id'], "Access group created: $name");
+        queue_controller_sync();
         json_success(['id' => (int)$pdo_access->lastInsertId()], 'Group created');
     }
 
@@ -1894,6 +1904,7 @@ if ($resource === 'groups') {
         $params[] = (int)$id;
         $pdo_access->prepare("UPDATE access_groups SET " . implode(', ', $fields) . " WHERE id = ?")->execute($params);
         log_security_event($pdo, 'group_updated', $_SESSION['user_id'], "Access group updated: id=$id");
+        queue_controller_sync();
         json_success([], 'Group updated');
     }
 
@@ -1912,6 +1923,7 @@ if ($resource === 'groups') {
         $stmt->execute([(int)$id]);
         if ($stmt->rowCount() === 0) json_error('Group not found', 404);
         log_security_event($pdo, 'group_deleted', $_SESSION['user_id'], "Access group deleted: id=$id");
+        queue_controller_sync();
         json_success([], 'Group deleted');
     }
 
@@ -1945,6 +1957,7 @@ if ($resource === 'holidays') {
         $stmt = $pdo_access->prepare("INSERT INTO holidays (name, date, recurring, access_denied) VALUES (?, ?, ?, ?)");
         $stmt->execute([$name, $date, (int)($input['recurring'] ?? 0), (int)($input['access_denied'] ?? 1)]);
         log_security_event($pdo, 'holiday_created', $_SESSION['user_id'], "Holiday created: $name");
+        queue_controller_sync();
         json_success(['id' => (int)$pdo_access->lastInsertId()], 'Holiday created');
     }
 
@@ -1963,6 +1976,7 @@ if ($resource === 'holidays') {
         if (empty($fields)) json_error('No fields to update');
         $params[] = (int)$id;
         $pdo_access->prepare("UPDATE holidays SET " . implode(', ', $fields) . " WHERE id = ?")->execute($params);
+        queue_controller_sync();
         json_success([], 'Holiday updated');
     }
 
@@ -1972,6 +1986,7 @@ if ($resource === 'holidays') {
         $stmt = $pdo_access->prepare("DELETE FROM holidays WHERE id = ?");
         $stmt->execute([(int)$id]);
         if ($stmt->rowCount() === 0) json_error('Holiday not found', 404);
+        queue_controller_sync();
         json_success([], 'Holiday deleted');
     }
 
@@ -2066,6 +2081,7 @@ if ($resource === 'settings') {
         }
 
         log_security_event($pdo, 'settings_updated', $_SESSION['user_id'], 'Settings updated via API');
+        queue_controller_sync();
         json_success([], 'Settings saved');
     }
 
