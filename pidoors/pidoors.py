@@ -135,9 +135,14 @@ gate_clearance_pin = None      # Optional clearance sensor GPIO pin (None = not 
 gate_clearance_clear = True    # True = path is clear, False = something is blocking
 gate_auto_close_timer = None   # threading.Timer for auto-close countdown
 
-# Status LED state
-status_led_pin = None          # Configured LED pin (None = disabled)
-status_led_active = 1          # Polarity: 1 = active high, 0 = active low
+# Reader LED state (from the door's status_led_config). A door that has never
+# been given an LED config gets the historical bicolor pair: GPIO 25 green,
+# GPIO 22 red, active high.
+led_green_pin = None           # Lit while the door is open (single-line readers use only this)
+led_red_pin = None             # Optional second line, lit while the door is closed
+led_active = 1                 # Polarity for both lines: 1 = active high, 0 = active low
+led_anim_gen = 0               # Bumped to cancel an in-flight pulse/flash animation
+LEGACY_LED_CFG = {'enabled': True, 'green_pin': 25, 'red_pin': 22, 'active_high': True}
 
 # Door LCD state (see lcd.py). lcd is None when no display is configured.
 lcd = None
@@ -866,22 +871,21 @@ def is_cache_valid():
 # ============================================================
 
 def setup_output_GPIOs():
-    """Setup output GPIO pins for door lock and status LEDs"""
+    """Setup output GPIO pins for door lock and reader LEDs"""
     zone_config = config.get(zone, {})
     latch_gpio = zone_config.get("latch_gpio")
 
-    # Status LEDs must be set up BEFORE lock_door() which uses them
-    GPIO.setup(25, GPIO.OUT)  # Green LED / Granted
-    GPIO.setup(22, GPIO.OUT)  # Red LED / Denied
+    # LEDs must be set up BEFORE lock_door() which uses them. The cached door
+    # settings carry the LED pins, so a door that has moved them off the
+    # default GPIO 25/22 does not glitch those pins at boot.
+    with cache_lock:
+        cached_led = (local_cache.get('door_settings') or {}).get('status_led_config')
+    setup_status_led(cached_led)
 
     if latch_gpio:
         zone_by_pin[latch_gpio] = zone
         GPIO.setup(latch_gpio, GPIO.OUT)
         lock_door()
-    else:
-        # No latch configured - just set LED initial state
-        GPIO.output(25, 0)
-        GPIO.output(22, 1)
 
 
 def setup_readers():
@@ -1004,58 +1008,152 @@ def rex_button_pressed(channel):
 
 
 # ============================================================
-# STATUS LED
+# READER LEDS
 # ============================================================
 
-def setup_status_led(led_cfg):
-    """Set up the status LED if configured. Called from setup_from_door_settings()."""
-    global status_led_pin, status_led_active
-    if not led_cfg or not led_cfg.get('enabled'):
-        status_led_pin = None
-        return
-    pin = led_cfg.get('pin')
-    if not pin:
-        status_led_pin = None
-        return
-    pin = int(pin)
-    status_led_pin = pin
-    status_led_active = 1 if led_cfg.get('active_high', True) else 0
-    GPIO.setup(pin, GPIO.OUT)
-    GPIO.output(pin, status_led_active ^ 1)  # Idle = off
-    debug(f"Status LED configured on GPIO {pin} (active {'high' if status_led_active else 'low'})")
+def _parse_json_cfg(val):
+    """A JSON-in-a-column door setting as a dict (or None)."""
+    if not val:
+        return None
+    if isinstance(val, dict):
+        return val
+    try:
+        cfg = json.loads(val)
+        return cfg if isinstance(cfg, dict) else None
+    except Exception:
+        return None
 
 
-def status_led_set(on):
-    """Set status LED on or off."""
-    if status_led_pin is None:
+def normalize_led_cfg(raw):
+    """Door status_led_config -> {enabled, green_pin, red_pin, active_high}.
+
+    No config at all means the historical wiring (GPIO 25 green / GPIO 22 red).
+    Pre-0.4.11 configs carried a single 'pin', which becomes green_pin."""
+    cfg = _parse_json_cfg(raw)
+    if cfg is None:
+        return dict(LEGACY_LED_CFG)
+
+    def _pin(v):
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return None
+        return v if v > 0 else None
+
+    return {
+        'enabled': bool(cfg.get('enabled')),
+        'green_pin': _pin(cfg.get('green_pin', cfg.get('pin'))),
+        'red_pin': _pin(cfg.get('red_pin')),
+        'active_high': bool(cfg.get('active_high', True)),
+    }
+
+
+def setup_status_led(raw_cfg):
+    """Apply the door's LED config. Called at boot from the cached settings and
+    from apply_door_settings() on every sync, so a change in the web UI takes
+    effect on the next config push. Pins that are no longer used are parked
+    off; pins already claimed are not re-setup (no flicker)."""
+    global led_green_pin, led_red_pin, led_active
+    cfg = normalize_led_cfg(raw_cfg)
+    green = cfg['green_pin'] if cfg['enabled'] else None
+    red = cfg['red_pin'] if cfg['enabled'] else None
+    if red is not None and red == green:
+        red = None
+
+    for old in (led_green_pin, led_red_pin):
+        if old is not None and old not in (green, red):
+            _led_write(old, False)
+    led_active = 1 if cfg['active_high'] else 0
+    for new in (green, red):
+        if new is not None and new not in (led_green_pin, led_red_pin):
+            GPIO.setup(new, GPIO.OUT)
+    if (green, red) != (led_green_pin, led_red_pin):
+        if green is None and red is None:
+            debug("Reader LEDs disabled")
+        else:
+            debug(f"Reader LEDs: green GPIO {green}, red GPIO {red}, active {'high' if led_active else 'low'}")
+    led_green_pin, led_red_pin = green, red
+    leds_refresh()
+
+
+def _led_write(pin, on):
+    if pin is None:
         return
     try:
-        GPIO.output(status_led_pin, status_led_active if on else (status_led_active ^ 1))
+        GPIO.output(pin, led_active if on else (led_active ^ 1))
     except Exception:
         pass
 
 
+def leds_set(door_open):
+    """Green line on and red line off while the door is open; the reverse when closed."""
+    _led_write(led_green_pin, door_open)
+    _led_write(led_red_pin, not door_open)
+
+
+def _leds_dark():
+    _led_write(led_green_pin, False)
+    _led_write(led_red_pin, False)
+
+
+def _leds_steady_on():
+    """Should the 'door open' indication be lit right now? True while the latch
+    is energised (brief unlock, or held open by schedule, master card or admin)
+    or, on a gate, while it is held or the open output is running."""
+    if gate_enabled:
+        return bool(gate_held) or gate_active_output == 'open'
+    return bool(door_unlocked)
+
+
+def leds_refresh():
+    """Settle the LEDs into their steady state: green while the door is open,
+    red otherwise. Cancels any pulse or flash in progress."""
+    global led_anim_gen
+    led_anim_gen += 1
+    leds_set(_leds_steady_on())
+
+
 def status_led_pulse(seconds=1.5):
-    """Briefly turn the status LED on for the given duration."""
-    if status_led_pin is None:
+    """Show green briefly for a granted scan, then settle back. Nothing to
+    show while the door-open indication is already lit."""
+    global led_anim_gen
+    if led_green_pin is None or _leds_steady_on():
         return
+    led_anim_gen += 1
+    gen = led_anim_gen
     def _pulse():
-        status_led_set(True)
+        leds_set(True)
         time.sleep(seconds)
-        status_led_set(False)
+        if gen == led_anim_gen:
+            leds_set(_leds_steady_on())
     threading.Thread(target=_pulse, daemon=True).start()
 
 
-def status_led_flash(times=3, interval=0.1):
-    """Flash the status LED."""
-    if status_led_pin is None:
+def leds_flash_denied(times=3, interval=0.1):
+    """Denied-scan blink. While the door is open the green drops to red so a
+    refused card is visible against the steady 'door open' indication. At idle
+    a bicolor pair blinks its red dark and a single-line LED blinks on."""
+    global led_anim_gen
+    if led_green_pin is None and led_red_pin is None:
         return
+    led_anim_gen += 1
+    gen = led_anim_gen
+    steady = _leds_steady_on()
     def _flash():
         for _ in range(times):
-            status_led_set(True)
+            if gen != led_anim_gen:
+                return
+            if steady:
+                leds_set(False)
+            elif led_red_pin is not None:
+                _leds_dark()
+            else:
+                leds_set(True)
             time.sleep(interval)
-            status_led_set(False)
+            leds_set(steady)
             time.sleep(interval)
+        if gen == led_anim_gen:
+            leds_refresh()
     threading.Thread(target=_flash, daemon=True).start()
 
 
@@ -1444,6 +1542,7 @@ def gate_set_state(new_state, held=None):
         if held is not None:
             gate_held = held
     debug(f"Gate state -> {new_state}" + (f" held={held}" if held is not None else ""))
+    leds_refresh()
 
 
 def _gate_output_active_value(name):
@@ -1487,8 +1586,7 @@ def _gate_run_output(name, transient_state):
     with gate_lock:
         if gate_active_output == name:
             gate_active_output = None
-    # Settle final state + reset legacy LEDs back to idle (red)
-    _set_legacy_leds(False)
+    # Settle final state (gate_set_state also settles the LEDs)
     if name == 'open':
         gate_set_state('stopped' if interrupted else 'open')
         # Start auto-close timer if open completed normally and conditions are met
@@ -1606,11 +1704,8 @@ def gate_grant_access(name):
     if gate_held:
         report(f"Card access denied — gate is held. Master scan to release.")
         return False
-    # Toggle legacy LEDs for visual feedback (green while opening)
-    _set_legacy_leds(True)
+    # LEDs go green for the open cycle via gate_set_state()
     ok, _reason = gate_command('open', source=f'access:{name}')
-    if not ok:
-        _set_legacy_leds(False)
     return ok
 
 
@@ -1649,16 +1744,9 @@ def apply_door_settings(door_info):
             gate_state = 'idle'
             gate_held = False
 
-    # Status LED config
-    led_str = door_info.get('status_led_config')
-    led_cfg = None
-    if led_str:
-        try:
-            led_cfg = json.loads(led_str) if isinstance(led_str, str) else led_str
-        except Exception:
-            pass
-    if led_cfg:
-        setup_status_led(led_cfg)
+    # Reader LED config. Always applied: no config means the default
+    # GPIO 25 (green) / GPIO 22 (red) pair.
+    setup_status_led(door_info.get('status_led_config'))
 
     # Door LCD config (same JSON-in-a-column pattern as the status LED)
     lcd_str = door_info.get('lcd_config')
@@ -1687,17 +1775,6 @@ def _apply_global_setting(key, value):
 # DOOR LOCK CONTROL
 # ============================================================
 
-def _set_legacy_leds(granted):
-    """Set the legacy hardcoded LEDs on GPIO 22 (red) and 25 (green).
-    Called for BOTH door and gate mode so the visual feedback works
-    regardless of which mode is active."""
-    try:
-        GPIO.output(25, 1 if granted else 0)  # Green LED
-        GPIO.output(22, 0 if granted else 1)  # Red LED
-    except Exception:
-        pass
-
-
 def lock_door():
     """Lock the door"""
     global door_unlocked
@@ -1707,9 +1784,9 @@ def lock_door():
 
     if latch_gpio:
         GPIO.output(latch_gpio, unlock_value ^ 1)
-    _set_legacy_leds(False)
     with state_lock:
         door_unlocked = False
+    leds_refresh()
 
 
 def unlock_door():
@@ -1721,9 +1798,9 @@ def unlock_door():
 
     if latch_gpio:
         GPIO.output(latch_gpio, unlock_value)
-    _set_legacy_leds(True)
     with state_lock:
         door_unlocked = True
+    leds_refresh()
 
 
 def unlock_briefly(gpio):
@@ -2668,7 +2745,7 @@ def open_door(user_id, name, is_master=False):
         last_card = user_id
         current_repeat_count = repeat_read_count + 1  # 1-indexed scan count
 
-    # ── Status LED / LCD feedback for the access event ──
+    # ── LED / LCD feedback for the access event ──
     status_led_pulse(2)
     lcd_show("Access granted", name, hold=3)
 
@@ -2728,19 +2805,10 @@ def reject_card(user_id, reason="Access denied"):
 
     report(f"Access denied at {zone} for user {user_id}: {reason}")
 
-    # Status LED / LCD feedback for denied access
-    status_led_flash(times=3, interval=0.1)
+    # LED / LCD feedback for denied access (blinks red; while the door is
+    # held open the green drops to red so the refusal is visible)
+    leds_flash_denied(times=3, interval=0.1)
     lcd_show("Access denied", reason, hold=3)
-
-    # Legacy red LED on GPIO 22 (kept for backwards compat with builds that wired it up)
-    try:
-        for _ in range(3):
-            GPIO.output(22, 0)
-            time.sleep(0.1)
-            GPIO.output(22, 1)
-            time.sleep(0.1)
-    except Exception:
-        pass
 
 
 # ============================================================

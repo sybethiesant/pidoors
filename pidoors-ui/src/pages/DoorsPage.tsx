@@ -57,15 +57,21 @@ function DoorFormModal({
   const [availablePins, setAvailablePins] = useState<number[]>([]);
   const [reservedPins, setReservedPins] = useState<Record<number, string>>({});
   const [gateExpanded, setGateExpanded] = useState<boolean>(!!form.is_gate);
-  const [ledExpanded, setLedExpanded] = useState<boolean>(!!form.status_led_config?.enabled);
   const [advExpanded, setAdvExpanded] = useState<boolean>(false);
 
   // Fetch available pins when editing an existing door
   useEffect(() => {
     if (isEdit && form.name) {
       getAvailablePins(form.name).then((res) => {
-        setAvailablePins(res.available);
-        setReservedPins(res.reserved);
+        // The reader LED pins follow the form (see getUsedPins), not the saved
+        // state, so a pin can be moved without first freeing it.
+        const ledPins = Object.entries(res.reserved)
+          .filter(([, who]) => who.startsWith('Reader LED'))
+          .map(([p]) => parseInt(p));
+        setAvailablePins([...res.available, ...ledPins].sort((a, b) => a - b));
+        setReservedPins(
+          Object.fromEntries(Object.entries(res.reserved).filter(([, who]) => !who.startsWith('Reader LED')))
+        );
       }).catch(() => {
         // Fallback: show all GPIO pins
         setAvailablePins([4, 5, 6, 7, 12, 13, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
@@ -102,9 +108,21 @@ function DoorFormModal({
     setForm({ ...form, gate_config: { ...current, auto_close: { ...existing, ...patch } } });
   };
 
+  // Reader LED config as the controller sees it: no config = the original
+  // wiring (GPIO 25 green / GPIO 22 red); pre-0.4.11 configs had a single `pin`.
+  const ledCfg: StatusLedConfig = (() => {
+    const raw = form.status_led_config;
+    if (!raw) return { enabled: true, green_pin: 25, red_pin: 22, active_high: true };
+    const { pin, ...rest } = raw;
+    return {
+      ...rest,
+      green_pin: rest.green_pin !== undefined ? rest.green_pin : (pin ?? null),
+      red_pin: rest.red_pin ?? null,
+      active_high: rest.active_high !== false,
+    };
+  })();
   const updateStatusLed = (patch: Partial<StatusLedConfig>) => {
-    const current = (form.status_led_config || { enabled: false, pin: null, active_high: true }) as StatusLedConfig;
-    setForm({ ...form, status_led_config: { ...current, ...patch } });
+    setForm({ ...form, status_led_config: { ...ledCfg, ...patch } });
   };
 
   const defaultLcd: LcdConfig = { enabled: false, type: 'i2c', cols: 16, rows: 2, i2c_bus: 1, i2c_address: '0x27', pins: {} };
@@ -129,7 +147,7 @@ function DoorFormModal({
   // Pass excludeSelf to exclude the field that's calling this (so its own pin doesn't filter itself out).
   type SelfRef =
     | { kind: 'gate'; section: 'inputs' | 'outputs'; name: 'open' | 'stop' | 'close' | 'clearance' }
-    | { kind: 'led' }
+    | { kind: 'led'; line: 'green' | 'red' }
     | { kind: 'lcd'; name: LcdPinName }
     | { kind: 'sensor' };
 
@@ -153,9 +171,14 @@ function DoorFormModal({
         if (entry?.enabled && entry.pin != null) used.set(entry.pin, labelMap[`${section}.${name}`] || `${section} ${name}`);
       }
     }
-    // Status LED
-    if (excludeSelf?.kind !== 'led' && form.status_led_config?.enabled && form.status_led_config.pin != null) {
-      used.set(form.status_led_config.pin, 'Status LED');
+    // Reader LEDs
+    if (ledCfg.enabled) {
+      if (!(excludeSelf?.kind === 'led' && excludeSelf.line === 'green') && ledCfg.green_pin != null) {
+        used.set(ledCfg.green_pin, 'Reader LED green');
+      }
+      if (!(excludeSelf?.kind === 'led' && excludeSelf.line === 'red') && ledCfg.red_pin != null) {
+        used.set(ledCfg.red_pin, 'Reader LED red');
+      }
     }
     // LCD
     if (form.lcd_config?.enabled) {
@@ -603,32 +626,45 @@ function DoorFormModal({
             )}
           </div>
 
-          {/* ── STATUS LED ── */}
+          {/* ── READER LED ── */}
           <div className="border-t border-slate-200 pt-4 dark:border-slate-700">
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
               <input
                 type="checkbox"
-                checked={!!form.status_led_config?.enabled}
+                checked={ledCfg.enabled}
                 onChange={(e) => updateStatusLed({ enabled: e.target.checked })}
                 className="rounded border-slate-300"
               />
-              Status LED (lights on access events)
+              Reader LED
             </label>
-            {!!form.status_led_config?.enabled && (
-              <div className="mt-2 grid grid-cols-2 gap-2">
+            <p className="mt-1 text-xs text-slate-400">
+              Green / on while the door is unlocked or held open (including by a schedule), red / off when locked.
+              A denied card blinks red. Default wiring is GPIO 25 green, GPIO 22 red.
+            </p>
+            {ledCfg.enabled && (
+              <div className="mt-2 grid grid-cols-3 gap-2">
                 <div>
-                  <label className="label text-xs">LED GPIO pin</label>
+                  <label className="label text-xs">LED pin (green / open)</label>
                   {renderPinSelect(
-                    form.status_led_config?.pin,
-                    (v) => updateStatusLed({ pin: v }),
-                    { kind: 'led' }
+                    ledCfg.green_pin,
+                    (v) => updateStatusLed({ green_pin: v }),
+                    { kind: 'led', line: 'green' }
                   )}
+                </div>
+                <div>
+                  <label className="label text-xs">Red pin (optional)</label>
+                  {renderPinSelect(
+                    ledCfg.red_pin,
+                    (v) => updateStatusLed({ red_pin: v }),
+                    { kind: 'led', line: 'red' }
+                  )}
+                  <p className="mt-1 text-xs text-slate-400">Leave unset for readers with a single LED line.</p>
                 </div>
                 <div>
                   <label className="label text-xs">Active</label>
                   <select
                     className="input"
-                    value={form.status_led_config?.active_high === false ? 'low' : 'high'}
+                    value={ledCfg.active_high ? 'high' : 'low'}
                     onChange={(e) => updateStatusLed({ active_high: e.target.value === 'high' })}
                   >
                     <option value="high">High (3.3V)</option>

@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-Open%20Source-blue)
 ![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red)
-![Version](https://img.shields.io/badge/version-0.4.10-green)
+![Version](https://img.shields.io/badge/version-0.4.11-green)
 ![Status](https://img.shields.io/badge/status-Production%20Ready-brightgreen)
 
 **Professional-grade physical access control powered by Raspberry Pi**
@@ -79,9 +79,9 @@ PiDoors is a complete, industrial-grade access control system built on Raspberry
 - State persists across controller restarts
 - Server-side pin conflict checker prevents double-assigning GPIO pins
 
-### Status LED
-- Universal configurable LED that lights on access events and during hold states
-- Per-door GPIO pin assignment, hi/lo polarity
+### Reader LED
+- Green / on while the door is unlocked or held open (schedule, master card or admin), red / off otherwise; a denied card blinks red
+- Per-door green pin, optional red pin for bicolor readers, hi/lo polarity; defaults to the original GPIO 25 / GPIO 22 wiring
 - Works on both doors and gates
 
 ### Management
@@ -480,15 +480,22 @@ In gate mode, the regular **Lock Relay** is unused — the gate's open/close out
 
 ### LED Feedback
 
-PiDoors supports two LED output methods:
+The reader LED follows the state of the door, so members can see whether it is open right now:
 
-**Legacy LEDs (hardcoded)** — GPIO 22 (red/idle) and GPIO 25 (green/granted) are always set up as outputs. These work automatically for both door and gate mode:
-- **Idle / locked / denied**: GPIO 22 HIGH, GPIO 25 LOW
-- **Access granted / unlocked / gate opening**: GPIO 22 LOW, GPIO 25 HIGH
+| Door state | Green line | Red line (if wired) |
+|------------|------------|---------------------|
+| Locked / idle | Off | On |
+| Unlocked by a card, held open by a **schedule**, master card or admin, gate open cycle or gate held | On | Off |
+| Card denied while locked | Off (single-line readers blink it on) | Blinks dark |
+| Card denied while open | Blinks off | Blinks on (shows red) |
 
-This is useful for Wiegand keypads with a built-in bicolor LED — wire the LED input to GPIO 22 and the keypad shows red at idle, green on valid access.
+Configure it in the **Reader LED** section of the door edit page; changes take effect on the next config push, no restart needed.
 
-**Configurable Status LED** — For more flexibility, enable the **Status LED** option in the door edit page. Assign any available GPIO pin and polarity. The LED pulses on access granted and flashes on access denied. Works on both doors and gates, independent of the legacy LEDs.
+- **LED pin (green / open)** — the line that is lit while the door is open. For readers with a single LED control input (most HID / Wiegand readers, where pulling the line low turns the LED green) this is the only pin you need; set **Active** to *Low* for those.
+- **Red pin (optional)** — a second line for keypads with separate red and green inputs, or a two-wire bicolor LED. It is driven as the inverse of the green line.
+- **Active** — high (3.3V) or low (GND) for both lines.
+
+A door that has never had its LED configured uses the original wiring, GPIO 25 green and GPIO 22 red, active high, and that is what the form shows preselected. Untick **Reader LED** to stop driving those pins, which frees them for gate I/O, an LCD or a reader that needs them (the MFRC522 reset line, for example). All LED pins go through the same pin-conflict checks as everything else on the door.
 
 ### LCD Display at the Door
 
@@ -796,7 +803,7 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-**Current Version: 0.4.10** - Pre-release
+**Current Version: 0.4.11** - Pre-release
 
 **Future Enhancements** (community contributions welcome):
 - Mobile app (iOS/Android)
@@ -810,6 +817,13 @@ Contributions welcome! Please:
 ## Changelog
 
 > **Note:** Version numbering was reset from 3.x to 0.x in April 2026. The project had rapidly iterated from v1.0 to v3.2 during initial development. The 0.x series reflects pre-release status as the system matures toward a proper v1.0.0 release.
+
+### Version 0.4.11 (September 2026)
+- **Reader LED stays green for as long as the door is open — fixes #8.** The configurable status LED (any GPIO pin) only pulsed for two seconds on a granted scan; during a scheduled unlock, a master-card or admin hold, or even the rest of a normal five-second unlock it went dark, although the feature list had claimed it lit "during hold states" since 0.3.3. Only the hardcoded GPIO 25 line did that. The LED now follows the door: on / green while the latch is energised or the door or gate is held, off / red otherwise, and scan animations settle back to the real state instead of switching a held-open LED off.
+  - **Denied card while the door is open blinks red** (single-line LED blinks off) so a refused card is visible against the steady green. At idle a bicolor pair still blinks its red dark and a single-line LED blinks on.
+  - **The old hardcoded GPIO 22 / 25 LEDs are now the default of the same configurable feature** instead of a separate always-on code path. The door edit page's **Reader LED** section has a green pin, an optional red pin and the polarity, preselected to GPIO 25 / GPIO 22 for doors that never configured an LED. Those pins finally take part in the pin-conflict checker, so a gate relay, LCD line or reader that needs GPIO 22 or 25 is reported instead of being silently fought by the LED code; untick **Reader LED** or move it to free them.
+  - Existing single-pin status LED configs carry over as the green line with no red line. Doors that had such a config *and* relied on the hardcoded pair being driven as well should add GPIO 22 as the red pin, or move the green line to GPIO 25.
+  - Gate mode: the LED goes green for every open cycle and while the gate is held, not only for card-triggered opens.
 
 ### Version 0.4.10 (September 2026)
 - **Schedule, holiday, card, group, door and settings changes reach online doors immediately — fixes #7.** Controllers cache this data and only re-read it from the database once an hour, and the server only pushed a reload for gate/LED/LCD config changes. Assigning an **Unlock Schedule** to a door, or editing the schedule's hours, therefore did nothing until the next hourly sync (or a controller restart). The API now pushes a cache sync to every reachable controller after any such change, in parallel and after the HTTP response is sent, so the UI is never held up by a slow door. Doors that are offline still catch up on their next sync.

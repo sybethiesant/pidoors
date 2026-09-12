@@ -290,18 +290,11 @@ function validate_gate_pins(PDO $pdo, string $door_name, array $cfg, array $inpu
         }
     }
 
-    // Also check status_led_config doesn't conflict
-    $led_pin = null;
-    if (array_key_exists('status_led_config', $input) && is_array($input['status_led_config'])) {
-        if (!empty($input['status_led_config']['enabled'])) {
-            $led_pin = (int)($input['status_led_config']['pin'] ?? 0);
+    // Also check the reader LED pins don't conflict
+    foreach (led_pins_for($door, $input) as $led_pin => $label) {
+        if (isset($used[$led_pin])) {
+            return "GPIO $led_pin assigned to $label conflicts with gate {$used[$led_pin]}";
         }
-    } elseif (!empty($door['status_led_config'])) {
-        $led = json_decode($door['status_led_config'], true);
-        if (!empty($led['enabled'])) $led_pin = (int)($led['pin'] ?? 0);
-    }
-    if ($led_pin && isset($used[$led_pin])) {
-        return "GPIO $led_pin assigned to status LED conflicts with gate {$used[$led_pin]}";
     }
 
     // ...and the LCD doesn't either
@@ -331,6 +324,49 @@ function lcd_pins_from_config($cfg): array {
         if ($p > 0) $pins[$p] = $label;
     }
     return $pins;
+}
+
+/**
+ * Normalised reader-LED config for a door:
+ *   ['enabled' => bool, 'green_pin' => int|null, 'red_pin' => int|null, 'active_high' => bool]
+ * A door that has never had an LED config gets the historical wiring: GPIO 25
+ * (green, lit while the door is open) / GPIO 22 (red, lit while closed).
+ * Pre-0.4.11 configs carried a single 'pin' (now green_pin) and no red line.
+ */
+function normalize_led_config($cfg): array {
+    if (is_string($cfg)) $cfg = json_decode($cfg, true);
+    if (!is_array($cfg)) {
+        return ['enabled' => true, 'green_pin' => 25, 'red_pin' => 22, 'active_high' => true];
+    }
+    $pin = function ($v): ?int {
+        if ($v === null || $v === '' || !is_numeric($v)) return null;
+        $v = (int)$v;
+        return $v > 0 ? $v : null;
+    };
+    return [
+        'enabled' => !empty($cfg['enabled']),
+        'green_pin' => $pin(array_key_exists('green_pin', $cfg) ? $cfg['green_pin'] : ($cfg['pin'] ?? null)),
+        'red_pin' => $pin($cfg['red_pin'] ?? null),
+        'active_high' => !array_key_exists('active_high', $cfg) || !empty($cfg['active_high']),
+    ];
+}
+
+/** GPIO pins an LED config occupies: pin => label. */
+function led_pins_from_config($cfg): array {
+    $led = normalize_led_config($cfg);
+    if (!$led['enabled']) return [];
+    $pins = [];
+    if ($led['green_pin']) $pins[$led['green_pin']] = 'Reader LED (green)';
+    if ($led['red_pin']) $pins[$led['red_pin']] = 'Reader LED (red)';
+    return $pins;
+}
+
+/** LED pins for a door, preferring the config being saved over the stored one. */
+function led_pins_for(array $door, ?array $input): array {
+    if (is_array($input) && array_key_exists('status_led_config', $input)) {
+        return led_pins_from_config($input['status_led_config']);
+    }
+    return led_pins_from_config($door['status_led_config'] ?? null);
 }
 
 /** LCD pins for a door, preferring the incoming request body over the stored row. */
@@ -397,15 +433,9 @@ function validate_lcd_config(PDO $pdo, string $door_name, array $cfg, array $inp
             }
         }
     }
-    // Status LED pin
-    $led = null;
-    if (array_key_exists('status_led_config', $input) && is_array($input['status_led_config'])) {
-        $led = $input['status_led_config'];
-    } elseif (!empty($door['status_led_config'])) {
-        $led = json_decode($door['status_led_config'], true);
-    }
-    if ($led && !empty($led['enabled']) && !empty($led['pin'])) {
-        $reserved[(int)$led['pin']] = 'status LED';
+    // Reader LED pins
+    foreach (led_pins_for($door, $input) as $p => $label) {
+        $reserved[$p] = $label;
     }
 
     foreach (lcd_pins_from_config($cfg) as $pin => $label) {
@@ -415,12 +445,21 @@ function validate_lcd_config(PDO $pdo, string $door_name, array $cfg, array $inp
 }
 
 /**
- * Validate status LED pin doesn't conflict.
+ * Validate the reader LED config: green pin required when enabled, optional
+ * red pin, both sane, distinct and free of the reader, lock, sensor, gate I/O
+ * and LCD pins.
  */
 function validate_status_led_pin(PDO $pdo, string $door_name, array $cfg, array $input): ?string {
-    if (empty($cfg['enabled'])) return null;
-    $pin = (int)($cfg['pin'] ?? 0);
-    if ($pin <= 0 || $pin > 27) return "Invalid pin number for status LED: $pin";
+    $led = normalize_led_config($cfg);
+    if (!$led['enabled']) return null;
+    if (!$led['green_pin']) return 'Reader LED: choose a GPIO pin for the LED (green) line';
+    foreach (['green_pin' => 'green', 'red_pin' => 'red'] as $key => $label) {
+        $p = $led[$key];
+        if ($p !== null && ($p <= 0 || $p > 27)) return "Invalid GPIO pin for the $label LED line: $p";
+    }
+    if ($led['red_pin'] !== null && $led['red_pin'] === $led['green_pin']) {
+        return 'Reader LED: the green and red lines must be different pins';
+    }
 
     $stmt = $pdo->prepare("SELECT * FROM doors WHERE name = ?");
     $stmt->execute([$door_name]);
@@ -428,12 +467,9 @@ function validate_status_led_pin(PDO $pdo, string $door_name, array $cfg, array 
     if (!$door) return 'Door not found';
 
     $reserved = get_reserved_pins($door, $input);
-    if (isset($reserved[$pin])) return "GPIO $pin is already used by {$reserved[$pin]}";
-
-    $lcd_pins = lcd_pins_for($door, $input);
-    if (isset($lcd_pins[$pin])) return "GPIO $pin is already used by {$lcd_pins[$pin]}";
-
-    // Check gate config
+    foreach (lcd_pins_for($door, $input) as $p => $label) {
+        $reserved[$p] = $label;
+    }
     $gate_cfg = null;
     if (array_key_exists('gate_config', $input) && is_array($input['gate_config'])) {
         $gate_cfg = $input['gate_config'];
@@ -448,13 +484,16 @@ function validate_status_led_pin(PDO $pdo, string $door_name, array $cfg, array 
         foreach ($section_names as $section => $names) {
             foreach ($names as $name) {
                 $entry = $gate_cfg[$section][$name] ?? null;
-                if ($entry && !empty($entry['enabled']) && (int)($entry['pin'] ?? 0) === $pin) {
-                    return "GPIO $pin is already used by gate $section.$name";
+                if ($entry && !empty($entry['enabled']) && !empty($entry['pin'])) {
+                    $reserved[(int)$entry['pin']] = "gate $section.$name";
                 }
             }
         }
     }
 
+    foreach (led_pins_from_config($cfg) as $p => $label) {
+        if (isset($reserved[$p])) return "GPIO $p ($label) is already used by {$reserved[$p]}";
+    }
     return null;
 }
 
@@ -777,11 +816,8 @@ if ($resource === 'doors') {
                 }
             }
         }
-        if (!empty($door['status_led_config'])) {
-            $led = json_decode($door['status_led_config'], true);
-            if (!empty($led['enabled']) && !empty($led['pin'])) {
-                $reserved[(int)$led['pin']] = 'Status LED';
-            }
+        foreach (led_pins_for($door, null) as $p => $label) {
+            $reserved[$p] = $label;
         }
         foreach (lcd_pins_for($door, null) as $p => $label) {
             $reserved[$p] = $label;

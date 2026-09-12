@@ -95,8 +95,11 @@ export interface GateConfig {
 
 export interface StatusLedConfig {
   enabled: boolean;
-  pin: number | null;
+  green_pin: number | null;   // LED line lit while the door is open (single-line readers use only this)
+  red_pin: number | null;     // optional second line for bicolor readers, lit while the door is closed
   active_high: boolean;
+  /** Pre-0.4.11 single-pin field; read as green_pin. */
+  pin?: number | null;
 }
 
 export type LcdPinName = 'rs' | 'e' | 'd4' | 'd5' | 'd6' | 'd7' | 'backlight';

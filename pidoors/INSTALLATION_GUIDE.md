@@ -729,9 +729,14 @@ PiDoors supports **gate motor controllers** in addition to electronic door locks
 
 **Status persistence:** The current gate state and hold flag are saved to the database and restored on controller restart, so a power cycle won't accidentally release a held gate.
 
-### Status LED (Optional)
+### Reader LED (Optional)
 
-For Wiegand keypads with a status LED input pin, you can configure PiDoors to drive the LED on access events. Edit any door, check **"Status LED"**, assign a GPIO pin and polarity. The LED will pulse on access granted and flash on access denied. Works on both doors and gates.
+The reader LED follows the door: green / on while it is unlocked or held open (by a card, a schedule, a master card or an admin), red / off when locked, and a red blink on a denied card. Edit any door and use the **Reader LED** section:
+
+- **LED pin (green / open)** — the only pin needed for readers with a single LED control line (most HID / Wiegand readers; set **Active** to *Low* if pulling the line low turns the LED green).
+- **Red pin (optional)** — for keypads with separate red and green inputs or a two-wire bicolor LED.
+
+The default, shown preselected on a door that never configured an LED, is the original wiring: GPIO 25 green, GPIO 22 red. Works on doors and gates and is applied on the next config push, no restart needed.
 
 ### Importing Multiple Cards from CSV
 
